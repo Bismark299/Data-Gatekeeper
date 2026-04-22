@@ -3,7 +3,6 @@ import { useListBundles } from "@workspace/api-client-react";
 import { Navbar } from "@/components/Navbar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/context/AuthContext";
 import { useCart } from "@/context/CartContext";
 import { useLocation } from "wouter";
@@ -11,7 +10,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { Search, ShoppingCart, Wifi, Check } from "lucide-react";
+import { ShoppingCart, Wifi, Check } from "lucide-react";
 
 type Network = "mtn" | "telecel" | "at-ishare" | "at-bigtime";
 
@@ -100,21 +99,14 @@ export default function Bundles() {
   const { isAuthenticated } = useAuth();
   const { addItem } = useCart();
   const [, setLocation] = useLocation();
-  const { toast } = useToast();
-
   const [activeNetwork, setActiveNetwork] = useState<Network>("mtn");
-  const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<Bundle | null>(null);
   const [phoneNumber, setPhoneNumber] = useState("");
   const [showDialog, setShowDialog] = useState(false);
 
   const { data: bundles, isLoading } = useListBundles({ network: activeNetwork });
 
-  const filtered = bundles?.filter(b =>
-    b.name.toLowerCase().includes(search.toLowerCase()) ||
-    b.description.toLowerCase().includes(search.toLowerCase()) ||
-    b.dataAmount.toLowerCase().includes(search.toLowerCase())
-  ) ?? [];
+  const filtered = bundles ?? [];
 
   const theme = NETWORKS[activeNetwork];
 
@@ -169,17 +161,6 @@ export default function Bundles() {
           </div>
         </div>
 
-        <div className="relative max-w-xs mb-6">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input
-            placeholder={`Search ${theme.label} plans...`}
-            className="pl-9"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            data-testid="input-search-bundles"
-          />
-        </div>
-
         {isLoading ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
             {Array.from({ length: 4 }).map((_, i) => (
@@ -205,14 +186,10 @@ export default function Bundles() {
                     {bundle.category}
                   </div>
                   <div className={`text-2xl font-extrabold ${theme.headerText}`}>{bundle.dataAmount}</div>
-                  <div className={`text-xs ${theme.headerText} opacity-75 mt-0.5`}>{bundle.validityDays}-day validity</div>
                 </div>
 
                 <div className="p-4 flex flex-col flex-1 gap-3">
-                  <div>
-                    <h3 className="font-semibold text-foreground text-sm">{bundle.name}</h3>
-                    <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{bundle.description}</p>
-                  </div>
+                  <h3 className="font-semibold text-foreground text-sm">{bundle.name}</h3>
 
                   <ul className="space-y-1">
                     {["Instant activation", "24/7 support", "Auto-renewal eligible"].map(f => (
