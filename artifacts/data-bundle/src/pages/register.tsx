@@ -40,8 +40,8 @@ export default function Register() {
     registerMutation.mutate(
       { data: { name: data.name, email: data.email, password: data.password, phone: data.phone || null } },
       {
-        onSuccess: () => {
-          queryClient.invalidateQueries({ queryKey: getGetMeQueryKey() });
+        onSuccess: (res) => {
+          queryClient.setQueryData(getGetMeQueryKey(), res.user);
           toast({ title: "Account created!", description: "Welcome to DataBundle." });
           setLocation("/dashboard");
         },

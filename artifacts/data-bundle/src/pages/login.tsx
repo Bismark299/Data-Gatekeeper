@@ -35,7 +35,7 @@ export default function Login() {
       { data },
       {
         onSuccess: (res) => {
-          queryClient.invalidateQueries({ queryKey: getGetMeQueryKey() });
+          queryClient.setQueryData(getGetMeQueryKey(), res.user);
           toast({ title: "Welcome back!", description: `Logged in as ${res.user.name}` });
           if (res.user.role === "admin") {
             setLocation("/admin");
