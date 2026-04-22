@@ -135,6 +135,44 @@ export interface Deposit {
   createdAt: string;
 }
 
+export interface MomoInfo {
+  momoNumber: string;
+  referenceCode: string;
+}
+
+export interface PaystackInitBody {
+  amount: number;
+}
+
+export interface PaystackInitResponse {
+  authorizationUrl: string;
+  reference: string;
+}
+
+export interface PaystackVerifyBody {
+  reference: string;
+}
+
+export interface MomoClaimBody {
+  amount: number;
+  transactionId: string;
+}
+
+export interface AdminDeposit {
+  id: number;
+  userId: number;
+  userName: string;
+  userEmail: string;
+  amount: number;
+  status: string;
+  method: string;
+  /** @nullable */
+  reference?: string | null;
+  /** @nullable */
+  note?: string | null;
+  createdAt: string;
+}
+
 export interface CartItem {
   id: number;
   userId: number;
@@ -198,4 +236,8 @@ export type AdminListUsersParams = {
 export type AdminListOrdersParams = {
   status?: string;
   userId?: number;
+};
+
+export type AdminListDepositsParams = {
+  status?: string;
 };

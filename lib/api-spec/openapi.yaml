@@ -422,6 +422,118 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /wallet/momo-info:
+    get:
+      operationId: getMomoInfo
+      tags: [wallet]
+      summary: Get MoMo payment instructions for the current user
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MomoInfo"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /wallet/paystack/initialize:
+    post:
+      operationId: initializePaystackDeposit
+      tags: [wallet]
+      summary: Initialize a Paystack payment for wallet deposit
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaystackInitBody"
+      responses:
+        "200":
+          description: Paystack authorization URL
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaystackInitResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /wallet/paystack/verify:
+    post:
+      operationId: verifyPaystackDeposit
+      tags: [wallet]
+      summary: Verify a Paystack payment and credit wallet
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaystackVerifyBody"
+      responses:
+        "200":
+          description: Wallet credited
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WalletBalance"
+        "400":
+          description: Bad request or payment not successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /wallet/momo/claim:
+    post:
+      operationId: claimMomoDeposit
+      tags: [wallet]
+      summary: Submit a manual MoMo deposit claim for admin review
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MomoClaimBody"
+      responses:
+        "200":
+          description: Claim submitted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /cart:
     get:
       operationId: getCart
@@ -682,6 +794,95 @@ paths:
                 $ref: "#/components/schemas/Order"
         "403":
           description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /admin/deposits:
+    get:
+      operationId: adminListDeposits
+      tags: [admin]
+      summary: List all deposit claims (admin)
+      parameters:
+        - in: query
+          name: status
+          schema:
+            type: string
+          required: false
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AdminDeposit"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /admin/deposits/{id}/approve:
+    post:
+      operationId: adminApproveDeposit
+      tags: [admin]
+      summary: Approve a pending deposit claim (admin)
+      parameters:
+        - in: path
+          name: id
+          schema:
+            type: integer
+          required: true
+      responses:
+        "200":
+          description: Approved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminDeposit"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /admin/deposits/{id}/reject:
+    post:
+      operationId: adminRejectDeposit
+      tags: [admin]
+      summary: Reject a pending deposit claim (admin)
+      parameters:
+        - in: path
+          name: id
+          schema:
+            type: integer
+          required: true
+      responses:
+        "200":
+          description: Rejected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminDeposit"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Not found
           content:
             application/json:
               schema:
@@ -1030,6 +1231,88 @@ components:
       required:
         - id
         - userId
+        - amount
+        - status
+        - method
+        - createdAt
+
+    MomoInfo:
+      type: object
+      properties:
+        momoNumber:
+          type: string
+        referenceCode:
+          type: string
+      required:
+        - momoNumber
+        - referenceCode
+
+    PaystackInitBody:
+      type: object
+      properties:
+        amount:
+          type: number
+      required:
+        - amount
+
+    PaystackInitResponse:
+      type: object
+      properties:
+        authorizationUrl:
+          type: string
+        reference:
+          type: string
+      required:
+        - authorizationUrl
+        - reference
+
+    PaystackVerifyBody:
+      type: object
+      properties:
+        reference:
+          type: string
+      required:
+        - reference
+
+    MomoClaimBody:
+      type: object
+      properties:
+        amount:
+          type: number
+        transactionId:
+          type: string
+      required:
+        - amount
+        - transactionId
+
+    AdminDeposit:
+      type: object
+      properties:
+        id:
+          type: integer
+        userId:
+          type: integer
+        userName:
+          type: string
+        userEmail:
+          type: string
+        amount:
+          type: number
+        status:
+          type: string
+        method:
+          type: string
+        reference:
+          type: ["string", "null"]
+        note:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+      required:
+        - id
+        - userId
+        - userName
+        - userEmail
         - amount
         - status
         - method

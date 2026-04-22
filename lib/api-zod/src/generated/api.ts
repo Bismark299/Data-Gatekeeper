@@ -242,6 +242,50 @@ export const ListDepositsResponseItem = zod.object({
 export const ListDepositsResponse = zod.array(ListDepositsResponseItem);
 
 /**
+ * @summary Get MoMo payment instructions for the current user
+ */
+export const GetMomoInfoResponse = zod.object({
+  momoNumber: zod.string(),
+  referenceCode: zod.string(),
+});
+
+/**
+ * @summary Initialize a Paystack payment for wallet deposit
+ */
+export const InitializePaystackDepositBody = zod.object({
+  amount: zod.number(),
+});
+
+export const InitializePaystackDepositResponse = zod.object({
+  authorizationUrl: zod.string(),
+  reference: zod.string(),
+});
+
+/**
+ * @summary Verify a Paystack payment and credit wallet
+ */
+export const VerifyPaystackDepositBody = zod.object({
+  reference: zod.string(),
+});
+
+export const VerifyPaystackDepositResponse = zod.object({
+  balance: zod.number(),
+  updatedAt: zod.string(),
+});
+
+/**
+ * @summary Submit a manual MoMo deposit claim for admin review
+ */
+export const ClaimMomoDepositBody = zod.object({
+  amount: zod.number(),
+  transactionId: zod.string(),
+});
+
+export const ClaimMomoDepositResponse = zod.object({
+  message: zod.string(),
+});
+
+/**
  * @summary Get current user's cart
  */
 export const GetCartResponseItem = zod.object({
@@ -385,6 +429,69 @@ export const AdminUpdateOrderStatusResponse = zod.object({
   price: zod.number(),
   status: zod.string(),
   phoneNumber: zod.string(),
+  createdAt: zod.string(),
+});
+
+/**
+ * @summary List all deposit claims (admin)
+ */
+export const AdminListDepositsQueryParams = zod.object({
+  status: zod.coerce.string().optional(),
+});
+
+export const AdminListDepositsResponseItem = zod.object({
+  id: zod.number(),
+  userId: zod.number(),
+  userName: zod.string(),
+  userEmail: zod.string(),
+  amount: zod.number(),
+  status: zod.string(),
+  method: zod.string(),
+  reference: zod.string().nullish(),
+  note: zod.string().nullish(),
+  createdAt: zod.string(),
+});
+export const AdminListDepositsResponse = zod.array(
+  AdminListDepositsResponseItem,
+);
+
+/**
+ * @summary Approve a pending deposit claim (admin)
+ */
+export const AdminApproveDepositParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const AdminApproveDepositResponse = zod.object({
+  id: zod.number(),
+  userId: zod.number(),
+  userName: zod.string(),
+  userEmail: zod.string(),
+  amount: zod.number(),
+  status: zod.string(),
+  method: zod.string(),
+  reference: zod.string().nullish(),
+  note: zod.string().nullish(),
+  createdAt: zod.string(),
+});
+
+/**
+ * @summary Reject a pending deposit claim (admin)
+ */
+export const AdminRejectDepositParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const AdminRejectDepositResponse = zod.object({
+  id: zod.number(),
+  userId: zod.number(),
+  userName: zod.string(),
+  userEmail: zod.string(),
+  amount: zod.number(),
+  status: zod.string(),
+  method: zod.string(),
+  reference: zod.string().nullish(),
+  note: zod.string().nullish(),
   createdAt: zod.string(),
 });
 

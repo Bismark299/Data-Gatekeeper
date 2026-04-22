@@ -313,4 +313,118 @@ router.get("/admin/top-bundles", requireAdmin, async (req, res): Promise<void> =
   res.json(result);
 });
 
+router.get("/admin/deposits", requireAdmin, async (req, res): Promise<void> => {
+  const { status } = req.query as { status?: string };
+
+  const depositsWithUsers = await db
+    .select({
+      id: depositsTable.id,
+      userId: depositsTable.userId,
+      userName: usersTable.name,
+      userEmail: usersTable.email,
+      amount: depositsTable.amount,
+      status: depositsTable.status,
+      method: depositsTable.method,
+      reference: depositsTable.reference,
+      note: depositsTable.note,
+      createdAt: depositsTable.createdAt,
+    })
+    .from(depositsTable)
+    .innerJoin(usersTable, eq(depositsTable.userId, usersTable.id))
+    .orderBy(desc(depositsTable.createdAt));
+
+  const filtered = status
+    ? depositsWithUsers.filter((d) => d.status === status)
+    : depositsWithUsers;
+
+  res.json(
+    filtered.map((d) => ({
+      ...d,
+      amount: parseFloat(d.amount),
+    }))
+  );
+});
+
+router.post("/admin/deposits/:id/approve", requireAdmin, async (req, res): Promise<void> => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) {
+    res.status(400).json({ error: "Invalid deposit ID" });
+    return;
+  }
+
+  const [deposit] = await db.select().from(depositsTable).where(eq(depositsTable.id, id));
+  if (!deposit) {
+    res.status(404).json({ error: "Deposit not found" });
+    return;
+  }
+
+  if (deposit.status === "completed") {
+    res.status(400).json({ error: "Deposit already approved" });
+    return;
+  }
+
+  const [updated] = await db
+    .update(depositsTable)
+    .set({ status: "completed", note: "Approved by admin" })
+    .where(eq(depositsTable.id, id))
+    .returning();
+
+  const wallet = await db
+    .select()
+    .from(walletsTable)
+    .where(eq(walletsTable.userId, deposit.userId));
+
+  const currentBalance = wallet.length > 0 ? parseFloat(wallet[0].balance) : 0;
+  const newBalance = (currentBalance + parseFloat(deposit.amount)).toFixed(2);
+
+  if (wallet.length > 0) {
+    await db
+      .update(walletsTable)
+      .set({ balance: newBalance })
+      .where(eq(walletsTable.userId, deposit.userId));
+  } else {
+    await db
+      .insert(walletsTable)
+      .values({ userId: deposit.userId, balance: newBalance });
+  }
+
+  const [user] = await db.select().from(usersTable).where(eq(usersTable.id, deposit.userId));
+
+  res.json({
+    ...updated,
+    amount: parseFloat(updated.amount),
+    userName: user?.name ?? "",
+    userEmail: user?.email ?? "",
+  });
+});
+
+router.post("/admin/deposits/:id/reject", requireAdmin, async (req, res): Promise<void> => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) {
+    res.status(400).json({ error: "Invalid deposit ID" });
+    return;
+  }
+
+  const [deposit] = await db.select().from(depositsTable).where(eq(depositsTable.id, id));
+  if (!deposit) {
+    res.status(404).json({ error: "Deposit not found" });
+    return;
+  }
+
+  const [updated] = await db
+    .update(depositsTable)
+    .set({ status: "rejected", note: "Rejected by admin" })
+    .where(eq(depositsTable.id, id))
+    .returning();
+
+  const [user] = await db.select().from(usersTable).where(eq(usersTable.id, deposit.userId));
+
+  res.json({
+    ...updated,
+    amount: parseFloat(updated.amount),
+    userName: user?.name ?? "",
+    userEmail: user?.email ?? "",
+  });
+});
+
 export default router;

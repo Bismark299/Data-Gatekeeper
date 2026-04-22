@@ -18,6 +18,8 @@ import type {
 
 import type {
   AddToCartBody,
+  AdminDeposit,
+  AdminListDepositsParams,
   AdminListOrdersParams,
   AdminListUsersParams,
   AdminStats,
@@ -35,7 +37,12 @@ import type {
   ListBundlesParams,
   LoginBody,
   MessageResponse,
+  MomoClaimBody,
+  MomoInfo,
   Order,
+  PaystackInitBody,
+  PaystackInitResponse,
+  PaystackVerifyBody,
   RegisterBody,
   RevenuePoint,
   TopBundle,
@@ -1362,6 +1369,337 @@ export function useListDeposits<
 }
 
 /**
+ * @summary Get MoMo payment instructions for the current user
+ */
+export const getGetMomoInfoUrl = () => {
+  return `/api/wallet/momo-info`;
+};
+
+export const getMomoInfo = async (options?: RequestInit): Promise<MomoInfo> => {
+  return customFetch<MomoInfo>(getGetMomoInfoUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetMomoInfoQueryKey = () => {
+  return [`/api/wallet/momo-info`] as const;
+};
+
+export const getGetMomoInfoQueryOptions = <
+  TData = Awaited<ReturnType<typeof getMomoInfo>>,
+  TError = ErrorType<ErrorResponse>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getMomoInfo>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetMomoInfoQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getMomoInfo>>> = ({
+    signal,
+  }) => getMomoInfo({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getMomoInfo>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetMomoInfoQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getMomoInfo>>
+>;
+export type GetMomoInfoQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Get MoMo payment instructions for the current user
+ */
+
+export function useGetMomoInfo<
+  TData = Awaited<ReturnType<typeof getMomoInfo>>,
+  TError = ErrorType<ErrorResponse>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getMomoInfo>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetMomoInfoQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Initialize a Paystack payment for wallet deposit
+ */
+export const getInitializePaystackDepositUrl = () => {
+  return `/api/wallet/paystack/initialize`;
+};
+
+export const initializePaystackDeposit = async (
+  paystackInitBody: PaystackInitBody,
+  options?: RequestInit,
+): Promise<PaystackInitResponse> => {
+  return customFetch<PaystackInitResponse>(getInitializePaystackDepositUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(paystackInitBody),
+  });
+};
+
+export const getInitializePaystackDepositMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof initializePaystackDeposit>>,
+    TError,
+    { data: BodyType<PaystackInitBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof initializePaystackDeposit>>,
+  TError,
+  { data: BodyType<PaystackInitBody> },
+  TContext
+> => {
+  const mutationKey = ["initializePaystackDeposit"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof initializePaystackDeposit>>,
+    { data: BodyType<PaystackInitBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return initializePaystackDeposit(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type InitializePaystackDepositMutationResult = NonNullable<
+  Awaited<ReturnType<typeof initializePaystackDeposit>>
+>;
+export type InitializePaystackDepositMutationBody = BodyType<PaystackInitBody>;
+export type InitializePaystackDepositMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Initialize a Paystack payment for wallet deposit
+ */
+export const useInitializePaystackDeposit = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof initializePaystackDeposit>>,
+    TError,
+    { data: BodyType<PaystackInitBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof initializePaystackDeposit>>,
+  TError,
+  { data: BodyType<PaystackInitBody> },
+  TContext
+> => {
+  return useMutation(getInitializePaystackDepositMutationOptions(options));
+};
+
+/**
+ * @summary Verify a Paystack payment and credit wallet
+ */
+export const getVerifyPaystackDepositUrl = () => {
+  return `/api/wallet/paystack/verify`;
+};
+
+export const verifyPaystackDeposit = async (
+  paystackVerifyBody: PaystackVerifyBody,
+  options?: RequestInit,
+): Promise<WalletBalance> => {
+  return customFetch<WalletBalance>(getVerifyPaystackDepositUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(paystackVerifyBody),
+  });
+};
+
+export const getVerifyPaystackDepositMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof verifyPaystackDeposit>>,
+    TError,
+    { data: BodyType<PaystackVerifyBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof verifyPaystackDeposit>>,
+  TError,
+  { data: BodyType<PaystackVerifyBody> },
+  TContext
+> => {
+  const mutationKey = ["verifyPaystackDeposit"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof verifyPaystackDeposit>>,
+    { data: BodyType<PaystackVerifyBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return verifyPaystackDeposit(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type VerifyPaystackDepositMutationResult = NonNullable<
+  Awaited<ReturnType<typeof verifyPaystackDeposit>>
+>;
+export type VerifyPaystackDepositMutationBody = BodyType<PaystackVerifyBody>;
+export type VerifyPaystackDepositMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Verify a Paystack payment and credit wallet
+ */
+export const useVerifyPaystackDeposit = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof verifyPaystackDeposit>>,
+    TError,
+    { data: BodyType<PaystackVerifyBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof verifyPaystackDeposit>>,
+  TError,
+  { data: BodyType<PaystackVerifyBody> },
+  TContext
+> => {
+  return useMutation(getVerifyPaystackDepositMutationOptions(options));
+};
+
+/**
+ * @summary Submit a manual MoMo deposit claim for admin review
+ */
+export const getClaimMomoDepositUrl = () => {
+  return `/api/wallet/momo/claim`;
+};
+
+export const claimMomoDeposit = async (
+  momoClaimBody: MomoClaimBody,
+  options?: RequestInit,
+): Promise<MessageResponse> => {
+  return customFetch<MessageResponse>(getClaimMomoDepositUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(momoClaimBody),
+  });
+};
+
+export const getClaimMomoDepositMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof claimMomoDeposit>>,
+    TError,
+    { data: BodyType<MomoClaimBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof claimMomoDeposit>>,
+  TError,
+  { data: BodyType<MomoClaimBody> },
+  TContext
+> => {
+  const mutationKey = ["claimMomoDeposit"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof claimMomoDeposit>>,
+    { data: BodyType<MomoClaimBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return claimMomoDeposit(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ClaimMomoDepositMutationResult = NonNullable<
+  Awaited<ReturnType<typeof claimMomoDeposit>>
+>;
+export type ClaimMomoDepositMutationBody = BodyType<MomoClaimBody>;
+export type ClaimMomoDepositMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Submit a manual MoMo deposit claim for admin review
+ */
+export const useClaimMomoDeposit = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof claimMomoDeposit>>,
+    TError,
+    { data: BodyType<MomoClaimBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof claimMomoDeposit>>,
+  TError,
+  { data: BodyType<MomoClaimBody> },
+  TContext
+> => {
+  return useMutation(getClaimMomoDepositMutationOptions(options));
+};
+
+/**
  * @summary Get current user's cart
  */
 export const getGetCartUrl = () => {
@@ -2201,6 +2539,271 @@ export const useAdminUpdateOrderStatus = <
   TContext
 > => {
   return useMutation(getAdminUpdateOrderStatusMutationOptions(options));
+};
+
+/**
+ * @summary List all deposit claims (admin)
+ */
+export const getAdminListDepositsUrl = (params?: AdminListDepositsParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/admin/deposits?${stringifiedParams}`
+    : `/api/admin/deposits`;
+};
+
+export const adminListDeposits = async (
+  params?: AdminListDepositsParams,
+  options?: RequestInit,
+): Promise<AdminDeposit[]> => {
+  return customFetch<AdminDeposit[]>(getAdminListDepositsUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getAdminListDepositsQueryKey = (
+  params?: AdminListDepositsParams,
+) => {
+  return [`/api/admin/deposits`, ...(params ? [params] : [])] as const;
+};
+
+export const getAdminListDepositsQueryOptions = <
+  TData = Awaited<ReturnType<typeof adminListDeposits>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  params?: AdminListDepositsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof adminListDeposits>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getAdminListDepositsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof adminListDeposits>>
+  > = ({ signal }) => adminListDeposits(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof adminListDeposits>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type AdminListDepositsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof adminListDeposits>>
+>;
+export type AdminListDepositsQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary List all deposit claims (admin)
+ */
+
+export function useAdminListDeposits<
+  TData = Awaited<ReturnType<typeof adminListDeposits>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  params?: AdminListDepositsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof adminListDeposits>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getAdminListDepositsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Approve a pending deposit claim (admin)
+ */
+export const getAdminApproveDepositUrl = (id: number) => {
+  return `/api/admin/deposits/${id}/approve`;
+};
+
+export const adminApproveDeposit = async (
+  id: number,
+  options?: RequestInit,
+): Promise<AdminDeposit> => {
+  return customFetch<AdminDeposit>(getAdminApproveDepositUrl(id), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getAdminApproveDepositMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof adminApproveDeposit>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof adminApproveDeposit>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  const mutationKey = ["adminApproveDeposit"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof adminApproveDeposit>>,
+    { id: number }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return adminApproveDeposit(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AdminApproveDepositMutationResult = NonNullable<
+  Awaited<ReturnType<typeof adminApproveDeposit>>
+>;
+
+export type AdminApproveDepositMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Approve a pending deposit claim (admin)
+ */
+export const useAdminApproveDeposit = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof adminApproveDeposit>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof adminApproveDeposit>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  return useMutation(getAdminApproveDepositMutationOptions(options));
+};
+
+/**
+ * @summary Reject a pending deposit claim (admin)
+ */
+export const getAdminRejectDepositUrl = (id: number) => {
+  return `/api/admin/deposits/${id}/reject`;
+};
+
+export const adminRejectDeposit = async (
+  id: number,
+  options?: RequestInit,
+): Promise<AdminDeposit> => {
+  return customFetch<AdminDeposit>(getAdminRejectDepositUrl(id), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getAdminRejectDepositMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof adminRejectDeposit>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof adminRejectDeposit>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  const mutationKey = ["adminRejectDeposit"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof adminRejectDeposit>>,
+    { id: number }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return adminRejectDeposit(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AdminRejectDepositMutationResult = NonNullable<
+  Awaited<ReturnType<typeof adminRejectDeposit>>
+>;
+
+export type AdminRejectDepositMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Reject a pending deposit claim (admin)
+ */
+export const useAdminRejectDeposit = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof adminRejectDeposit>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof adminRejectDeposit>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  return useMutation(getAdminRejectDepositMutationOptions(options));
 };
 
 /**
