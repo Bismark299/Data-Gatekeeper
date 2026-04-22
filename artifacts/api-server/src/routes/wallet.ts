@@ -107,6 +107,9 @@ router.post("/paystack/initialize", requireAuth, async (req, res) => {
   const amountPesewas = Math.round(amountGhs * 100);
   const reference = `DB-PS-${userId}-${Date.now()}`;
 
+  const domain = process.env.REPLIT_DOMAINS ?? process.env.REPLIT_DEV_DOMAIN ?? "localhost";
+  const callbackUrl = `https://${domain}/wallet?paystack_ref=${reference}`;
+
   const paystackRes = await fetch("https://api.paystack.co/transaction/initialize", {
     method: "POST",
     headers: {
@@ -118,6 +121,7 @@ router.post("/paystack/initialize", requireAuth, async (req, res) => {
       amount: amountPesewas,
       currency: "GHS",
       reference,
+      callback_url: callbackUrl,
       metadata: { userId, amountGhs },
     }),
   });

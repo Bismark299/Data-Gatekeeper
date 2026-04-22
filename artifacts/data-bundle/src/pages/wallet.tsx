@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   useGetWalletBalance,
   useListDeposits,
@@ -8,6 +8,7 @@ import {
   useGetMomoInfo,
   getGetWalletBalanceQueryKey,
   getListDepositsQueryKey,
+  verifyPaystackDeposit,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
@@ -17,7 +18,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import {
-  Wallet, ArrowDownCircle, ExternalLink, Copy, CheckCircle2, Clock, XCircle, RefreshCw,
+  Wallet, ArrowDownCircle, ExternalLink, Copy, CheckCircle2, Clock, XCircle, RefreshCw, Loader2,
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
@@ -42,6 +43,7 @@ function WalletContent() {
   const [claimAmount, setClaimAmount] = useState("");
   const [claimTxId, setClaimTxId] = useState("");
   const [pendingRef, setPendingRef] = useState("");
+  const [autoVerifying, setAutoVerifying] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -49,13 +51,43 @@ function WalletContent() {
   const { data: deposits } = useListDeposits();
   const { data: momoInfo } = useGetMomoInfo();
   const initPaystack = useInitializePaystackDeposit();
-  const verifyPaystack = useVerifyPaystackDeposit();
+  const verifyPaystackMutation = useVerifyPaystackDeposit();
   const claimMomo = useClaimMomoDeposit();
 
-  const invalidate = () => {
+  const invalidate = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: getGetWalletBalanceQueryKey() });
     queryClient.invalidateQueries({ queryKey: getListDepositsQueryKey() });
-  };
+  }, [queryClient]);
+
+  // Auto-verify when Paystack redirects back with ?paystack_ref=...
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const ref = params.get("paystack_ref");
+    if (!ref) return;
+
+    // Clean the URL immediately so refresh doesn't re-trigger
+    window.history.replaceState({}, "", window.location.pathname);
+
+    setAutoVerifying(true);
+
+    verifyPaystackDeposit({ data: { reference: ref } })
+      .then((w) => {
+        invalidate();
+        toast({
+          title: "Payment confirmed!",
+          description: `GH₵${w.balance.toFixed(2)} is your new wallet balance.`,
+        });
+      })
+      .catch(() => {
+        // Webhook hasn't processed yet — let the user confirm manually
+        setPendingRef(ref);
+        setView("paystack-pending");
+        setShowDeposit(true);
+      })
+      .finally(() => {
+        setAutoVerifying(false);
+      });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const openDeposit = () => {
     setView("select");
@@ -77,8 +109,8 @@ function WalletContent() {
       {
         onSuccess: (data) => {
           setPendingRef(data.reference);
-          setView("paystack-pending");
-          window.open(data.authorizationUrl, "_blank", "noopener,noreferrer");
+          // Redirect in same tab — Paystack will redirect back via callback_url
+          window.location.href = data.authorizationUrl;
         },
         onError: (e: unknown) => {
           const msg = (e as { message?: string })?.message ?? "Failed to initialize payment";
@@ -89,19 +121,19 @@ function WalletContent() {
   };
 
   const handleVerify = () => {
-    verifyPaystack.mutate(
+    verifyPaystackMutation.mutate(
       { data: { reference: pendingRef } },
       {
         onSuccess: (w) => {
           toast({
             title: "Payment confirmed!",
-            description: `Wallet funded. New balance: GH₵${w.balance.toFixed(2)}`,
+            description: `New balance: GH₵${w.balance.toFixed(2)}`,
           });
           invalidate();
           setShowDeposit(false);
         },
         onError: (e: unknown) => {
-          const msg = (e as { message?: string })?.message ?? "Payment not confirmed yet";
+          const msg = (e as { message?: string })?.message ?? "Payment not confirmed yet. Please wait a moment.";
           toast({ title: msg, variant: "destructive" });
         },
       }
@@ -161,6 +193,15 @@ function WalletContent() {
   return (
     <div className="min-h-screen bg-background">
       <Navbar />
+
+      {/* Auto-verifying Paystack payment banner */}
+      {autoVerifying && (
+        <div className="bg-primary/10 border-b border-primary/20 px-4 py-3 flex items-center justify-center gap-2 text-sm text-primary font-medium">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          Verifying your Paystack payment...
+        </div>
+      )}
+
       <div className="max-w-2xl mx-auto px-4 sm:px-6 py-10">
         <div className="mb-6">
           <h1 className="text-2xl font-bold text-foreground">My Wallet</h1>
@@ -183,6 +224,7 @@ function WalletContent() {
             <Button
               className="bg-white text-primary hover:bg-white/90 font-semibold"
               onClick={openDeposit}
+              disabled={autoVerifying}
               data-testid="button-fund-wallet"
             >
               Fund Wallet
@@ -293,7 +335,7 @@ function WalletContent() {
                   <span>💳</span> Pay with Paystack
                 </DialogTitle>
                 <DialogDescription>
-                  Enter the amount to deposit. You&apos;ll be redirected to Paystack to complete payment securely.
+                  Enter the amount to deposit. You&apos;ll be taken to Paystack to complete payment, then automatically returned here.
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-4 py-2">
@@ -321,8 +363,11 @@ function WalletContent() {
                     ))}
                   </div>
                 </div>
-                <div className="bg-blue-50 dark:bg-blue-950/30 rounded-lg px-4 py-3 text-sm text-blue-700 dark:text-blue-300">
-                  You&apos;ll be redirected to Paystack in a new tab. After payment, return here and click &ldquo;Confirm Payment&rdquo;.
+                <div className="bg-blue-50 dark:bg-blue-950/30 rounded-lg px-4 py-3 text-sm text-blue-700 dark:text-blue-300 flex items-start gap-2">
+                  <ExternalLink className="w-4 h-4 mt-0.5 shrink-0" />
+                  <span>
+                    You&apos;ll be redirected to Paystack to pay. After payment is complete, Paystack will bring you straight back and your wallet will be credited automatically.
+                  </span>
                 </div>
               </div>
               <DialogFooter className="gap-2">
@@ -332,19 +377,26 @@ function WalletContent() {
                   disabled={initPaystack.isPending || !amount}
                   data-testid="button-paystack-pay"
                 >
-                  {initPaystack.isPending ? "Opening..." : `Pay GH₵${amount || "0"}`}
-                  <ExternalLink className="w-3.5 h-3.5 ml-1.5" />
+                  {initPaystack.isPending ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                      Opening Paystack...
+                    </>
+                  ) : (
+                    `Pay GH₵${amount || "0"}`
+                  )}
                 </Button>
               </DialogFooter>
             </>
           )}
 
+          {/* Shown only when auto-verify after redirect fails */}
           {view === "paystack-pending" && (
             <>
               <DialogHeader>
-                <DialogTitle>Complete Your Payment</DialogTitle>
+                <DialogTitle>Confirm Your Payment</DialogTitle>
                 <DialogDescription>
-                  A Paystack payment page has been opened in a new tab. Complete your payment there, then click below to confirm.
+                  Your payment may still be processing. Click below to check and credit your wallet.
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-3 py-2">
@@ -352,26 +404,18 @@ function WalletContent() {
                   <div className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Payment Reference</div>
                   <div className="font-mono text-sm font-medium text-foreground break-all">{pendingRef}</div>
                 </div>
-                <div className="text-sm text-muted-foreground">
-                  Payment page didn&apos;t open?{" "}
-                  <button
-                    className="text-primary underline underline-offset-2 font-medium"
-                    onClick={() => {
-                      window.open(`https://checkout.paystack.com/${pendingRef}`, "_blank", "noopener,noreferrer");
-                    }}
-                  >
-                    Click here to open it
-                  </button>
+                <div className="bg-yellow-50 dark:bg-yellow-950/30 rounded-lg px-4 py-3 text-sm text-yellow-700 dark:text-yellow-300">
+                  If you completed payment on Paystack, click &ldquo;Confirm Payment&rdquo; to credit your wallet. If payment is still processing, wait a moment and try again.
                 </div>
               </div>
               <DialogFooter className="gap-2">
-                <Button variant="outline" onClick={() => setView("paystack")}>Start Over</Button>
+                <Button variant="outline" onClick={() => setShowDeposit(false)}>Close</Button>
                 <Button
                   onClick={handleVerify}
-                  disabled={verifyPaystack.isPending}
+                  disabled={verifyPaystackMutation.isPending}
                   data-testid="button-confirm-payment"
                 >
-                  {verifyPaystack.isPending ? (
+                  {verifyPaystackMutation.isPending ? (
                     <>
                       <RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" />
                       Checking...
