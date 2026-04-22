@@ -3,7 +3,14 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Navbar } from "@/components/Navbar";
 import { useListBundles } from "@workspace/api-client-react";
-import { Wifi, Zap, Shield, Headphones, ArrowRight, Check } from "lucide-react";
+import { Wifi, Zap, Shield, Headphones, ArrowRight } from "lucide-react";
+
+const NETWORK_COLORS: Record<string, { bg: string; text: string; label: string }> = {
+  mtn:          { bg: "bg-yellow-400",  text: "text-gray-900", label: "MTN" },
+  telecel:      { bg: "bg-red-600",     text: "text-white",    label: "Telecel" },
+  "at-ishare":  { bg: "bg-blue-600",    text: "text-white",    label: "AT iShare" },
+  "at-bigtime": { bg: "bg-green-700",   text: "text-white",    label: "AT Big-Time" },
+};
 
 const features = [
   { icon: Zap, title: "Instant Activation", desc: "Your data bundle activates within seconds of purchase." },
@@ -54,47 +61,34 @@ export default function Landing() {
             <p className="text-muted-foreground">Most-loved bundles by our customers</p>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {featuredBundles.map((bundle, i) => (
-              <div
-                key={bundle.id}
-                className={`relative rounded-2xl border p-6 flex flex-col gap-4 transition-all hover:shadow-lg ${i === 1 ? "border-primary shadow-md" : "border-border bg-card"}`}
-                data-testid={`card-bundle-${bundle.id}`}
-              >
-                {i === 1 && (
-                  <div className="absolute -top-3 left-1/2 -translate-x-1/2">
-                    <Badge className="bg-primary text-primary-foreground">Most Popular</Badge>
+            {featuredBundles.map((bundle, i) => {
+              const net = NETWORK_COLORS[bundle.network ?? ""] ?? { bg: "bg-primary", text: "text-white", label: bundle.network ?? "" };
+              return (
+                <div
+                  key={bundle.id}
+                  className="relative rounded-2xl border border-border bg-card overflow-hidden flex flex-col transition-all hover:shadow-lg"
+                  data-testid={`card-bundle-${bundle.id}`}
+                >
+                  {i === 1 && (
+                    <div className="absolute top-3 right-3 z-10">
+                      <Badge className="bg-primary text-primary-foreground">Most Popular</Badge>
+                    </div>
+                  )}
+                  <div className={`${net.bg} ${net.text} px-5 py-4`}>
+                    <div className={`text-xs font-bold uppercase tracking-widest opacity-70 mb-1`}>{net.label}</div>
+                    <div className="text-3xl font-extrabold">{bundle.dataAmount}</div>
                   </div>
-                )}
-                <div>
-                  <Badge variant="outline" className="mb-3 capitalize text-xs">{bundle.category}</Badge>
-                  <h3 className="text-xl font-bold text-foreground">{bundle.name}</h3>
-                  <p className="text-sm text-muted-foreground mt-1">{bundle.description}</p>
+                  <div className="p-5 flex flex-col flex-1 gap-4">
+                    <div className="text-2xl font-extrabold text-foreground">GH₵{bundle.price}</div>
+                    <Link href="/bundles" className="mt-auto">
+                      <Button className="w-full" variant={i === 1 ? "default" : "outline"} data-testid={`button-select-${bundle.id}`}>
+                        Get This Plan
+                      </Button>
+                    </Link>
+                  </div>
                 </div>
-                <div className="flex items-end gap-2">
-                  <span className="text-3xl font-extrabold text-foreground">${bundle.price}</span>
-                  <span className="text-muted-foreground text-sm mb-1">/ {bundle.validityDays}d</span>
-                </div>
-                <ul className="space-y-2 flex-1">
-                  <li className="flex items-center gap-2 text-sm">
-                    <Check className="w-4 h-4 text-primary shrink-0" />
-                    <span>{bundle.dataAmount} data</span>
-                  </li>
-                  <li className="flex items-center gap-2 text-sm">
-                    <Check className="w-4 h-4 text-primary shrink-0" />
-                    <span>{bundle.validityDays}-day validity</span>
-                  </li>
-                  <li className="flex items-center gap-2 text-sm">
-                    <Check className="w-4 h-4 text-primary shrink-0" />
-                    <span>Instant activation</span>
-                  </li>
-                </ul>
-                <Link href="/bundles">
-                  <Button className="w-full" variant={i === 1 ? "default" : "outline"} data-testid={`button-select-${bundle.id}`}>
-                    Get This Plan
-                  </Button>
-                </Link>
-              </div>
-            ))}
+              );
+            })}
           </div>
           <div className="text-center mt-8">
             <Link href="/bundles">

@@ -61,8 +61,7 @@ function OrdersContent() {
                     <Wifi className="w-5 h-5 text-primary" />
                   </div>
                   <div>
-                    <div className="font-semibold text-foreground">{order.bundleName}</div>
-                    <div className="text-sm text-muted-foreground">{order.bundleData}</div>
+                    <div className="font-semibold text-foreground">{order.bundleData}</div>
                     <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
                       <span className="flex items-center gap-1"><Phone className="w-3 h-3" />{order.phoneNumber}</span>
                       <span className="flex items-center gap-1"><Clock className="w-3 h-3" />{new Date(order.createdAt).toLocaleDateString()}</span>
@@ -70,7 +69,7 @@ function OrdersContent() {
                   </div>
                 </div>
                 <div className="flex items-center gap-4 shrink-0">
-                  <span className="text-xl font-bold text-foreground">${order.price}</span>
+                  <span className="text-xl font-bold text-foreground">GH₵{order.price}</span>
                   <Badge className={`capitalize border ${STATUS_COLORS[order.status]}`} data-testid={`status-order-${order.id}`}>
                     {order.status}
                   </Badge>

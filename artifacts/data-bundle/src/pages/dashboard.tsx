@@ -63,7 +63,7 @@ function DashboardContent() {
               <Package className="w-5 h-5 text-green-500" />
             </div>
             <div>
-              <div className="text-2xl font-bold text-foreground">${totalSpent.toFixed(2)}</div>
+              <div className="text-2xl font-bold text-foreground">GH₵{totalSpent.toFixed(2)}</div>
               <div className="text-sm text-muted-foreground">Total Spent</div>
             </div>
           </div>
@@ -99,14 +99,14 @@ function DashboardContent() {
                   {recentOrders.map(order => (
                     <div key={order.id} className="px-6 py-4 flex items-center justify-between gap-4" data-testid={`row-order-${order.id}`}>
                       <div className="min-w-0">
-                        <div className="font-medium text-foreground text-sm truncate">{order.bundleName}</div>
+                        <div className="font-medium text-foreground text-sm truncate">{order.bundleData}</div>
                         <div className="text-xs text-muted-foreground flex items-center gap-1.5 mt-0.5">
                           <Clock className="w-3 h-3" />
                           {new Date(order.createdAt).toLocaleDateString()}
                         </div>
                       </div>
                       <div className="flex items-center gap-3 shrink-0">
-                        <span className="font-semibold text-sm">${order.price}</span>
+                        <span className="font-semibold text-sm">GH₵{order.price}</span>
                         <span className={`px-2 py-0.5 rounded-full text-xs font-medium capitalize ${STATUS_COLORS[order.status]}`}>
                           {order.status}
                         </span>

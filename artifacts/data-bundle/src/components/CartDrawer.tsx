@@ -66,7 +66,7 @@ export function CartDrawer() {
               return (
                 <div key={item.id} className="bg-card border border-border rounded-xl overflow-hidden" data-testid={`cart-item-${item.id}`}>
                   <div className={`${colors.bg} ${colors.text} px-3 py-1.5 flex items-center justify-between`}>
-                    <span className="text-xs font-bold uppercase tracking-wide">{item.bundleNetwork.replace("-", " ")}</span>
+                    <span className="text-xs font-bold uppercase tracking-wide">{item.bundleNetwork.replaceAll("-", " ")}</span>
                     <Button
                       variant="ghost"
                       size="icon"
@@ -78,8 +78,8 @@ export function CartDrawer() {
                   </div>
                   <div className="p-3 flex items-center justify-between">
                     <div>
-                      <div className="font-semibold text-sm text-foreground">{item.bundleName}</div>
-                      <div className="text-xs text-muted-foreground">{item.bundleData} · {item.phoneNumber}</div>
+                      <div className="font-semibold text-sm text-foreground">{item.bundleData}</div>
+                      <div className="text-xs text-muted-foreground">{item.phoneNumber}</div>
                     </div>
                     <div className="text-base font-bold text-foreground">GH₵{item.price.toFixed(2)}</div>
                   </div>
