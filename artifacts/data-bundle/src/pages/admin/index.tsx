@@ -39,7 +39,7 @@ function AdminDashboardContent() {
   const statCards = stats ? [
     { icon: Users, label: "Total Users", value: stats.totalUsers, sub: `+${stats.recentUsers} this month`, color: "text-blue-500" },
     { icon: ShoppingCart, label: "Total Orders", value: stats.totalOrders, sub: `+${stats.recentOrders} this month`, color: "text-purple-500" },
-    { icon: DollarSign, label: "Total Revenue", value: `$${stats.totalRevenue.toFixed(2)}`, sub: "From completed orders", color: "text-green-500" },
+    { icon: DollarSign, label: "Total Revenue", value: `GH₵${stats.totalRevenue.toFixed(2)}`, sub: "From completed orders", color: "text-green-500" },
     { icon: Package, label: "Active Bundles", value: stats.activeBundles, sub: "Currently listed", color: "text-orange-500" },
     { icon: Clock, label: "Pending Orders", value: stats.pendingOrders, sub: "Awaiting processing", color: "text-yellow-500" },
     { icon: TrendingUp, label: "Completed", value: stats.completedOrders, sub: "Successfully fulfilled", color: "text-emerald-500" },
@@ -122,7 +122,7 @@ function AdminDashboardContent() {
                         <div className="text-sm font-medium truncate">{b.name}</div>
                         <div className="text-xs text-muted-foreground">{b.orders} orders</div>
                       </div>
-                      <div className="text-sm font-semibold shrink-0">${b.revenue.toFixed(0)}</div>
+                      <div className="text-sm font-semibold shrink-0">GH₵{b.revenue.toFixed(0)}</div>
                     </div>
                   ))}
                 </div>
@@ -152,7 +152,7 @@ function AdminDashboardContent() {
                       <td className="px-6 py-3 text-muted-foreground">#{order.id}</td>
                       <td className="px-6 py-3 font-medium">{order.bundleName}</td>
                       <td className="px-6 py-3 text-muted-foreground">{order.phoneNumber}</td>
-                      <td className="px-6 py-3 font-semibold">${order.price}</td>
+                      <td className="px-6 py-3 font-semibold">GH₵{order.price}</td>
                       <td className="px-6 py-3">
                         <span className={`px-2 py-0.5 rounded-full text-xs font-medium capitalize ${STATUS_COLORS[order.status]}`}>
                           {order.status}

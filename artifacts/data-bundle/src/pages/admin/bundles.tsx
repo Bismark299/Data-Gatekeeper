@@ -19,7 +19,31 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle
 } from "@/components/ui/alert-dialog";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue
+} from "@/components/ui/select";
+import { Controller } from "react-hook-form";
 import { Plus, Pencil, Trash2, Menu, Package, ToggleLeft, ToggleRight } from "lucide-react";
+
+const NETWORKS = [
+  { value: "mtn",         label: "MTN" },
+  { value: "telecel",     label: "Telecel" },
+  { value: "at-ishare",   label: "AT iShare" },
+  { value: "at-bigtime",  label: "AT Big-Time" },
+];
+
+const CATEGORIES = [
+  { value: "daily",   label: "Daily" },
+  { value: "weekly",  label: "Weekly" },
+  { value: "monthly", label: "Monthly" },
+];
+
+const NETWORK_COLORS: Record<string, { bg: string; text: string }> = {
+  mtn:          { bg: "bg-yellow-400",  text: "text-gray-900" },
+  telecel:      { bg: "bg-red-600",     text: "text-white" },
+  "at-ishare":  { bg: "bg-blue-600",    text: "text-white" },
+  "at-bigtime": { bg: "bg-green-700",   text: "text-white" },
+};
 
 const bundleSchema = z.object({
   name: z.string().min(2),
@@ -28,6 +52,7 @@ const bundleSchema = z.object({
   validityDays: z.coerce.number().int().positive(),
   price: z.coerce.number().positive(),
   category: z.string().min(1),
+  network: z.string().min(1),
 });
 
 type BundleForm = z.infer<typeof bundleSchema>;
@@ -40,6 +65,7 @@ interface Bundle {
   validityDays: number;
   price: number;
   category: string;
+  network: string;
   isActive: boolean;
 }
 
@@ -66,14 +92,14 @@ function AdminBundlesContent() {
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: getListBundlesQueryKey({}) });
 
-  const { register, handleSubmit, reset, formState: { errors } } = useForm<BundleForm>({
+  const { register, handleSubmit, reset, control, formState: { errors } } = useForm<BundleForm>({
     resolver: zodResolver(bundleSchema),
   });
 
-  const openCreate = () => { setEditing(null); reset({}); setShowForm(true); };
+  const openCreate = () => { setEditing(null); reset({ category: "daily", network: "mtn" }); setShowForm(true); };
   const openEdit = (b: Bundle) => {
     setEditing(b);
-    reset({ name: b.name, description: b.description, dataAmount: b.dataAmount, validityDays: b.validityDays, price: b.price, category: b.category });
+    reset({ name: b.name, description: b.description, dataAmount: b.dataAmount, validityDays: b.validityDays, price: b.price, category: b.category, network: b.network });
     setShowForm(true);
   };
 
@@ -148,48 +174,57 @@ function AdminBundlesContent() {
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {bundles.map(bundle => (
-                <div key={bundle.id} className="bg-card border border-border rounded-2xl p-5 flex flex-col gap-3" data-testid={`card-bundle-${bundle.id}`}>
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <div className="flex items-center gap-2 mb-1">
-                        <Badge variant="outline" className="capitalize text-xs">{bundle.category}</Badge>
-                        {!bundle.isActive && <Badge variant="secondary" className="text-xs">Inactive</Badge>}
-                      </div>
-                      <h3 className="font-semibold text-foreground">{bundle.name}</h3>
-                      <p className="text-xs text-muted-foreground mt-0.5">{bundle.description}</p>
+              {bundles.map(bundle => {
+                const netColor = NETWORK_COLORS[bundle.network ?? ""] ?? { bg: "bg-primary", text: "text-white" };
+                return (
+                <div key={bundle.id} className="bg-card border border-border rounded-2xl overflow-hidden flex flex-col" data-testid={`card-bundle-${bundle.id}`}>
+                  <div className={`${netColor.bg} ${netColor.text} px-4 py-3`}>
+                    <div className={`text-xs font-bold uppercase tracking-widest opacity-70 mb-0.5`}>
+                      {NETWORKS.find(n => n.value === bundle.network)?.label ?? bundle.network}
                     </div>
-                    <div className="text-right shrink-0">
-                      <div className="text-lg font-bold text-foreground">${bundle.price}</div>
-                      <div className="text-xs text-muted-foreground">{bundle.dataAmount}</div>
-                    </div>
+                    <div className="text-2xl font-extrabold">{bundle.dataAmount}</div>
                   </div>
-                  <div className="text-xs text-muted-foreground">Validity: {bundle.validityDays} days</div>
-                  <div className="flex items-center gap-2 mt-auto pt-2 border-t border-border">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8"
-                      onClick={() => toggleActive(bundle as Bundle)}
-                      data-testid={`button-toggle-${bundle.id}`}
-                    >
-                      {bundle.isActive ? <ToggleRight className="w-4 h-4 text-green-500" /> : <ToggleLeft className="w-4 h-4 text-muted-foreground" />}
-                    </Button>
-                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(bundle as Bundle)} data-testid={`button-edit-${bundle.id}`}>
-                      <Pencil className="w-4 h-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 text-destructive hover:text-destructive"
-                      onClick={() => setDeleting(bundle as Bundle)}
-                      data-testid={`button-delete-${bundle.id}`}
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
+                  <div className="p-4 flex flex-col gap-2 flex-1">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="flex items-center gap-2 mb-1">
+                          <Badge variant="outline" className="capitalize text-xs">{bundle.category}</Badge>
+                          {!bundle.isActive && <Badge variant="secondary" className="text-xs">Inactive</Badge>}
+                        </div>
+                        <h3 className="font-semibold text-foreground text-sm">{bundle.name}</h3>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <div className="text-lg font-bold text-foreground">GH₵{bundle.price}</div>
+                      </div>
+                    </div>
+                    <div className="text-xs text-muted-foreground">Validity: {bundle.validityDays} days</div>
+                    <div className="flex items-center gap-2 mt-auto pt-2 border-t border-border">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => toggleActive(bundle as Bundle)}
+                        data-testid={`button-toggle-${bundle.id}`}
+                      >
+                        {bundle.isActive ? <ToggleRight className="w-4 h-4 text-green-500" /> : <ToggleLeft className="w-4 h-4 text-muted-foreground" />}
+                      </Button>
+                      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(bundle as Bundle)} data-testid={`button-edit-${bundle.id}`}>
+                        <Pencil className="w-4 h-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-destructive hover:text-destructive"
+                        onClick={() => setDeleting(bundle as Bundle)}
+                        data-testid={`button-delete-${bundle.id}`}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </div>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </main>
@@ -225,15 +260,50 @@ function AdminBundlesContent() {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label>Price ($)</Label>
+                <Label>Price (GH₵)</Label>
                 <Input type="number" step="0.01" {...register("price")} placeholder="9.99" data-testid="input-price" />
                 {errors.price && <p className="text-xs text-destructive">{errors.price.message}</p>}
               </div>
               <div className="space-y-1.5">
                 <Label>Category</Label>
-                <Input {...register("category")} placeholder="weekly" data-testid="input-category" />
+                <Controller
+                  name="category"
+                  control={control}
+                  render={({ field }) => (
+                    <Select value={field.value} onValueChange={field.onChange}>
+                      <SelectTrigger data-testid="input-category">
+                        <SelectValue placeholder="Select category" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {CATEGORIES.map(c => (
+                          <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                />
                 {errors.category && <p className="text-xs text-destructive">{errors.category.message}</p>}
               </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Network</Label>
+              <Controller
+                name="network"
+                control={control}
+                render={({ field }) => (
+                  <Select value={field.value} onValueChange={field.onChange}>
+                    <SelectTrigger data-testid="input-network">
+                      <SelectValue placeholder="Select network" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {NETWORKS.map(n => (
+                        <SelectItem key={n.value} value={n.value}>{n.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              />
+              {errors.network && <p className="text-xs text-destructive">{errors.network.message}</p>}
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setShowForm(false)}>Cancel</Button>

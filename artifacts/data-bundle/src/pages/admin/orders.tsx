@@ -117,7 +117,7 @@ function AdminOrdersContent() {
                         </td>
                         <td className="px-6 py-3 text-muted-foreground">#{order.userId}</td>
                         <td className="px-6 py-3 text-muted-foreground">{order.phoneNumber}</td>
-                        <td className="px-6 py-3 font-semibold">${order.price}</td>
+                        <td className="px-6 py-3 font-semibold">GH₵{order.price}</td>
                         <td className="px-6 py-3">
                           <span className={`px-2 py-0.5 rounded-full text-xs font-medium capitalize ${STATUS_COLORS[order.status]}`}>
                             {order.status}
