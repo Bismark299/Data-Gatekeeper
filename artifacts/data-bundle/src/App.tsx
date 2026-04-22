@@ -3,6 +3,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/context/AuthContext";
+import { CartProvider } from "@/context/CartContext";
+import { CartDrawer } from "@/components/CartDrawer";
 import NotFound from "@/pages/not-found";
 import Landing from "@/pages/landing";
 import Login from "@/pages/login";
@@ -10,6 +12,7 @@ import Register from "@/pages/register";
 import Bundles from "@/pages/bundles";
 import Dashboard from "@/pages/dashboard";
 import Orders from "@/pages/orders";
+import WalletPage from "@/pages/wallet";
 import AdminDashboard from "@/pages/admin/index";
 import AdminBundles from "@/pages/admin/bundles";
 import AdminUsers from "@/pages/admin/users";
@@ -36,6 +39,7 @@ function Router() {
       <Route path="/bundles" component={Bundles} />
       <Route path="/dashboard" component={Dashboard} />
       <Route path="/orders" component={Orders} />
+      <Route path="/wallet" component={WalletPage} />
       <Route path="/admin" component={AdminDashboard} />
       <Route path="/admin/bundles" component={AdminBundles} />
       <Route path="/admin/users" component={AdminUsers} />
@@ -51,7 +55,10 @@ function App() {
       <TooltipProvider>
         <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
           <AuthProvider>
-            <Router />
+            <CartProvider>
+              <Router />
+              <CartDrawer />
+            </CartProvider>
           </AuthProvider>
         </WouterRouter>
         <Toaster />

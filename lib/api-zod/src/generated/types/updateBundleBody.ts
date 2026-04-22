@@ -13,5 +13,6 @@ export interface UpdateBundleBody {
   validityDays?: number;
   price?: number;
   category?: string;
+  network?: string;
   isActive?: boolean;
 }

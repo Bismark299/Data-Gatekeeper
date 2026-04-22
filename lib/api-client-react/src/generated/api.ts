@@ -17,14 +17,19 @@ import type {
 } from "@tanstack/react-query";
 
 import type {
+  AddToCartBody,
   AdminListOrdersParams,
   AdminListUsersParams,
   AdminStats,
   AdminUpdateUserBody,
   AuthResponse,
   Bundle,
+  CartItem,
+  CheckoutResult,
   CreateBundleBody,
   CreateOrderBody,
+  Deposit,
+  DepositBody,
   ErrorResponse,
   HealthStatus,
   ListBundlesParams,
@@ -37,6 +42,7 @@ import type {
   UpdateBundleBody,
   UpdateOrderStatusBody,
   UserProfile,
+  WalletBalance,
 } from "./api.schemas";
 
 import { customFetch } from "../custom-fetch";
@@ -1118,6 +1124,637 @@ export function useGetOrder<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary Get current user wallet balance
+ */
+export const getGetWalletBalanceUrl = () => {
+  return `/api/wallet/balance`;
+};
+
+export const getWalletBalance = async (
+  options?: RequestInit,
+): Promise<WalletBalance> => {
+  return customFetch<WalletBalance>(getGetWalletBalanceUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetWalletBalanceQueryKey = () => {
+  return [`/api/wallet/balance`] as const;
+};
+
+export const getGetWalletBalanceQueryOptions = <
+  TData = Awaited<ReturnType<typeof getWalletBalance>>,
+  TError = ErrorType<ErrorResponse>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getWalletBalance>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetWalletBalanceQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getWalletBalance>>
+  > = ({ signal }) => getWalletBalance({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getWalletBalance>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetWalletBalanceQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getWalletBalance>>
+>;
+export type GetWalletBalanceQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Get current user wallet balance
+ */
+
+export function useGetWalletBalance<
+  TData = Awaited<ReturnType<typeof getWalletBalance>>,
+  TError = ErrorType<ErrorResponse>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getWalletBalance>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetWalletBalanceQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Initiate or confirm a wallet deposit
+ */
+export const getDepositToWalletUrl = () => {
+  return `/api/wallet/deposit`;
+};
+
+export const depositToWallet = async (
+  depositBody: DepositBody,
+  options?: RequestInit,
+): Promise<WalletBalance> => {
+  return customFetch<WalletBalance>(getDepositToWalletUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(depositBody),
+  });
+};
+
+export const getDepositToWalletMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof depositToWallet>>,
+    TError,
+    { data: BodyType<DepositBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof depositToWallet>>,
+  TError,
+  { data: BodyType<DepositBody> },
+  TContext
+> => {
+  const mutationKey = ["depositToWallet"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof depositToWallet>>,
+    { data: BodyType<DepositBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return depositToWallet(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DepositToWalletMutationResult = NonNullable<
+  Awaited<ReturnType<typeof depositToWallet>>
+>;
+export type DepositToWalletMutationBody = BodyType<DepositBody>;
+export type DepositToWalletMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Initiate or confirm a wallet deposit
+ */
+export const useDepositToWallet = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof depositToWallet>>,
+    TError,
+    { data: BodyType<DepositBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof depositToWallet>>,
+  TError,
+  { data: BodyType<DepositBody> },
+  TContext
+> => {
+  return useMutation(getDepositToWalletMutationOptions(options));
+};
+
+/**
+ * @summary List deposit history for current user
+ */
+export const getListDepositsUrl = () => {
+  return `/api/wallet/deposits`;
+};
+
+export const listDeposits = async (
+  options?: RequestInit,
+): Promise<Deposit[]> => {
+  return customFetch<Deposit[]>(getListDepositsUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListDepositsQueryKey = () => {
+  return [`/api/wallet/deposits`] as const;
+};
+
+export const getListDepositsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listDeposits>>,
+  TError = ErrorType<ErrorResponse>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listDeposits>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListDepositsQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listDeposits>>> = ({
+    signal,
+  }) => listDeposits({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listDeposits>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListDepositsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listDeposits>>
+>;
+export type ListDepositsQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary List deposit history for current user
+ */
+
+export function useListDeposits<
+  TData = Awaited<ReturnType<typeof listDeposits>>,
+  TError = ErrorType<ErrorResponse>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listDeposits>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListDepositsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get current user's cart
+ */
+export const getGetCartUrl = () => {
+  return `/api/cart`;
+};
+
+export const getCart = async (options?: RequestInit): Promise<CartItem[]> => {
+  return customFetch<CartItem[]>(getGetCartUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetCartQueryKey = () => {
+  return [`/api/cart`] as const;
+};
+
+export const getGetCartQueryOptions = <
+  TData = Awaited<ReturnType<typeof getCart>>,
+  TError = ErrorType<ErrorResponse>,
+>(options?: {
+  query?: UseQueryOptions<Awaited<ReturnType<typeof getCart>>, TError, TData>;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetCartQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getCart>>> = ({
+    signal,
+  }) => getCart({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getCart>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetCartQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getCart>>
+>;
+export type GetCartQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Get current user's cart
+ */
+
+export function useGetCart<
+  TData = Awaited<ReturnType<typeof getCart>>,
+  TError = ErrorType<ErrorResponse>,
+>(options?: {
+  query?: UseQueryOptions<Awaited<ReturnType<typeof getCart>>, TError, TData>;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetCartQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Add a bundle to cart
+ */
+export const getAddToCartUrl = () => {
+  return `/api/cart`;
+};
+
+export const addToCart = async (
+  addToCartBody: AddToCartBody,
+  options?: RequestInit,
+): Promise<CartItem> => {
+  return customFetch<CartItem>(getAddToCartUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(addToCartBody),
+  });
+};
+
+export const getAddToCartMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof addToCart>>,
+    TError,
+    { data: BodyType<AddToCartBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof addToCart>>,
+  TError,
+  { data: BodyType<AddToCartBody> },
+  TContext
+> => {
+  const mutationKey = ["addToCart"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof addToCart>>,
+    { data: BodyType<AddToCartBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return addToCart(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AddToCartMutationResult = NonNullable<
+  Awaited<ReturnType<typeof addToCart>>
+>;
+export type AddToCartMutationBody = BodyType<AddToCartBody>;
+export type AddToCartMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Add a bundle to cart
+ */
+export const useAddToCart = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof addToCart>>,
+    TError,
+    { data: BodyType<AddToCartBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof addToCart>>,
+  TError,
+  { data: BodyType<AddToCartBody> },
+  TContext
+> => {
+  return useMutation(getAddToCartMutationOptions(options));
+};
+
+/**
+ * @summary Clear all items from cart
+ */
+export const getClearCartUrl = () => {
+  return `/api/cart`;
+};
+
+export const clearCart = async (options?: RequestInit): Promise<void> => {
+  return customFetch<void>(getClearCartUrl(), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getClearCartMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof clearCart>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof clearCart>>,
+  TError,
+  void,
+  TContext
+> => {
+  const mutationKey = ["clearCart"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof clearCart>>,
+    void
+  > = () => {
+    return clearCart(requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ClearCartMutationResult = NonNullable<
+  Awaited<ReturnType<typeof clearCart>>
+>;
+
+export type ClearCartMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Clear all items from cart
+ */
+export const useClearCart = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof clearCart>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof clearCart>>,
+  TError,
+  void,
+  TContext
+> => {
+  return useMutation(getClearCartMutationOptions(options));
+};
+
+/**
+ * @summary Remove a cart item
+ */
+export const getRemoveFromCartUrl = (id: number) => {
+  return `/api/cart/${id}`;
+};
+
+export const removeFromCart = async (
+  id: number,
+  options?: RequestInit,
+): Promise<void> => {
+  return customFetch<void>(getRemoveFromCartUrl(id), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getRemoveFromCartMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof removeFromCart>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof removeFromCart>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  const mutationKey = ["removeFromCart"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof removeFromCart>>,
+    { id: number }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return removeFromCart(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RemoveFromCartMutationResult = NonNullable<
+  Awaited<ReturnType<typeof removeFromCart>>
+>;
+
+export type RemoveFromCartMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Remove a cart item
+ */
+export const useRemoveFromCart = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof removeFromCart>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof removeFromCart>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  return useMutation(getRemoveFromCartMutationOptions(options));
+};
+
+/**
+ * @summary Checkout cart using wallet balance
+ */
+export const getCheckoutCartUrl = () => {
+  return `/api/cart/checkout`;
+};
+
+export const checkoutCart = async (
+  options?: RequestInit,
+): Promise<CheckoutResult> => {
+  return customFetch<CheckoutResult>(getCheckoutCartUrl(), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getCheckoutCartMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof checkoutCart>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof checkoutCart>>,
+  TError,
+  void,
+  TContext
+> => {
+  const mutationKey = ["checkoutCart"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof checkoutCart>>,
+    void
+  > = () => {
+    return checkoutCart(requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CheckoutCartMutationResult = NonNullable<
+  Awaited<ReturnType<typeof checkoutCart>>
+>;
+
+export type CheckoutCartMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Checkout cart using wallet balance
+ */
+export const useCheckoutCart = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof checkoutCart>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof checkoutCart>>,
+  TError,
+  void,
+  TContext
+> => {
+  return useMutation(getCheckoutCartMutationOptions(options));
+};
 
 /**
  * @summary List all users (admin)

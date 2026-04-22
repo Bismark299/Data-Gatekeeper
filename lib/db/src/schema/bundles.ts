@@ -10,6 +10,7 @@ export const bundlesTable = pgTable("bundles", {
   validityDays: integer("validity_days").notNull(),
   price: numeric("price", { precision: 10, scale: 2 }).notNull(),
   category: text("category").notNull(),
+  network: text("network").notNull().default("mtn"),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),

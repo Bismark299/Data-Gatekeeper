@@ -70,6 +70,7 @@ export const GetMeResponse = zod.object({
  */
 export const ListBundlesQueryParams = zod.object({
   category: zod.coerce.string().optional(),
+  network: zod.coerce.string().optional(),
   minPrice: zod.coerce.number().optional(),
   maxPrice: zod.coerce.number().optional(),
 });
@@ -82,6 +83,7 @@ export const ListBundlesResponseItem = zod.object({
   validityDays: zod.number(),
   price: zod.number(),
   category: zod.string(),
+  network: zod.string(),
   isActive: zod.boolean(),
   createdAt: zod.string(),
 });
@@ -97,6 +99,7 @@ export const CreateBundleBody = zod.object({
   validityDays: zod.number(),
   price: zod.number(),
   category: zod.string(),
+  network: zod.string(),
 });
 
 /**
@@ -114,6 +117,7 @@ export const GetBundleResponse = zod.object({
   validityDays: zod.number(),
   price: zod.number(),
   category: zod.string(),
+  network: zod.string(),
   isActive: zod.boolean(),
   createdAt: zod.string(),
 });
@@ -132,6 +136,7 @@ export const UpdateBundleBody = zod.object({
   validityDays: zod.number().optional(),
   price: zod.number().optional(),
   category: zod.string().optional(),
+  network: zod.string().optional(),
   isActive: zod.boolean().optional(),
 });
 
@@ -143,6 +148,7 @@ export const UpdateBundleResponse = zod.object({
   validityDays: zod.number(),
   price: zod.number(),
   category: zod.string(),
+  network: zod.string(),
   isActive: zod.boolean(),
   createdAt: zod.string(),
 });
@@ -195,6 +201,96 @@ export const GetOrderResponse = zod.object({
   status: zod.string(),
   phoneNumber: zod.string(),
   createdAt: zod.string(),
+});
+
+/**
+ * @summary Get current user wallet balance
+ */
+export const GetWalletBalanceResponse = zod.object({
+  balance: zod.number(),
+  updatedAt: zod.string(),
+});
+
+/**
+ * @summary Initiate or confirm a wallet deposit
+ */
+export const DepositToWalletBody = zod.object({
+  amount: zod.number(),
+  method: zod.string().optional(),
+  reference: zod.string().optional(),
+  note: zod.string().optional(),
+});
+
+export const DepositToWalletResponse = zod.object({
+  balance: zod.number(),
+  updatedAt: zod.string(),
+});
+
+/**
+ * @summary List deposit history for current user
+ */
+export const ListDepositsResponseItem = zod.object({
+  id: zod.number(),
+  userId: zod.number(),
+  amount: zod.number(),
+  status: zod.string(),
+  method: zod.string(),
+  reference: zod.string().nullish(),
+  note: zod.string().nullish(),
+  createdAt: zod.string(),
+});
+export const ListDepositsResponse = zod.array(ListDepositsResponseItem);
+
+/**
+ * @summary Get current user's cart
+ */
+export const GetCartResponseItem = zod.object({
+  id: zod.number(),
+  userId: zod.number(),
+  bundleId: zod.number(),
+  phoneNumber: zod.string(),
+  bundleName: zod.string(),
+  bundleData: zod.string(),
+  bundleNetwork: zod.string(),
+  price: zod.number(),
+  createdAt: zod.string(),
+});
+export const GetCartResponse = zod.array(GetCartResponseItem);
+
+/**
+ * @summary Add a bundle to cart
+ */
+export const AddToCartBody = zod.object({
+  bundleId: zod.number(),
+  phoneNumber: zod.string(),
+});
+
+/**
+ * @summary Remove a cart item
+ */
+export const RemoveFromCartParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+/**
+ * @summary Checkout cart using wallet balance
+ */
+export const CheckoutCartResponse = zod.object({
+  orders: zod.array(
+    zod.object({
+      id: zod.number(),
+      userId: zod.number(),
+      bundleId: zod.number(),
+      bundleName: zod.string(),
+      bundleData: zod.string(),
+      price: zod.number(),
+      status: zod.string(),
+      phoneNumber: zod.string(),
+      createdAt: zod.string(),
+    }),
+  ),
+  totalCharged: zod.number(),
+  remainingBalance: zod.number(),
 });
 
 /**

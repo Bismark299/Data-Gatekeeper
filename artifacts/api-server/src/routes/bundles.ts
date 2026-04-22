@@ -22,6 +22,7 @@ function formatBundle(b: typeof bundlesTable.$inferSelect) {
     validityDays: b.validityDays,
     price: Number(b.price),
     category: b.category,
+    network: b.network,
     isActive: b.isActive,
     createdAt: b.createdAt.toISOString(),
   };
@@ -34,12 +35,15 @@ router.get("/bundles", async (req, res): Promise<void> => {
     return;
   }
 
-  const { category, minPrice, maxPrice } = params.data;
+  const { category, network, minPrice, maxPrice } = params.data as { category?: string; network?: string; minPrice?: number; maxPrice?: number };
 
   const conditions: SQL[] = [eq(bundlesTable.isActive, true)];
 
   if (category) {
     conditions.push(eq(bundlesTable.category, category));
+  }
+  if (network) {
+    conditions.push(eq(bundlesTable.network, network));
   }
   if (minPrice !== undefined) {
     conditions.push(gte(bundlesTable.price, String(minPrice)));

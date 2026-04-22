@@ -17,6 +17,10 @@ tags:
     description: User management
   - name: orders
     description: Order management
+  - name: wallet
+    description: Wallet and deposits
+  - name: cart
+    description: Shopping cart
   - name: admin
     description: Admin operations
 
@@ -129,6 +133,10 @@ paths:
       summary: List all active data bundles
       parameters:
         - name: category
+          in: query
+          schema:
+            type: string
+        - name: network
           in: query
           schema:
             type: string
@@ -338,6 +346,194 @@ paths:
                 $ref: "#/components/schemas/Order"
         "404":
           description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /wallet/balance:
+    get:
+      operationId: getWalletBalance
+      tags: [wallet]
+      summary: Get current user wallet balance
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WalletBalance"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /wallet/deposit:
+    post:
+      operationId: depositToWallet
+      tags: [wallet]
+      summary: Initiate or confirm a wallet deposit
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DepositBody"
+      responses:
+        "200":
+          description: Deposit confirmed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WalletBalance"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /wallet/deposits:
+    get:
+      operationId: listDeposits
+      tags: [wallet]
+      summary: List deposit history for current user
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Deposit"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /cart:
+    get:
+      operationId: getCart
+      tags: [cart]
+      summary: Get current user's cart
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CartItem"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    post:
+      operationId: addToCart
+      tags: [cart]
+      summary: Add a bundle to cart
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddToCartBody"
+      responses:
+        "201":
+          description: Added
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CartItem"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    delete:
+      operationId: clearCart
+      tags: [cart]
+      summary: Clear all items from cart
+      responses:
+        "204":
+          description: Cleared
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /cart/{id}:
+    delete:
+      operationId: removeFromCart
+      tags: [cart]
+      summary: Remove a cart item
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Removed
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /cart/checkout:
+    post:
+      operationId: checkoutCart
+      tags: [cart]
+      summary: Checkout cart using wallet balance
+      responses:
+        "200":
+          description: Orders created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CheckoutResult"
+        "400":
+          description: Insufficient balance or empty cart
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
           content:
             application/json:
               schema:
@@ -672,6 +868,8 @@ components:
           type: number
         category:
           type: string
+        network:
+          type: string
         isActive:
           type: boolean
         createdAt:
@@ -684,6 +882,7 @@ components:
         - validityDays
         - price
         - category
+        - network
         - isActive
         - createdAt
 
@@ -702,6 +901,8 @@ components:
           type: number
         category:
           type: string
+        network:
+          type: string
       required:
         - name
         - description
@@ -709,6 +910,7 @@ components:
         - validityDays
         - price
         - category
+        - network
 
     UpdateBundleBody:
       type: object
@@ -724,6 +926,8 @@ components:
         price:
           type: number
         category:
+          type: string
+        network:
           type: string
         isActive:
           type: boolean
@@ -778,6 +982,117 @@ components:
           type: string
       required:
         - status
+
+    WalletBalance:
+      type: object
+      properties:
+        balance:
+          type: number
+        updatedAt:
+          type: string
+      required:
+        - balance
+        - updatedAt
+
+    DepositBody:
+      type: object
+      properties:
+        amount:
+          type: number
+        method:
+          type: string
+        reference:
+          type: string
+        note:
+          type: string
+      required:
+        - amount
+
+    Deposit:
+      type: object
+      properties:
+        id:
+          type: integer
+        userId:
+          type: integer
+        amount:
+          type: number
+        status:
+          type: string
+        method:
+          type: string
+        reference:
+          type: ["string", "null"]
+        note:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+      required:
+        - id
+        - userId
+        - amount
+        - status
+        - method
+        - createdAt
+
+    CartItem:
+      type: object
+      properties:
+        id:
+          type: integer
+        userId:
+          type: integer
+        bundleId:
+          type: integer
+        phoneNumber:
+          type: string
+        bundleName:
+          type: string
+        bundleData:
+          type: string
+        bundleNetwork:
+          type: string
+        price:
+          type: number
+        createdAt:
+          type: string
+      required:
+        - id
+        - userId
+        - bundleId
+        - phoneNumber
+        - bundleName
+        - bundleData
+        - bundleNetwork
+        - price
+        - createdAt
+
+    AddToCartBody:
+      type: object
+      properties:
+        bundleId:
+          type: integer
+        phoneNumber:
+          type: string
+      required:
+        - bundleId
+        - phoneNumber
+
+    CheckoutResult:
+      type: object
+      properties:
+        orders:
+          type: array
+          items:
+            $ref: "#/components/schemas/Order"
+        totalCharged:
+          type: number
+        remainingBalance:
+          type: number
+      required:
+        - orders
+        - totalCharged
+        - remainingBalance
 
     AdminStats:
       type: object

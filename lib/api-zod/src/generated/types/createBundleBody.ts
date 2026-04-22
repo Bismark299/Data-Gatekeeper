@@ -13,4 +13,5 @@ export interface CreateBundleBody {
   validityDays: number;
   price: number;
   category: string;
+  network: string;
 }

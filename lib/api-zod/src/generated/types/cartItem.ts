@@ -6,15 +6,14 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface Bundle {
+export interface CartItem {
   id: number;
-  name: string;
-  description: string;
-  dataAmount: string;
-  validityDays: number;
+  userId: number;
+  bundleId: number;
+  phoneNumber: string;
+  bundleName: string;
+  bundleData: string;
+  bundleNetwork: string;
   price: number;
-  category: string;
-  network: string;
-  isActive: boolean;
   createdAt: string;
 }

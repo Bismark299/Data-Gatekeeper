@@ -1,11 +1,15 @@
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/context/AuthContext";
+import { useCart } from "@/context/CartContext";
+import { useGetWalletBalance } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
-import { Menu, X, Wifi, User, LogOut, LayoutDashboard, ShieldCheck } from "lucide-react";
+import { Menu, X, Wifi, LogOut, ShieldCheck, ShoppingCart, Wallet } from "lucide-react";
 
 export function Navbar() {
   const { isAuthenticated, isAdmin, user, signOut } = useAuth();
+  const { cartCount, setOpen: setCartOpen } = useCart();
+  const { data: wallet } = useGetWalletBalance({ query: { enabled: isAuthenticated } });
   const [location] = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -22,64 +26,81 @@ export function Navbar() {
 
           <div className="hidden md:flex items-center gap-1">
             <Link href="/bundles">
-              <Button variant={location === "/bundles" ? "secondary" : "ghost"} size="sm">
-                Browse Plans
-              </Button>
+              <Button variant={location === "/bundles" ? "secondary" : "ghost"} size="sm">Browse Plans</Button>
             </Link>
             {isAuthenticated && !isAdmin && (
               <>
                 <Link href="/dashboard">
-                  <Button variant={location === "/dashboard" ? "secondary" : "ghost"} size="sm">
-                    Dashboard
-                  </Button>
+                  <Button variant={location === "/dashboard" ? "secondary" : "ghost"} size="sm">Dashboard</Button>
                 </Link>
                 <Link href="/orders">
-                  <Button variant={location === "/orders" ? "secondary" : "ghost"} size="sm">
-                    My Orders
-                  </Button>
+                  <Button variant={location === "/orders" ? "secondary" : "ghost"} size="sm">My Orders</Button>
                 </Link>
               </>
             )}
             {isAdmin && (
               <Link href="/admin">
                 <Button variant={location.startsWith("/admin") ? "secondary" : "ghost"} size="sm">
-                  <ShieldCheck className="w-4 h-4 mr-1.5" />
-                  Admin
+                  <ShieldCheck className="w-4 h-4 mr-1.5" />Admin
                 </Button>
               </Link>
             )}
           </div>
 
-          <div className="hidden md:flex items-center gap-2">
+          <div className="flex items-center gap-2">
+            {isAuthenticated && wallet !== undefined && (
+              <Link href="/wallet" className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-primary/10 hover:bg-primary/15 transition-colors text-xs font-bold text-primary">
+                <Wallet className="w-3.5 h-3.5" />
+                GH₵{(wallet?.balance ?? 0).toFixed(2)}
+              </Link>
+            )}
+
+            {isAuthenticated && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="relative"
+                onClick={() => setCartOpen(true)}
+                data-testid="button-open-cart"
+              >
+                <ShoppingCart className="w-5 h-5" />
+                {cartCount > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 bg-primary text-primary-foreground text-[10px] w-4 h-4 rounded-full flex items-center justify-center font-bold leading-none">
+                    {cartCount > 9 ? "9+" : cartCount}
+                  </span>
+                )}
+              </Button>
+            )}
+
             {isAuthenticated ? (
-              <div className="flex items-center gap-2">
-                <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-muted text-sm">
-                  <User className="w-3.5 h-3.5 text-muted-foreground" />
-                  <span className="text-foreground font-medium">{user?.name.split(" ")[0]}</span>
-                </div>
-                <Button variant="ghost" size="sm" onClick={signOut} data-testid="button-logout">
-                  <LogOut className="w-4 h-4" />
-                </Button>
-              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="hidden md:flex gap-1.5"
+                onClick={signOut}
+                data-testid="button-logout"
+              >
+                <LogOut className="w-4 h-4" />
+              </Button>
             ) : (
-              <>
+              <div className="hidden md:flex gap-2">
                 <Link href="/login">
                   <Button variant="ghost" size="sm" data-testid="link-login">Login</Button>
                 </Link>
                 <Link href="/register">
                   <Button size="sm" data-testid="link-register">Get Started</Button>
                 </Link>
-              </>
+              </div>
             )}
-          </div>
 
-          <button
-            className="md:hidden p-2 rounded-lg hover:bg-muted"
-            onClick={() => setMenuOpen(!menuOpen)}
-            data-testid="button-mobile-menu"
-          >
-            {menuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-          </button>
+            <button
+              className="md:hidden p-2 rounded-lg hover:bg-muted"
+              onClick={() => setMenuOpen(!menuOpen)}
+              data-testid="button-mobile-menu"
+            >
+              {menuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+            </button>
+          </div>
         </div>
 
         {menuOpen && (
@@ -90,12 +111,16 @@ export function Navbar() {
             {isAuthenticated && !isAdmin && (
               <>
                 <Link href="/dashboard" onClick={() => setMenuOpen(false)}>
-                  <Button variant="ghost" className="w-full justify-start">
-                    <LayoutDashboard className="w-4 h-4 mr-2" />Dashboard
-                  </Button>
+                  <Button variant="ghost" className="w-full justify-start">Dashboard</Button>
                 </Link>
                 <Link href="/orders" onClick={() => setMenuOpen(false)}>
                   <Button variant="ghost" className="w-full justify-start">My Orders</Button>
+                </Link>
+                <Link href="/wallet" onClick={() => setMenuOpen(false)}>
+                  <Button variant="ghost" className="w-full justify-start">
+                    <Wallet className="w-4 h-4 mr-2" />
+                    Wallet {wallet ? `(GH₵${wallet.balance.toFixed(2)})` : ""}
+                  </Button>
                 </Link>
               </>
             )}
@@ -107,7 +132,11 @@ export function Navbar() {
               </Link>
             )}
             {isAuthenticated ? (
-              <Button variant="ghost" className="w-full justify-start text-destructive" onClick={() => { signOut(); setMenuOpen(false); }}>
+              <Button
+                variant="ghost"
+                className="w-full justify-start text-destructive"
+                onClick={() => { signOut(); setMenuOpen(false); }}
+              >
                 <LogOut className="w-4 h-4 mr-2" />Sign Out
               </Button>
             ) : (

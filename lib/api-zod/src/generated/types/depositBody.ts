@@ -6,9 +6,9 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export type ListBundlesParams = {
-  category?: string;
-  network?: string;
-  minPrice?: number;
-  maxPrice?: number;
-};
+export interface DepositBody {
+  amount: number;
+  method?: string;
+  reference?: string;
+  note?: string;
+}

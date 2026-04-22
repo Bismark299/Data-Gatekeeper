@@ -6,9 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export type ListBundlesParams = {
-  category?: string;
-  network?: string;
-  minPrice?: number;
-  maxPrice?: number;
-};
+export interface AddToCartBody {
+  bundleId: number;
+  phoneNumber: string;
+}

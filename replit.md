@@ -57,8 +57,17 @@ A full-stack data bundle sales platform with a modern client interface and admin
 ## Demo Credentials
 
 - **Admin**: admin@databundle.com / Admin@123
-- **User**: john@example.com / User@123
-- **User**: amina@example.com / User@123
+- **User**: kwame@example.com / User@123 (wallet: GH₵50)
+- **User**: akosua@example.com / User@123 (wallet: GH₵30)
+
+## 4 Network Brands
+
+| Network | Color | Tagline |
+|---|---|---|
+| MTN | Yellow (#FFC107) | Everywhere You Go |
+| Telecel | Red (#E31837) | Advancing Lives |
+| AT iShare | Blue (#1565C0) | Share the Experience |
+| AT Big-Time | Green (#2E7D32) | Go Big or Go Home |
 
 ## Key Commands
 

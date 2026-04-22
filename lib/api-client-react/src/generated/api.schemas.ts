@@ -63,6 +63,7 @@ export interface Bundle {
   validityDays: number;
   price: number;
   category: string;
+  network: string;
   isActive: boolean;
   createdAt: string;
 }
@@ -74,6 +75,7 @@ export interface CreateBundleBody {
   validityDays: number;
   price: number;
   category: string;
+  network: string;
 }
 
 export interface UpdateBundleBody {
@@ -83,6 +85,7 @@ export interface UpdateBundleBody {
   validityDays?: number;
   price?: number;
   category?: string;
+  network?: string;
   isActive?: boolean;
 }
 
@@ -105,6 +108,54 @@ export interface CreateOrderBody {
 
 export interface UpdateOrderStatusBody {
   status: string;
+}
+
+export interface WalletBalance {
+  balance: number;
+  updatedAt: string;
+}
+
+export interface DepositBody {
+  amount: number;
+  method?: string;
+  reference?: string;
+  note?: string;
+}
+
+export interface Deposit {
+  id: number;
+  userId: number;
+  amount: number;
+  status: string;
+  method: string;
+  /** @nullable */
+  reference?: string | null;
+  /** @nullable */
+  note?: string | null;
+  createdAt: string;
+}
+
+export interface CartItem {
+  id: number;
+  userId: number;
+  bundleId: number;
+  phoneNumber: string;
+  bundleName: string;
+  bundleData: string;
+  bundleNetwork: string;
+  price: number;
+  createdAt: string;
+}
+
+export interface AddToCartBody {
+  bundleId: number;
+  phoneNumber: string;
+}
+
+export interface CheckoutResult {
+  orders: Order[];
+  totalCharged: number;
+  remainingBalance: number;
 }
 
 export interface AdminStats {
@@ -134,6 +185,7 @@ export interface TopBundle {
 
 export type ListBundlesParams = {
   category?: string;
+  network?: string;
   minPrice?: number;
   maxPrice?: number;
 };
