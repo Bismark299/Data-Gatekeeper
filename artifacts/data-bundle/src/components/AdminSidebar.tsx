@@ -2,7 +2,7 @@ import { Link, useLocation } from "wouter";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import {
-  LayoutDashboard, Package, Users, ShoppingCart, LogOut, Wifi, ChevronRight, X
+  LayoutDashboard, Package, Users, ShoppingCart, LogOut, Wifi, ChevronRight, X, Wallet
 } from "lucide-react";
 
 const navItems = [
@@ -10,6 +10,7 @@ const navItems = [
   { href: "/admin/bundles", icon: Package, label: "Bundles" },
   { href: "/admin/users", icon: Users, label: "Users" },
   { href: "/admin/orders", icon: ShoppingCart, label: "Orders" },
+  { href: "/admin/wallets", icon: Wallet, label: "Wallets" },
 ];
 
 interface AdminSidebarProps {

@@ -45,6 +45,11 @@ A full-stack data bundle sales platform with a modern client interface and admin
 - Manage bundles (create, edit, toggle active, delete)
 - Manage users (search, toggle active, change role, delete)
 - Manage orders (filter by status, update status)
+- Manage wallets (view all user balances, expandable deposit history per user)
+
+### User Features
+- User Profile page (`/profile`) — update name, phone number, and change password
+- Order Confirmation dialog — shown after successful checkout with order breakdown, amount charged, and remaining balance
 
 ## Security Model
 

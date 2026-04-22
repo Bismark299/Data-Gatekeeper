@@ -90,6 +90,32 @@ router.post("/auth/logout", (req, res): void => {
   });
 });
 
+router.patch("/auth/me", requireAuth, async (req, res): Promise<void> => {
+  const userId = req.session.userId!;
+  const { name, phone, currentPassword, newPassword } = req.body;
+
+  const [user] = await db.select().from(usersTable).where(eq(usersTable.id, userId));
+  if (!user) { res.status(404).json({ error: "User not found" }); return; }
+
+  const updates: Partial<{ name: string; phone: string | null; passwordHash: string }> = {};
+  if (name && typeof name === "string") updates.name = name.trim();
+  if (phone !== undefined) updates.phone = phone || null;
+
+  if (newPassword) {
+    if (!currentPassword) { res.status(400).json({ error: "Current password required" }); return; }
+    const valid = await bcrypt.compare(currentPassword, user.passwordHash);
+    if (!valid) { res.status(400).json({ error: "Current password is incorrect" }); return; }
+    if (newPassword.length < 6) { res.status(400).json({ error: "New password must be at least 6 characters" }); return; }
+    updates.passwordHash = await bcrypt.hash(newPassword, 12);
+  }
+
+  const [updated] = await db.update(usersTable).set(updates).where(eq(usersTable.id, userId)).returning();
+  res.json({
+    id: updated.id, name: updated.name, email: updated.email, phone: updated.phone,
+    role: updated.role, isActive: updated.isActive, createdAt: updated.createdAt.toISOString(),
+  });
+});
+
 router.get("/auth/me", requireAuth, async (req, res): Promise<void> => {
   const userId = req.session.userId!;
   const [user] = await db.select().from(usersTable).where(eq(usersTable.id, userId));

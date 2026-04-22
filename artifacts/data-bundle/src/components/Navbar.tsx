@@ -4,7 +4,7 @@ import { useAuth } from "@/context/AuthContext";
 import { useCart } from "@/context/CartContext";
 import { useGetWalletBalance } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
-import { Menu, X, Wifi, LogOut, ShieldCheck, ShoppingCart, Wallet } from "lucide-react";
+import { Menu, X, Wifi, LogOut, ShieldCheck, ShoppingCart, Wallet, UserCircle } from "lucide-react";
 
 export function Navbar() {
   const { isAuthenticated, isAdmin, user, signOut } = useAuth();
@@ -35,6 +35,11 @@ export function Navbar() {
                 </Link>
                 <Link href="/orders">
                   <Button variant={location === "/orders" ? "secondary" : "ghost"} size="sm">My Orders</Button>
+                </Link>
+                <Link href="/profile">
+                  <Button variant={location === "/profile" ? "secondary" : "ghost"} size="sm">
+                    <UserCircle className="w-4 h-4 mr-1.5" />Profile
+                  </Button>
                 </Link>
               </>
             )}
@@ -120,6 +125,11 @@ export function Navbar() {
                   <Button variant="ghost" className="w-full justify-start">
                     <Wallet className="w-4 h-4 mr-2" />
                     Wallet {wallet ? `(GH₵${wallet.balance.toFixed(2)})` : ""}
+                  </Button>
+                </Link>
+                <Link href="/profile" onClick={() => setMenuOpen(false)}>
+                  <Button variant="ghost" className="w-full justify-start">
+                    <UserCircle className="w-4 h-4 mr-2" />Profile
                   </Button>
                 </Link>
               </>

@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { eq, count, sum, desc, gte, and, ilike, type SQL } from "drizzle-orm";
-import { db, usersTable, bundlesTable, ordersTable } from "@workspace/db";
+import { db, usersTable, bundlesTable, ordersTable, walletsTable, depositsTable } from "@workspace/db";
 import {
   AdminListUsersQueryParams,
   AdminUpdateUserParams,
@@ -167,6 +167,50 @@ router.patch("/admin/orders/:id/status", requireAdmin, async (req, res): Promise
   }
 
   res.json(formatOrder(order));
+});
+
+router.get("/admin/wallets", requireAdmin, async (req, res): Promise<void> => {
+  const rows = await db
+    .select({
+      id: walletsTable.id,
+      userId: walletsTable.userId,
+      balance: walletsTable.balance,
+      updatedAt: walletsTable.updatedAt,
+      userName: usersTable.name,
+      userEmail: usersTable.email,
+    })
+    .from(walletsTable)
+    .leftJoin(usersTable, eq(walletsTable.userId, usersTable.id))
+    .orderBy(desc(walletsTable.updatedAt));
+
+  res.json(rows.map(w => ({
+    id: w.id,
+    userId: w.userId,
+    balance: Number(w.balance),
+    updatedAt: w.updatedAt?.toISOString() ?? null,
+    userName: w.userName ?? "Unknown",
+    userEmail: w.userEmail ?? "Unknown",
+  })));
+});
+
+router.get("/admin/wallets/:userId/deposits", requireAdmin, async (req, res): Promise<void> => {
+  const userId = Number(req.params.userId);
+  if (isNaN(userId)) { res.status(400).json({ error: "Invalid user ID" }); return; }
+
+  const deposits = await db
+    .select()
+    .from(depositsTable)
+    .where(eq(depositsTable.userId, userId))
+    .orderBy(desc(depositsTable.createdAt));
+
+  res.json(deposits.map(d => ({
+    id: d.id,
+    amount: Number(d.amount),
+    method: d.method,
+    reference: d.reference,
+    status: d.status,
+    createdAt: d.createdAt.toISOString(),
+  })));
 });
 
 router.get("/admin/stats", requireAdmin, async (req, res): Promise<void> => {

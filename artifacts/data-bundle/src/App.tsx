@@ -17,6 +17,10 @@ import AdminDashboard from "@/pages/admin/index";
 import AdminBundles from "@/pages/admin/bundles";
 import AdminUsers from "@/pages/admin/users";
 import AdminOrders from "@/pages/admin/orders";
+import AdminWallets from "@/pages/admin/wallets";
+import Profile from "@/pages/profile";
+import { CheckoutSuccessDialog } from "@/components/CheckoutSuccessDialog";
+import { useCart } from "@/context/CartContext";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -40,12 +44,24 @@ function Router() {
       <Route path="/dashboard" component={Dashboard} />
       <Route path="/orders" component={Orders} />
       <Route path="/wallet" component={WalletPage} />
+      <Route path="/profile" component={Profile} />
       <Route path="/admin" component={AdminDashboard} />
       <Route path="/admin/bundles" component={AdminBundles} />
       <Route path="/admin/users" component={AdminUsers} />
       <Route path="/admin/orders" component={AdminOrders} />
+      <Route path="/admin/wallets" component={AdminWallets} />
       <Route component={NotFound} />
     </Switch>
+  );
+}
+
+function CartOverlays() {
+  const { checkoutResult, clearCheckoutResult } = useCart();
+  return (
+    <>
+      <CartDrawer />
+      <CheckoutSuccessDialog result={checkoutResult} onClose={clearCheckoutResult} />
+    </>
   );
 }
 
@@ -57,7 +73,7 @@ function App() {
           <AuthProvider>
             <CartProvider>
               <Router />
-              <CartDrawer />
+              <CartOverlays />
             </CartProvider>
           </AuthProvider>
         </WouterRouter>

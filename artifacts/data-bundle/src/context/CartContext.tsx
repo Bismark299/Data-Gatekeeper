@@ -13,6 +13,12 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "./AuthContext";
 
+interface CheckoutResult {
+  orders: { id: number; bundleData: string; phoneNumber: string; price: number }[];
+  totalCharged: number;
+  remainingBalance: number;
+}
+
 interface CartContextType {
   open: boolean;
   setOpen: (v: boolean) => void;
@@ -23,12 +29,15 @@ interface CartContextType {
   clearItems: () => void;
   checkout: () => void;
   isCheckingOut: boolean;
+  checkoutResult: CheckoutResult | null;
+  clearCheckoutResult: () => void;
 }
 
 const CartContext = createContext<CartContextType | null>(null);
 
 export function CartProvider({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
+  const [checkoutResult, setCheckoutResult] = useState<CheckoutResult | null>(null);
   const { isAuthenticated } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -70,14 +79,11 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const checkout = () => {
     checkoutCart.mutate(undefined, {
       onSuccess: (result) => {
-        toast({
-          title: `Order placed! ${result.orders.length} bundle${result.orders.length > 1 ? "s" : ""} purchased.`,
-          description: `GH₵${result.totalCharged.toFixed(2)} deducted. Balance: GH₵${result.remainingBalance.toFixed(2)}`,
-        });
         invalidateCart();
         queryClient.invalidateQueries({ queryKey: getGetWalletBalanceQueryKey() });
         queryClient.invalidateQueries({ queryKey: getListMyOrdersQueryKey() });
         setOpen(false);
+        setCheckoutResult(result as CheckoutResult);
       },
       onError: (e: unknown) => {
         const msg = (e as { message?: string })?.message ?? "Checkout failed";
@@ -85,6 +91,8 @@ export function CartProvider({ children }: { children: ReactNode }) {
       },
     });
   };
+
+  const clearCheckoutResult = () => setCheckoutResult(null);
 
   return (
     <CartContext.Provider value={{
@@ -97,6 +105,8 @@ export function CartProvider({ children }: { children: ReactNode }) {
       clearItems,
       checkout,
       isCheckingOut: checkoutCart.isPending,
+      checkoutResult,
+      clearCheckoutResult,
     }}>
       {children}
     </CartContext.Provider>
