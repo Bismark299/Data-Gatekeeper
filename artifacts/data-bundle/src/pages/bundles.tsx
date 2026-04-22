@@ -10,7 +10,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { ShoppingCart, Wifi, Check } from "lucide-react";
+import { ShoppingCart, Wifi } from "lucide-react";
 
 type Network = "mtn" | "telecel" | "at-ishare" | "at-bigtime";
 
@@ -183,23 +183,12 @@ export default function Bundles() {
               >
                 <div className={`${theme.headerBg} px-4 py-3`}>
                   <div className={`text-xs font-bold uppercase tracking-widest ${theme.headerText} opacity-70 mb-1`}>
-                    {bundle.category}
+                    {theme.label}
                   </div>
                   <div className={`text-2xl font-extrabold ${theme.headerText}`}>{bundle.dataAmount}</div>
                 </div>
 
-                <div className="p-4 flex flex-col flex-1 gap-3">
-                  <h3 className="font-semibold text-foreground text-sm">{bundle.name}</h3>
-
-                  <ul className="space-y-1">
-                    {["Instant activation", "24/7 support", "Auto-renewal eligible"].map(f => (
-                      <li key={f} className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                        <Check className={`w-3.5 h-3.5 shrink-0 ${theme.checkColor}`} />
-                        {f}
-                      </li>
-                    ))}
-                  </ul>
-
+                <div className="p-4 flex flex-col flex-1">
                   <div className="mt-auto pt-3 border-t border-border flex items-center justify-between">
                     <div>
                       <span className="text-xl font-extrabold text-foreground">GH₵{bundle.price}</span>
