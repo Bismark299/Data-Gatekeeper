@@ -34,6 +34,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     query: {
       queryKey: getGetMeQueryKey(),
       retry: false,
+      staleTime: 5 * 60 * 1000,
     },
   });
 
