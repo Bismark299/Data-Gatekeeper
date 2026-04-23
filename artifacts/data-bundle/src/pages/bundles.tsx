@@ -95,7 +95,22 @@ export default function Bundles() {
   const [showDialog, setShowDialog] = useState(false);
 
   const { data: bundles, isLoading } = useListBundles({ network: activeNetwork });
-  const filtered = bundles ?? [];
+
+  const parseDataMB = (str: string) => {
+    const lower = str.toLowerCase().replace(/\s/g, "");
+    if (lower.includes("unlimited")) return Infinity;
+    const match = lower.match(/(\d+(?:\.\d+)?)(tb|gb|mb)/);
+    if (!match) return 0;
+    const num = parseFloat(match[1]);
+    const unit = match[2];
+    if (unit === "tb") return num * 1024 * 1024;
+    if (unit === "gb") return num * 1024;
+    return num; // mb
+  };
+
+  const filtered = [...(bundles ?? [])].sort(
+    (a, b) => parseDataMB(a.dataAmount) - parseDataMB(b.dataAmount)
+  );
   const theme = NETWORKS[activeNetwork];
 
   const handleSelect = (bundle: Bundle) => {
