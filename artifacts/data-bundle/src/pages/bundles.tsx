@@ -7,83 +7,25 @@ import { useAuth } from "@/context/AuthContext";
 import { useCart } from "@/context/CartContext";
 import { useLocation } from "wouter";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { ShoppingCart, Wifi } from "lucide-react";
+import { BundleCard, BundleCardMini, NETWORK_LABELS, NETWORK_STYLES, type NetworkKey } from "@/components/BundleCard";
 
-type Network = "mtn" | "telecel" | "at-ishare" | "at-bigtime";
+type Network = NetworkKey;
 
 interface Bundle {
-  id: number;
-  name: string;
-  description: string;
-  dataAmount: string;
-  validityDays: number;
-  price: number;
-  category: string;
-  network: string;
-  isActive: boolean;
+  id: number; name: string; description: string; dataAmount: string;
+  validityDays: number; price: number; category: string; network: string; isActive: boolean;
 }
 
-const NETWORKS: Record<Network, {
-  label: string;
-  shortLabel: string;
-  tagline: string;
-  cardBg: string;
-  cardText: string;
-  badgeBorder: string;
-  tabActive: string;
-  btnClass: string;
-}> = {
-  mtn: {
-    label: "MTN",
-    shortLabel: "MTN",
-    tagline: "Everywhere You Go",
-    cardBg: "bg-[#FFCC00]",
-    cardText: "text-gray-900",
-    badgeBorder: "border-gray-900 text-gray-900",
-    tabActive: "bg-yellow-400 text-gray-900 border-yellow-500",
-    btnClass: "bg-yellow-500 hover:bg-yellow-600 text-gray-900",
-  },
-  telecel: {
-    label: "Telecel",
-    shortLabel: "TELECEL",
-    tagline: "Advancing Lives",
-    cardBg: "bg-red-600",
-    cardText: "text-white",
-    badgeBorder: "border-white text-white",
-    tabActive: "bg-red-600 text-white border-red-600",
-    btnClass: "bg-red-600 hover:bg-red-700 text-white",
-  },
-  "at-ishare": {
-    label: "AT iShare",
-    shortLabel: "AT",
-    tagline: "Share the Experience",
-    cardBg: "bg-blue-600",
-    cardText: "text-white",
-    badgeBorder: "border-white text-white",
-    tabActive: "bg-blue-600 text-white border-blue-600",
-    btnClass: "bg-blue-600 hover:bg-blue-700 text-white",
-  },
-  "at-bigtime": {
-    label: "AT Big-Time",
-    shortLabel: "AT",
-    tagline: "Go Big or Go Home",
-    cardBg: "bg-green-700",
-    cardText: "text-white",
-    badgeBorder: "border-white text-white",
-    tabActive: "bg-green-700 text-white border-green-700",
-    btnClass: "bg-green-700 hover:bg-green-800 text-white",
-  },
-};
-
-const NETWORK_ICONS: Record<Network, string> = {
-  mtn: "🟡",
-  telecel: "🔴",
-  "at-ishare": "🔵",
-  "at-bigtime": "🟢",
-};
+const NETWORK_TABS: { key: Network; dot: string }[] = [
+  { key: "mtn",         dot: "bg-yellow-400" },
+  { key: "telecel",     dot: "bg-red-500" },
+  { key: "at-ishare",   dot: "bg-blue-500" },
+  { key: "at-bigtime",  dot: "bg-green-500" },
+];
 
 export default function Bundles() {
   const { isAuthenticated } = useAuth();
@@ -101,17 +43,11 @@ export default function Bundles() {
     if (lower.includes("unlimited")) return Infinity;
     const match = lower.match(/(\d+(?:\.\d+)?)(tb|gb|mb)/);
     if (!match) return 0;
-    const num = parseFloat(match[1]);
-    const unit = match[2];
-    if (unit === "tb") return num * 1024 * 1024;
-    if (unit === "gb") return num * 1024;
-    return num; // mb
+    const n = parseFloat(match[1]);
+    return match[2] === "tb" ? n * 1024 * 1024 : match[2] === "gb" ? n * 1024 : n;
   };
 
-  const filtered = [...(bundles ?? [])].sort(
-    (a, b) => parseDataMB(a.dataAmount) - parseDataMB(b.dataAmount)
-  );
-  const theme = NETWORKS[activeNetwork];
+  const filtered = [...(bundles ?? [])].sort((a, b) => parseDataMB(a.dataAmount) - parseDataMB(b.dataAmount));
 
   const handleSelect = (bundle: Bundle) => {
     if (!isAuthenticated) { setLocation("/login"); return; }
@@ -126,14 +62,6 @@ export default function Bundles() {
     setPhoneNumber("");
   };
 
-  const formatDuration = (days: number | undefined | null) => {
-    if (!days) return "No Expiry";
-    if (days === 1) return "1 Day";
-    if (days === 7) return "7 Days";
-    if (days === 30) return "30 Days";
-    return `${days} Days`;
-  };
-
   return (
     <div className="min-h-screen bg-background">
       <Navbar />
@@ -144,28 +72,34 @@ export default function Bundles() {
           <p className="text-muted-foreground mt-1">Choose your network and pick a plan</p>
         </div>
 
+        {/* Network tabs */}
         <div className="flex flex-wrap gap-2 mb-6">
-          {(Object.keys(NETWORKS) as Network[]).map(net => (
-            <button
-              key={net}
-              onClick={() => setActiveNetwork(net)}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-semibold text-sm border-2 transition-all ${
-                activeNetwork === net
-                  ? NETWORKS[net].tabActive
-                  : "border-border bg-background text-muted-foreground hover:border-primary/40"
-              }`}
-              data-testid={`tab-${net}`}
-            >
-              <span className="text-base">{NETWORK_ICONS[net]}</span>
-              {NETWORKS[net].label}
-            </button>
-          ))}
+          {NETWORK_TABS.map(({ key, dot }) => {
+            const style = NETWORK_STYLES[key];
+            const isActive = activeNetwork === key;
+            return (
+              <button
+                key={key}
+                onClick={() => setActiveNetwork(key)}
+                data-testid={`tab-${key}`}
+                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-semibold text-sm border-2 transition-all ${
+                  isActive
+                    ? `border-transparent ${style.gradient} ${style.text} shadow-md`
+                    : "border-border bg-background text-muted-foreground hover:border-primary/40"
+                }`}
+              >
+                <span className={`w-2.5 h-2.5 rounded-full ${dot}`} />
+                {NETWORK_LABELS[key]}
+              </button>
+            );
+          })}
         </div>
 
+        {/* Bundles grid */}
         {isLoading ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
-            {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="h-52 rounded-2xl bg-muted animate-pulse" />
+            {Array.from({ length: 8 }).map((_, i) => (
+              <div key={i} className="h-56 rounded-2xl bg-muted animate-pulse" />
             ))}
           </div>
         ) : filtered.length === 0 ? (
@@ -177,80 +111,42 @@ export default function Bundles() {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
             {filtered.map(bundle => (
-              <div
+              <BundleCard
                 key={bundle.id}
-                className="rounded-2xl overflow-hidden cursor-pointer hover:shadow-xl hover:-translate-y-1 transition-all duration-200 group"
+                dataAmount={bundle.dataAmount}
+                network={activeNetwork}
+                price={parseFloat(String(bundle.price))}
+                validityDays={bundle.validityDays}
+                showBuyHover
                 onClick={() => handleSelect(bundle as Bundle)}
                 data-testid={`card-bundle-${bundle.id}`}
-              >
-                {/* Coloured top — network colour, centered data amount, badge top-left */}
-                <div className={`${theme.cardBg} relative flex items-center justify-center`} style={{ height: "160px" }}>
-                  {/* Network badge — top left */}
-                  <div className={`absolute top-3 left-3 border-2 rounded-full px-2.5 py-0.5 text-xs font-extrabold tracking-widest select-none ${theme.badgeBorder}`}>
-                    {theme.shortLabel}
-                  </div>
-
-                  {/* Large centred data amount */}
-                  <span className={`text-5xl font-black tracking-tight ${theme.cardText}`}>
-                    {bundle.dataAmount}
-                  </span>
-                </div>
-
-                {/* Dark info bar — Price / Rollover / Duration */}
-                <div className="bg-[#2b2b2b] grid grid-cols-3 divide-x divide-gray-600">
-                  <div className="py-3 px-2 text-center">
-                    <div className="text-sm font-bold text-white">GH₵{bundle.price}</div>
-                    <div className="text-[10px] text-gray-400 mt-0.5 uppercase tracking-wide">Price</div>
-                  </div>
-                  <div className="py-3 px-2 text-center">
-                    <div className="text-sm font-bold text-white">N/A</div>
-                    <div className="text-[10px] text-gray-400 mt-0.5 uppercase tracking-wide">Rollover</div>
-                  </div>
-                  <div className="py-3 px-2 text-center">
-                    <div className="text-sm font-bold text-white">{formatDuration(bundle.validityDays)}</div>
-                    <div className="text-[10px] text-gray-400 mt-0.5 uppercase tracking-wide">Duration</div>
-                  </div>
-                </div>
-              </div>
+              />
             ))}
           </div>
         )}
       </div>
 
-      <Dialog open={showDialog} onOpenChange={setShowDialog}>
+      {/* Add-to-cart dialog */}
+      <Dialog open={showDialog} onOpenChange={v => { setShowDialog(v); if (!v) setPhoneNumber(""); }}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle>Add to Cart</DialogTitle>
+            <DialogTitle className="flex items-center gap-2">
+              <ShoppingCart className="w-5 h-5 text-primary" /> Add to Cart
+            </DialogTitle>
           </DialogHeader>
-          <div className="space-y-4 py-2">
+          <div className="space-y-4 py-1">
             {selected && (
-              <div className={`${theme.cardBg} rounded-xl overflow-hidden`}>
-                <div className={`relative flex items-center justify-center py-6`}>
-                  <div className={`absolute top-2 left-3 border-2 rounded-full px-2.5 py-0.5 text-xs font-extrabold tracking-widest ${theme.badgeBorder}`}>
-                    {theme.shortLabel}
-                  </div>
-                  <span className={`text-4xl font-black ${theme.cardText}`}>{selected.dataAmount}</span>
-                </div>
-                <div className="bg-[#2b2b2b] grid grid-cols-3 divide-x divide-gray-600">
-                  <div className="py-2 text-center">
-                    <div className="text-sm font-bold text-white">GH₵{selected.price}</div>
-                    <div className="text-[10px] text-gray-400 mt-0.5 uppercase">Price</div>
-                  </div>
-                  <div className="py-2 text-center">
-                    <div className="text-sm font-bold text-white">N/A</div>
-                    <div className="text-[10px] text-gray-400 mt-0.5 uppercase">Rollover</div>
-                  </div>
-                  <div className="py-2 text-center">
-                    <div className="text-sm font-bold text-white">{formatDuration(selected.validityDays)}</div>
-                    <div className="text-[10px] text-gray-400 mt-0.5 uppercase">Duration</div>
-                  </div>
-                </div>
-              </div>
+              <BundleCardMini
+                dataAmount={selected.dataAmount}
+                network={activeNetwork}
+                price={parseFloat(String(selected.price))}
+                validityDays={selected.validityDays}
+              />
             )}
             <div className="space-y-1.5">
-              <Label htmlFor="phone">Phone number to activate on</Label>
+              <Label htmlFor="phone-bundles">Phone number to activate on</Label>
               <Input
-                id="phone"
+                id="phone-bundles"
                 type="tel"
                 placeholder="0244xxxxxx"
                 value={phoneNumber}
@@ -263,11 +159,10 @@ export default function Bundles() {
             <Button variant="outline" onClick={() => setShowDialog(false)}>Cancel</Button>
             <Button
               onClick={confirmAddToCart}
-              disabled={!phoneNumber.trim()}
+              disabled={!phoneNumber.trim() || phoneNumber.trim().length < 7}
               data-testid="button-confirm-add"
             >
-              <ShoppingCart className="w-4 h-4 mr-1.5" />
-              Add to Cart
+              <ShoppingCart className="w-4 h-4 mr-1.5" /> Add to Cart
             </Button>
           </DialogFooter>
         </DialogContent>
