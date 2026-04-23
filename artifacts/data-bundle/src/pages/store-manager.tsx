@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Link } from "wouter";
+import { NETWORK_STYLES, NETWORK_LABELS as BUNDLE_NETWORK_LABELS } from "@/components/BundleCard";
 import {
   Store as StoreIcon, TrendingUp, ShoppingBag, Wallet, Copy, Check,
   Plus, Trash2, Edit2, ExternalLink, Loader2, X, Package, Settings,
@@ -423,11 +424,15 @@ function BundlesTab({ storeBundles, store }: { storeBundles: StoreBundle[]; stor
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {storeBundles.map(sb => (
-            <div key={sb.id} className="bg-card border border-border rounded-2xl overflow-hidden">
-              <div className={`${theme.bg} flex items-center justify-center relative`} style={{ height: 100 }}>
-                <span className={`text-4xl font-black ${theme.text}`}>{sb.dataAmount}</span>
-                <span className={`absolute top-2 left-2 text-[10px] font-extrabold border-2 rounded-full px-2 py-0.5 ${theme.text} border-current opacity-80`}>
-                  {NETWORK_LABELS[sb.network] ?? sb.network}
+            <div key={sb.id} className="bg-card border border-border rounded-2xl overflow-hidden shadow-md hover:shadow-lg transition-shadow">
+              <div className={`relative ${NETWORK_STYLES[sb.network]?.gradient ?? "bg-gradient-to-br from-gray-600 to-gray-800"} flex items-center justify-center`} style={{ height: 120 }}>
+                <div className={`absolute inset-0 bg-gradient-to-b ${NETWORK_STYLES[sb.network]?.shimmer ?? "from-white/20 to-transparent"} pointer-events-none`} />
+                <span className={`relative text-4xl font-black ${NETWORK_STYLES[sb.network]?.text ?? "text-white"}`} style={{ textShadow: "0 2px 8px rgba(0,0,0,0.2)" }}>{sb.dataAmount}</span>
+                <span className={`absolute top-2 left-2 text-[10px] font-extrabold rounded-full px-2 py-0.5 border backdrop-blur-sm ${NETWORK_STYLES[sb.network]?.badge ?? "bg-white/20 text-white border-white/30"}`}>
+                  {BUNDLE_NETWORK_LABELS[sb.network] ?? sb.network}
+                </span>
+                <span className="absolute top-2 right-2 text-[10px] font-bold rounded-full px-2 py-0.5 bg-black/20 text-emerald-300 border border-emerald-500/30 backdrop-blur-sm">
+                  +GH₵{(sb.sellingPrice - sb.basePrice).toFixed(2)} profit
                 </span>
               </div>
               <div className="p-4 space-y-3">
