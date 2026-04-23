@@ -1,240 +1,284 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import {
-  useAdminListDeposits,
-  useAdminApproveDeposit,
-  useAdminRejectDeposit,
+  useAdminListDeposits, useAdminApproveDeposit, useAdminRejectDeposit,
   getAdminListDepositsQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
+import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { AdminSidebar } from "@/components/AdminSidebar";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
-import { useAuth } from "@/context/AuthContext";
-import { useLocation } from "wouter";
 import {
-  CheckCircle2, XCircle, Clock, Menu, RefreshCw,
+  CheckCircle2, XCircle, Clock, Menu, RefreshCw, Search, X,
+  ChevronLeft, ChevronRight, Download, Filter, CreditCard, Smartphone,
 } from "lucide-react";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 
-type StatusFilter = "all" | "pending" | "completed" | "rejected";
+type StatusTab = "pending" | "completed" | "rejected" | "all";
+
+const STATUS_STYLES: Record<string, string> = {
+  completed: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400",
+  rejected:  "bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400",
+  pending:   "bg-amber-100 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400",
+};
+
+const STATUS_DOT: Record<string, string> = {
+  completed: "bg-emerald-400", rejected: "bg-red-400", pending: "bg-amber-400",
+};
+
+const fmtDate = (iso: string) =>
+  new Date(iso).toLocaleString("en-GH", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+
+const PAGE_SIZES = [10, 25, 50];
 
 export default function AdminDepositsPage() {
-  const { user, isLoading } = useAuth();
-  const [, setLocation] = useLocation();
-
-  if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
-  }
-
-  if (!user || user.role !== "admin") {
-    setLocation("/login");
-    return null;
-  }
-
-  return <AdminDepositsContent />;
+  return <ProtectedRoute adminOnly><AdminDepositsContent /></ProtectedRoute>;
 }
 
 function AdminDepositsContent() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("pending");
-  const { toast } = useToast();
+  const [statusTab, setStatusTab]     = useState<StatusTab>("pending");
+  const [search, setSearch]           = useState("");
+  const [page, setPage]               = useState(1);
+  const [pageSize, setPageSize]       = useState(25);
+
+  const { toast }   = useToast();
   const queryClient = useQueryClient();
 
-  const params = statusFilter === "all" ? {} : { status: statusFilter };
-  const { data: deposits, isLoading, refetch } = useAdminListDeposits({ params });
+  const { data: allDeposits, isLoading, refetch } = useAdminListDeposits({});
   const approveMutation = useAdminApproveDeposit();
-  const rejectMutation = useAdminRejectDeposit();
+  const rejectMutation  = useAdminRejectDeposit();
+
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: getAdminListDepositsQueryKey() });
 
   const handleApprove = (id: number) => {
-    approveMutation.mutate(
-      { id },
-      {
-        onSuccess: () => {
-          toast({ title: "Deposit approved and wallet credited" });
-          queryClient.invalidateQueries({ queryKey: getAdminListDepositsQueryKey() });
-        },
-        onError: (e: unknown) => {
-          const msg = (e as { message?: string })?.message ?? "Approval failed";
-          toast({ title: msg, variant: "destructive" });
-        },
-      }
-    );
+    approveMutation.mutate({ id }, {
+      onSuccess: () => { toast({ title: "Deposit approved and wallet credited" }); invalidate(); },
+      onError:   (e: unknown) => toast({ title: (e as { message?: string })?.message ?? "Approval failed", variant: "destructive" }),
+    });
   };
 
   const handleReject = (id: number) => {
-    rejectMutation.mutate(
-      { id },
-      {
-        onSuccess: () => {
-          toast({ title: "Deposit claim rejected" });
-          queryClient.invalidateQueries({ queryKey: getAdminListDepositsQueryKey() });
-        },
-        onError: (e: unknown) => {
-          const msg = (e as { message?: string })?.message ?? "Rejection failed";
-          toast({ title: msg, variant: "destructive" });
-        },
-      }
-    );
+    rejectMutation.mutate({ id }, {
+      onSuccess: () => { toast({ title: "Deposit claim rejected" }); invalidate(); },
+      onError:   (e: unknown) => toast({ title: (e as { message?: string })?.message ?? "Rejection failed", variant: "destructive" }),
+    });
   };
 
-  const statusBadge = (status: string) => {
-    if (status === "completed") {
-      return (
-        <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-400">
-          <CheckCircle2 className="w-3 h-3" /> Approved
-        </span>
+  // Counts per status
+  const counts = useMemo(() => {
+    const src = allDeposits ?? [];
+    return {
+      all: src.length,
+      pending:   src.filter(d => d.status === "pending").length,
+      completed: src.filter(d => d.status === "completed").length,
+      rejected:  src.filter(d => d.status === "rejected").length,
+    };
+  }, [allDeposits]);
+
+  // Filter
+  const filtered = useMemo(() => {
+    let src = allDeposits ?? [];
+    if (statusTab !== "all") src = src.filter(d => d.status === statusTab);
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      src = src.filter(d =>
+        d.userName.toLowerCase().includes(q) ||
+        d.userEmail.toLowerCase().includes(q) ||
+        (d.reference ?? "").toLowerCase().includes(q)
       );
     }
-    if (status === "rejected") {
-      return (
-        <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400">
-          <XCircle className="w-3 h-3" /> Rejected
-        </span>
-      );
-    }
-    return (
-      <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-400">
-        <Clock className="w-3 h-3" /> Pending
-      </span>
-    );
+    return src;
+  }, [allDeposits, statusTab, search]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const paged      = useMemo(() => filtered.slice((page - 1) * pageSize, page * pageSize), [filtered, page, pageSize]);
+
+  const handleExport = () => {
+    const rows = filtered.map(d => [d.id, `"${d.userName}"`, d.userEmail, d.amount.toFixed(2), d.method, d.reference ?? "", d.status, fmtDate(d.createdAt)]);
+    const csv  = [["ID", "User", "Email", "Amount", "Method", "Reference", "Status", "Date"].join(","), ...rows.map(r => r.join(","))].join("\n");
+    const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+    a.download = "deposits.csv"; a.click();
+    toast({ title: `Exported ${filtered.length} deposits` });
   };
 
-  const methodLabel = (method: string) => {
-    if (method === "paystack") return "💳 Paystack";
-    if (method === "momo") return "📱 MoMo Claim";
-    return method.replace(/_/g, " ");
-  };
+  const TABS: { key: StatusTab; label: string }[] = [
+    { key: "pending",   label: "Pending" },
+    { key: "completed", label: "Approved" },
+    { key: "rejected",  label: "Rejected" },
+    { key: "all",       label: "All" },
+  ];
 
   return (
     <div className="flex h-screen bg-background overflow-hidden">
       <AdminSidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
-      <div className="flex-1 overflow-auto">
-        <div className="sticky top-0 z-10 bg-background/95 backdrop-blur border-b border-border px-4 sm:px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <button
-              className="lg:hidden p-1.5 rounded-md hover:bg-muted"
-              onClick={() => setSidebarOpen(true)}
-            >
-              <Menu className="w-5 h-5" />
-            </button>
-            <div>
-              <h1 className="text-lg font-bold text-foreground">Deposit Claims</h1>
-              <p className="text-xs text-muted-foreground hidden sm:block">
-                Review and approve MoMo deposit claims
-              </p>
-            </div>
+      <div className="flex-1 flex flex-col overflow-auto">
+        <header className="sticky top-0 z-20 bg-background/95 backdrop-blur border-b border-border px-6 py-4 flex items-center gap-3 flex-wrap">
+          <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setSidebarOpen(true)}>
+            <Menu className="w-5 h-5" />
+          </Button>
+          <div className="flex-1">
+            <h1 className="text-xl font-bold text-foreground">Deposits</h1>
+            <p className="text-xs text-muted-foreground">
+              {counts.pending > 0 && <span className="text-amber-600 font-semibold">{counts.pending} pending · </span>}
+              {filtered.length} shown
+            </p>
           </div>
           <div className="flex items-center gap-2">
-            <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as StatusFilter)}>
-              <SelectTrigger className="w-36 h-8 text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="pending">Pending</SelectItem>
-                <SelectItem value="completed">Approved</SelectItem>
-                <SelectItem value="rejected">Rejected</SelectItem>
-                <SelectItem value="all">All</SelectItem>
-              </SelectContent>
-            </Select>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => refetch()}
-              className="h-8"
-            >
+            <Button variant="outline" size="sm" onClick={() => refetch()} className="gap-1.5">
               <RefreshCw className="w-3.5 h-3.5" />
             </Button>
+            <Button variant="outline" size="sm" onClick={handleExport} disabled={!filtered.length} className="gap-1.5">
+              <Download className="w-3.5 h-3.5" /> Export
+            </Button>
           </div>
-        </div>
+        </header>
 
-        <div className="p-4 sm:p-6">
-          {isLoading ? (
-            <div className="flex items-center justify-center py-16">
-              <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-            </div>
-          ) : !deposits || deposits.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
-              <CheckCircle2 className="w-12 h-12 opacity-20 mb-3" />
-              <p className="text-sm font-medium">No {statusFilter !== "all" ? statusFilter : ""} deposits</p>
-              <p className="text-xs mt-1">
-                {statusFilter === "pending" ? "All caught up! No pending claims." : "Nothing to show here."}
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {deposits.map((d) => (
-                <div
-                  key={d.id}
-                  className="bg-card border border-border rounded-xl p-4 sm:p-5"
-                  data-testid={`deposit-claim-${d.id}`}
-                >
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                    <div className="space-y-1.5">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-semibold text-foreground text-sm">{d.userName}</span>
-                        <span className="text-muted-foreground text-xs">{d.userEmail}</span>
-                        {statusBadge(d.status)}
-                      </div>
-                      <div className="flex items-center gap-3 flex-wrap text-sm">
-                        <span className="text-2xl font-bold text-green-600">GH₵{d.amount.toFixed(2)}</span>
-                        <span className="text-muted-foreground text-xs">{methodLabel(d.method)}</span>
-                      </div>
-                      {d.reference && (
-                        <div className="text-xs text-muted-foreground font-mono">
-                          Ref: {d.reference}
-                        </div>
-                      )}
-                      {d.note && (
-                        <div className="text-xs text-muted-foreground italic">{d.note}</div>
-                      )}
-                      <div className="text-xs text-muted-foreground">
-                        {new Date(d.createdAt).toLocaleString("en-GH", {
-                          day: "numeric",
-                          month: "short",
-                          year: "numeric",
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
-                      </div>
-                    </div>
+        <main className="flex-1 p-6 space-y-4">
 
-                    {d.status === "pending" && (
-                      <div className="flex gap-2 shrink-0">
-                        <Button
-                          size="sm"
-                          variant="destructive"
-                          onClick={() => handleReject(d.id)}
-                          disabled={rejectMutation.isPending}
-                          data-testid={`button-reject-${d.id}`}
-                        >
-                          <XCircle className="w-3.5 h-3.5 mr-1" />
-                          Reject
-                        </Button>
-                        <Button
-                          size="sm"
-                          onClick={() => handleApprove(d.id)}
-                          disabled={approveMutation.isPending}
-                          className="bg-green-600 hover:bg-green-700"
-                          data-testid={`button-approve-${d.id}`}
-                        >
-                          <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
-                          Approve
-                        </Button>
-                      </div>
-                    )}
-                  </div>
+          {/* Summary mini cards */}
+          <div className="grid grid-cols-3 gap-4">
+            {[
+              { label: "Pending",  value: counts.pending,   color: "text-amber-600",   bg: "bg-amber-100 dark:bg-amber-900/20",   icon: Clock },
+              { label: "Approved", value: counts.completed, color: "text-emerald-600", bg: "bg-emerald-100 dark:bg-emerald-900/20", icon: CheckCircle2 },
+              { label: "Rejected", value: counts.rejected,  color: "text-red-600",     bg: "bg-red-100 dark:bg-red-900/20",       icon: XCircle },
+            ].map(c => (
+              <div key={c.label} className="bg-card border border-border rounded-2xl p-4 flex items-center gap-3">
+                <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${c.bg}`}>
+                  <c.icon className={`w-4 h-4 ${c.color}`} />
                 </div>
-              ))}
+                <div>
+                  <div className="text-2xl font-extrabold text-foreground">{c.value}</div>
+                  <div className="text-xs text-muted-foreground">{c.label}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Table card */}
+          <div className="bg-card border border-border rounded-2xl overflow-hidden">
+            {/* Tabs + search row */}
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3 px-5 py-3 border-b border-border">
+              <div className="flex items-center gap-1 overflow-x-auto">
+                {TABS.map(t => (
+                  <button
+                    key={t.key}
+                    onClick={() => { setStatusTab(t.key); setPage(1); }}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
+                      statusTab === t.key ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"
+                    }`}
+                  >
+                    {t.key !== "all" && <span className={`w-1.5 h-1.5 rounded-full ${STATUS_DOT[t.key]}`} />}
+                    {t.label} <span className="opacity-60">({counts[t.key]})</span>
+                  </button>
+                ))}
+              </div>
+              <div className="relative sm:ml-auto">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                <Input
+                  placeholder="Name, email or reference…"
+                  value={search}
+                  onChange={e => { setSearch(e.target.value); setPage(1); }}
+                  className="pl-8 h-8 text-xs w-full sm:w-60"
+                  data-testid="input-deposit-search"
+                />
+                {search && <button className="absolute right-2 top-1/2 -translate-y-1/2" onClick={() => { setSearch(""); setPage(1); }}><X className="w-3 h-3 text-muted-foreground" /></button>}
+              </div>
+              <div className="flex items-center gap-1.5 text-xs text-muted-foreground shrink-0">
+                <Select value={String(pageSize)} onValueChange={v => { setPageSize(Number(v)); setPage(1); }}>
+                  <SelectTrigger className="h-7 w-16 text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>{PAGE_SIZES.map(n => <SelectItem key={n} value={String(n)}>{n}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
             </div>
-          )}
-        </div>
+
+            {/* Table */}
+            {isLoading ? (
+              <div className="p-6 space-y-3">{Array.from({ length: 6 }).map((_, i) => <div key={i} className="h-14 rounded-xl bg-muted animate-pulse" />)}</div>
+            ) : paged.length === 0 ? (
+              <div className="py-20 flex flex-col items-center text-muted-foreground">
+                <CheckCircle2 className="w-10 h-10 mb-3 opacity-20" />
+                <p className="text-sm">{statusTab === "pending" ? "All caught up! No pending claims." : "No deposits match your filters."}</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border bg-muted/20">
+                      {["Date", "User", "Amount", "Method", "Reference", "Status", "Actions"].map(h => (
+                        <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {paged.map(d => (
+                      <tr key={d.id} className="hover:bg-muted/20 transition-colors" data-testid={`deposit-claim-${d.id}`}>
+                        <td className="px-5 py-3.5 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(d.createdAt)}</td>
+                        <td className="px-5 py-3.5">
+                          <div className="font-semibold text-foreground">{d.userName}</div>
+                          <div className="text-xs text-muted-foreground">{d.userEmail}</div>
+                        </td>
+                        <td className="px-5 py-3.5 font-bold text-emerald-600">GH₵{d.amount.toFixed(2)}</td>
+                        <td className="px-5 py-3.5">
+                          <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                            {d.method === "paystack" ? <CreditCard className="w-3.5 h-3.5" /> : <Smartphone className="w-3.5 h-3.5" />}
+                            {d.method === "paystack" ? "Paystack" : "MoMo"}
+                          </span>
+                        </td>
+                        <td className="px-5 py-3.5 font-mono text-xs text-muted-foreground truncate max-w-[130px]">{d.reference ?? "—"}</td>
+                        <td className="px-5 py-3.5">
+                          <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold capitalize ${STATUS_STYLES[d.status]}`}>
+                            <span className={`w-1.5 h-1.5 rounded-full ${STATUS_DOT[d.status]}`} />
+                            {d.status === "completed" ? "Approved" : d.status}
+                          </span>
+                        </td>
+                        <td className="px-5 py-3.5">
+                          {d.status === "pending" ? (
+                            <div className="flex items-center gap-1.5">
+                              <Button size="sm" variant="outline" className="h-7 text-xs gap-1 border-red-200 text-red-600 hover:bg-red-50" onClick={() => handleReject(d.id)} disabled={rejectMutation.isPending} data-testid={`button-reject-${d.id}`}>
+                                <XCircle className="w-3.5 h-3.5" /> Reject
+                              </Button>
+                              <Button size="sm" className="h-7 text-xs gap-1 bg-emerald-600 hover:bg-emerald-700" onClick={() => handleApprove(d.id)} disabled={approveMutation.isPending} data-testid={`button-approve-${d.id}`}>
+                                <CheckCircle2 className="w-3.5 h-3.5" /> Approve
+                              </Button>
+                            </div>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">{d.note ?? "—"}</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* Pagination */}
+            {filtered.length > 0 && (
+              <div className="flex items-center justify-between px-5 py-3 border-t border-border text-xs text-muted-foreground">
+                <span>Showing {Math.min((page - 1) * pageSize + 1, filtered.length)}–{Math.min(page * pageSize, filtered.length)} of {filtered.length}</span>
+                <div className="flex items-center gap-1">
+                  <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} className="p-1.5 rounded-lg hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed">
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                  {Array.from({ length: totalPages }, (_, i) => i + 1)
+                    .filter(p => p === 1 || p === totalPages || Math.abs(p - page) <= 1)
+                    .reduce<(number | "…")[]>((acc, p, idx, arr) => { if (idx > 0 && (p as number) - (arr[idx - 1] as number) > 1) acc.push("…"); acc.push(p); return acc; }, [])
+                    .map((p, i) => p === "…" ? <span key={`e${i}`} className="px-2">…</span> : (
+                      <button key={p} onClick={() => setPage(p as number)} className={`w-7 h-7 rounded-lg text-xs font-semibold transition-colors ${page === p ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}>{p}</button>
+                    ))}
+                  <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages} className="p-1.5 rounded-lg hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed">
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </main>
       </div>
     </div>
   );

@@ -2,16 +2,18 @@ import { Link, useLocation } from "wouter";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import {
-  LayoutDashboard, Package, Users, ShoppingCart, LogOut, Wifi, ChevronRight, X, Wallet, ArrowDownCircle,
+  LayoutDashboard, Package, Users, ShoppingCart, LogOut, Wifi, ChevronRight, X,
+  Wallet, ArrowDownCircle, BarChart3,
 } from "lucide-react";
 
 const navItems = [
-  { href: "/admin", icon: LayoutDashboard, label: "Dashboard" },
-  { href: "/admin/bundles", icon: Package, label: "Bundles" },
-  { href: "/admin/users", icon: Users, label: "Users" },
-  { href: "/admin/orders", icon: ShoppingCart, label: "Orders" },
-  { href: "/admin/wallets", icon: Wallet, label: "Wallets" },
+  { href: "/admin",          icon: LayoutDashboard, label: "Dashboard" },
+  { href: "/admin/bundles",  icon: Package,         label: "Bundles" },
+  { href: "/admin/users",    icon: Users,           label: "Users" },
+  { href: "/admin/orders",   icon: ShoppingCart,    label: "Orders" },
+  { href: "/admin/wallets",  icon: Wallet,          label: "Wallets" },
   { href: "/admin/deposits", icon: ArrowDownCircle, label: "Deposits" },
+  { href: "/admin/stats",    icon: BarChart3,       label: "Statistics" },
 ];
 
 interface AdminSidebarProps {

@@ -1,173 +1,288 @@
-import { useState } from "react";
-import { useAdminListUsers, useAdminUpdateUser, useAdminDeleteUser } from "@workspace/api-client-react";
-import { getAdminListUsersQueryKey } from "@workspace/api-client-react";
+import { useState, useMemo } from "react";
+import { useAdminListUsers, useAdminUpdateUser, useAdminDeleteUser, getAdminListUsersQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { AdminSidebar } from "@/components/AdminSidebar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
-  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Menu, Search, Users, Trash2, ShieldCheck, User, ToggleLeft, ToggleRight } from "lucide-react";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
+import {
+  Menu, Search, Users, Trash2, ShieldCheck, User, CheckCircle2, XCircle,
+  RefreshCw, Download, ChevronLeft, ChevronRight, X, Filter,
+} from "lucide-react";
+
+const PAGE_SIZES = [10, 25, 50];
+
+const fmtDate = (iso: string) =>
+  new Date(iso).toLocaleDateString("en-GH", { day: "numeric", month: "short", year: "numeric" });
 
 export default function AdminUsers() {
-  return (
-    <ProtectedRoute adminOnly>
-      <AdminUsersContent />
-    </ProtectedRoute>
-  );
+  return <ProtectedRoute adminOnly><AdminUsersContent /></ProtectedRoute>;
 }
 
 function AdminUsersContent() {
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [search, setSearch] = useState("");
-  const [deleting, setDeleting] = useState<{ id: number; name: string } | null>(null);
-  const { toast } = useToast();
+  const [sidebarOpen, setSidebarOpen]  = useState(false);
+  const [search, setSearch]            = useState("");
+  const [roleFilter, setRoleFilter]    = useState<"all" | "user" | "admin">("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("all");
+  const [deleting, setDeleting]        = useState<{ id: number; name: string } | null>(null);
+  const [page, setPage]                = useState(1);
+  const [pageSize, setPageSize]        = useState(25);
+
+  const { toast }   = useToast();
   const queryClient = useQueryClient();
 
-  const { data: users, isLoading } = useAdminListUsers(search ? { search } : {});
+  const { data: allUsers, isLoading, refetch } = useAdminListUsers({});
   const updateUser = useAdminUpdateUser();
   const deleteUser = useAdminDeleteUser();
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: getAdminListUsersQueryKey({}) });
 
   const toggleActive = (u: { id: number; isActive: boolean; name: string }) => {
-    updateUser.mutate(
-      { id: u.id, data: { isActive: !u.isActive } },
-      { onSuccess: () => { toast({ title: `${u.name} ${u.isActive ? "deactivated" : "activated"}` }); invalidate(); } }
-    );
+    updateUser.mutate({ id: u.id, data: { isActive: !u.isActive } }, {
+      onSuccess: () => { toast({ title: `${u.name} ${u.isActive ? "deactivated" : "activated"}` }); invalidate(); },
+    });
   };
 
   const toggleRole = (u: { id: number; role: string; name: string }) => {
     const newRole = u.role === "admin" ? "user" : "admin";
-    updateUser.mutate(
-      { id: u.id, data: { role: newRole } },
-      { onSuccess: () => { toast({ title: `${u.name} is now ${newRole}` }); invalidate(); } }
-    );
+    updateUser.mutate({ id: u.id, data: { role: newRole } }, {
+      onSuccess: () => { toast({ title: `${u.name} is now ${newRole}` }); invalidate(); },
+    });
   };
 
   const confirmDelete = () => {
     if (!deleting) return;
-    deleteUser.mutate(
-      { id: deleting.id },
-      {
-        onSuccess: () => { toast({ title: "User deleted" }); setDeleting(null); invalidate(); },
-        onError: () => toast({ title: "Error deleting user", variant: "destructive" }),
-      }
-    );
+    deleteUser.mutate({ id: deleting.id }, {
+      onSuccess: () => { toast({ title: "User deleted" }); setDeleting(null); invalidate(); },
+      onError:   () => toast({ title: "Error deleting user", variant: "destructive" }),
+    });
+  };
+
+  // Counts
+  const counts = useMemo(() => {
+    const src = allUsers ?? [];
+    return { total: src.length, admins: src.filter(u => u.role === "admin").length, active: src.filter(u => u.isActive).length };
+  }, [allUsers]);
+
+  // Filter
+  const filtered = useMemo(() => {
+    let src = allUsers ?? [];
+    if (roleFilter !== "all")   src = src.filter(u => u.role === roleFilter);
+    if (statusFilter === "active")   src = src.filter(u => u.isActive);
+    if (statusFilter === "inactive") src = src.filter(u => !u.isActive);
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      src = src.filter(u => u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q) || (u.phone ?? "").includes(q));
+    }
+    return src;
+  }, [allUsers, roleFilter, statusFilter, search]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const paged      = useMemo(() => filtered.slice((page - 1) * pageSize, page * pageSize), [filtered, page, pageSize]);
+
+  const hasFilters = search || roleFilter !== "all" || statusFilter !== "all";
+  const clearFilters = () => { setSearch(""); setRoleFilter("all"); setStatusFilter("all"); setPage(1); };
+
+  const handleExport = () => {
+    const rows = filtered.map(u => [u.id, `"${u.name}"`, u.email, u.phone ?? "", u.role, u.isActive ? "Active" : "Inactive", fmtDate(u.createdAt)]);
+    const csv  = [["ID", "Name", "Email", "Phone", "Role", "Status", "Joined"].join(","), ...rows.map(r => r.join(","))].join("\n");
+    const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+    a.download = "users.csv"; a.click();
+    toast({ title: `Exported ${filtered.length} users` });
   };
 
   return (
     <div className="flex h-screen bg-background overflow-hidden">
       <AdminSidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+
       <div className="flex-1 flex flex-col overflow-auto">
-        <header className="sticky top-0 z-10 bg-background border-b border-border px-6 py-4 flex items-center gap-4">
+        <header className="sticky top-0 z-20 bg-background/95 backdrop-blur border-b border-border px-6 py-4 flex items-center gap-3 flex-wrap">
           <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setSidebarOpen(true)}>
             <Menu className="w-5 h-5" />
           </Button>
-          <div>
+          <div className="flex-1">
             <h1 className="text-xl font-bold text-foreground">Users</h1>
-            <p className="text-sm text-muted-foreground">Manage platform users</p>
+            <p className="text-xs text-muted-foreground">{counts.total} total · {counts.admins} admin · {counts.active} active</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => refetch()} className="gap-1.5">
+              <RefreshCw className="w-3.5 h-3.5" />
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleExport} disabled={!filtered.length} className="gap-1.5">
+              <Download className="w-3.5 h-3.5" /> Export
+            </Button>
           </div>
         </header>
 
-        <main className="flex-1 p-6">
-          <div className="mb-5 relative max-w-sm">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <Input
-              placeholder="Search users..."
-              className="pl-9"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              data-testid="input-search-users"
-            />
+        <main className="flex-1 p-6 space-y-4">
+
+          {/* Summary cards */}
+          <div className="grid grid-cols-3 gap-4">
+            {[
+              { label: "Total Users", value: counts.total, color: "text-sky-600", bg: "bg-sky-100 dark:bg-sky-900/20", icon: Users },
+              { label: "Active",      value: counts.active, color: "text-emerald-600", bg: "bg-emerald-100 dark:bg-emerald-900/20", icon: CheckCircle2 },
+              { label: "Admins",      value: counts.admins, color: "text-violet-600", bg: "bg-violet-100 dark:bg-violet-900/20", icon: ShieldCheck },
+            ].map(c => (
+              <div key={c.label} className="bg-card border border-border rounded-2xl p-4 flex items-center gap-3">
+                <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${c.bg}`}>
+                  <c.icon className={`w-4.5 h-4.5 ${c.color}`} />
+                </div>
+                <div>
+                  <div className="text-2xl font-extrabold text-foreground">{c.value}</div>
+                  <div className="text-xs text-muted-foreground">{c.label}</div>
+                </div>
+              </div>
+            ))}
           </div>
 
+          {/* Filter bar */}
+          <div className="bg-card border border-border rounded-2xl p-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <Filter className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+              {/* Search */}
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                <Input
+                  placeholder="Name, email or phone…"
+                  value={search}
+                  onChange={e => { setSearch(e.target.value); setPage(1); }}
+                  className="pl-8 h-8 text-xs w-56"
+                  data-testid="input-search-users"
+                />
+                {search && <button className="absolute right-2 top-1/2 -translate-y-1/2" onClick={() => { setSearch(""); setPage(1); }}><X className="w-3 h-3 text-muted-foreground" /></button>}
+              </div>
+              {/* Role */}
+              <div className="flex items-center gap-1">
+                {(["all", "user", "admin"] as const).map(r => (
+                  <button key={r} onClick={() => { setRoleFilter(r); setPage(1); }}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold capitalize transition-colors ${roleFilter === r ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}>
+                    {r === "all" ? "All Roles" : r === "admin" ? "Admins" : "Users"}
+                  </button>
+                ))}
+              </div>
+              {/* Status */}
+              <div className="flex items-center gap-1 pl-2 border-l border-border">
+                {(["all", "active", "inactive"] as const).map(s => (
+                  <button key={s} onClick={() => { setStatusFilter(s); setPage(1); }}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold capitalize transition-colors ${statusFilter === s ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}>
+                    {s === "all" ? "All Status" : s}
+                  </button>
+                ))}
+              </div>
+              {/* Page size */}
+              <div className="flex items-center gap-1.5 ml-auto text-xs text-muted-foreground">
+                <Select value={String(pageSize)} onValueChange={v => { setPageSize(Number(v)); setPage(1); }}>
+                  <SelectTrigger className="h-7 w-16 text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>{PAGE_SIZES.map(n => <SelectItem key={n} value={String(n)}>{n}</SelectItem>)}</SelectContent>
+                </Select>
+                <span>per page</span>
+              </div>
+              {hasFilters && <button className="text-xs text-primary font-semibold ml-1" onClick={clearFilters}>Clear</button>}
+            </div>
+          </div>
+
+          {/* Table */}
           <div className="bg-card border border-border rounded-2xl overflow-hidden">
             {isLoading ? (
-              <div className="p-6 space-y-3">
-                {Array.from({ length: 5 }).map((_, i) => <div key={i} className="h-14 rounded-xl bg-muted animate-pulse" />)}
-              </div>
-            ) : !users?.length ? (
-              <div className="p-16 text-center">
-                <Users className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
-                <p className="text-muted-foreground">No users found</p>
+              <div className="p-6 space-y-3">{Array.from({ length: 6 }).map((_, i) => <div key={i} className="h-14 rounded-xl bg-muted animate-pulse" />)}</div>
+            ) : paged.length === 0 ? (
+              <div className="py-20 flex flex-col items-center text-muted-foreground">
+                <Users className="w-10 h-10 mb-3 opacity-20" />
+                <p className="text-sm">No users match your filters</p>
+                {hasFilters && <button className="mt-2 text-xs text-primary font-semibold" onClick={clearFilters}>Clear filters</button>}
               </div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
-                    <tr className="border-b border-border bg-muted/30">
-                      <th className="text-left px-6 py-3 font-medium text-muted-foreground">User</th>
-                      <th className="text-left px-6 py-3 font-medium text-muted-foreground">Phone</th>
-                      <th className="text-left px-6 py-3 font-medium text-muted-foreground">Role</th>
-                      <th className="text-left px-6 py-3 font-medium text-muted-foreground">Status</th>
-                      <th className="text-left px-6 py-3 font-medium text-muted-foreground">Joined</th>
-                      <th className="text-left px-6 py-3 font-medium text-muted-foreground">Actions</th>
+                    <tr className="border-b border-border bg-muted/20">
+                      {["User", "Phone", "Role", "Status", "Joined", "Actions"].map(h => (
+                        <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
+                      ))}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
-                    {users.map(u => (
-                      <tr key={u.id} className="hover:bg-muted/30 transition-colors" data-testid={`row-user-${u.id}`}>
-                        <td className="px-6 py-3">
+                    {paged.map(u => (
+                      <tr key={u.id} className="hover:bg-muted/20 transition-colors" data-testid={`row-user-${u.id}`}>
+                        <td className="px-5 py-3.5">
                           <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
-                              <span className="text-xs font-bold text-primary">{u.name.charAt(0).toUpperCase()}</span>
+                            <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0 text-xs font-bold text-primary">
+                              {u.name.charAt(0).toUpperCase()}
                             </div>
                             <div>
-                              <div className="font-medium text-foreground">{u.name}</div>
+                              <div className="font-semibold text-foreground">{u.name}</div>
                               <div className="text-xs text-muted-foreground">{u.email}</div>
                             </div>
                           </div>
                         </td>
-                        <td className="px-6 py-3 text-muted-foreground">{u.phone ?? "—"}</td>
-                        <td className="px-6 py-3">
-                          <Badge
-                            variant={u.role === "admin" ? "default" : "secondary"}
-                            className="capitalize cursor-pointer select-none"
+                        <td className="px-5 py-3.5 text-sm text-muted-foreground font-mono">{u.phone ?? "—"}</td>
+                        <td className="px-5 py-3.5">
+                          <button
                             onClick={() => toggleRole({ id: u.id, role: u.role, name: u.name })}
+                            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold capitalize transition-colors cursor-pointer ${
+                              u.role === "admin"
+                                ? "bg-violet-100 text-violet-700 dark:bg-violet-900/20 dark:text-violet-400 hover:bg-violet-200"
+                                : "bg-muted text-muted-foreground hover:bg-muted/80"
+                            }`}
                             data-testid={`badge-role-${u.id}`}
                           >
-                            {u.role === "admin" ? <ShieldCheck className="w-3 h-3 mr-1" /> : <User className="w-3 h-3 mr-1" />}
+                            {u.role === "admin" ? <ShieldCheck className="w-3 h-3" /> : <User className="w-3 h-3" />}
                             {u.role}
-                          </Badge>
+                          </button>
                         </td>
-                        <td className="px-6 py-3">
-                          <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${u.isActive ? "bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-400" : "bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400"}`}>
+                        <td className="px-5 py-3.5">
+                          <button
+                            onClick={() => toggleActive({ id: u.id, isActive: u.isActive, name: u.name })}
+                            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold transition-colors ${
+                              u.isActive
+                                ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400 hover:bg-emerald-200"
+                                : "bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400 hover:bg-red-200"
+                            }`}
+                            data-testid={`button-toggle-user-${u.id}`}
+                          >
+                            {u.isActive ? <CheckCircle2 className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
                             {u.isActive ? "Active" : "Inactive"}
-                          </span>
+                          </button>
                         </td>
-                        <td className="px-6 py-3 text-muted-foreground">{new Date(u.createdAt).toLocaleDateString()}</td>
-                        <td className="px-6 py-3">
-                          <div className="flex items-center gap-1">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7"
-                              onClick={() => toggleActive({ id: u.id, isActive: u.isActive, name: u.name })}
-                              data-testid={`button-toggle-user-${u.id}`}
-                            >
-                              {u.isActive ? <ToggleRight className="w-4 h-4 text-green-500" /> : <ToggleLeft className="w-4 h-4 text-muted-foreground" />}
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7 text-destructive hover:text-destructive"
-                              onClick={() => setDeleting({ id: u.id, name: u.name })}
-                              data-testid={`button-delete-user-${u.id}`}
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
-                          </div>
+                        <td className="px-5 py-3.5 text-xs text-muted-foreground">{fmtDate(u.createdAt)}</td>
+                        <td className="px-5 py-3.5">
+                          <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => setDeleting({ id: u.id, name: u.name })} data-testid={`button-delete-user-${u.id}`}>
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
                         </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
+              </div>
+            )}
+
+            {/* Pagination */}
+            {filtered.length > 0 && (
+              <div className="flex items-center justify-between px-5 py-3 border-t border-border text-xs text-muted-foreground">
+                <span>Showing {Math.min((page - 1) * pageSize + 1, filtered.length)}–{Math.min(page * pageSize, filtered.length)} of {filtered.length}</span>
+                <div className="flex items-center gap-1">
+                  <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} className="p-1.5 rounded-lg hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed">
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                  {Array.from({ length: totalPages }, (_, i) => i + 1)
+                    .filter(p => p === 1 || p === totalPages || Math.abs(p - page) <= 1)
+                    .reduce<(number | "…")[]>((acc, p, idx, arr) => { if (idx > 0 && (p as number) - (arr[idx - 1] as number) > 1) acc.push("…"); acc.push(p); return acc; }, [])
+                    .map((p, i) => p === "…" ? <span key={`e${i}`} className="px-2">…</span> : (
+                      <button key={p} onClick={() => setPage(p as number)} className={`w-7 h-7 rounded-lg text-xs font-semibold transition-colors ${page === p ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}>{p}</button>
+                    ))}
+                  <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages} className="p-1.5 rounded-lg hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed">
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
             )}
           </div>
@@ -178,19 +293,11 @@ function AdminUsersContent() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete User</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to delete "{deleting?.name}"? All their orders will also be deleted.
-            </AlertDialogDescription>
+            <AlertDialogDescription>Delete "{deleting?.name}"? All their orders will also be removed. This cannot be undone.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              onClick={confirmDelete}
-              data-testid="button-confirm-delete-user"
-            >
-              Delete
-            </AlertDialogAction>
+            <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={confirmDelete} data-testid="button-confirm-delete-user">Delete</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
