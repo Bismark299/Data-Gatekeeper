@@ -1048,6 +1048,92 @@ export const useCreateOrder = <
 };
 
 /**
+ * @summary Direct purchase of a bundle (deducts wallet balance instantly)
+ */
+export const getPurchaseBundleUrl = () => {
+  return `/api/orders/purchase`;
+};
+
+export const purchaseBundle = async (
+  createOrderBody: CreateOrderBody,
+  options?: RequestInit,
+): Promise<Order> => {
+  return customFetch<Order>(getPurchaseBundleUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(createOrderBody),
+  });
+};
+
+export const getPurchaseBundleMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof purchaseBundle>>,
+    TError,
+    { data: BodyType<CreateOrderBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof purchaseBundle>>,
+  TError,
+  { data: BodyType<CreateOrderBody> },
+  TContext
+> => {
+  const mutationKey = ["purchaseBundle"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof purchaseBundle>>,
+    { data: BodyType<CreateOrderBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return purchaseBundle(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PurchaseBundleMutationResult = NonNullable<
+  Awaited<ReturnType<typeof purchaseBundle>>
+>;
+export type PurchaseBundleMutationBody = BodyType<CreateOrderBody>;
+export type PurchaseBundleMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Direct purchase of a bundle (deducts wallet balance instantly)
+ */
+export const usePurchaseBundle = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof purchaseBundle>>,
+    TError,
+    { data: BodyType<CreateOrderBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof purchaseBundle>>,
+  TError,
+  { data: BodyType<CreateOrderBody> },
+  TContext
+> => {
+  return useMutation(getPurchaseBundleMutationOptions(options));
+};
+
+/**
  * @summary Get an order by ID
  */
 export const getGetOrderUrl = (id: number) => {

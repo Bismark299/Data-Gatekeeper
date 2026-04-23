@@ -20,6 +20,7 @@ import AdminOrders from "@/pages/admin/orders";
 import AdminWallets from "@/pages/admin/wallets";
 import AdminDeposits from "@/pages/admin/deposits";
 import AdminStats from "@/pages/admin/stats";
+import Shop from "@/pages/shop";
 import Profile from "@/pages/profile";
 import { CheckoutSuccessDialog } from "@/components/CheckoutSuccessDialog";
 import { useCart } from "@/context/CartContext";
@@ -54,6 +55,7 @@ function Router() {
       <Route path="/admin/wallets" component={AdminWallets} />
       <Route path="/admin/deposits" component={AdminDeposits} />
       <Route path="/admin/stats" component={AdminStats} />
+      <Route path="/shop" component={Shop} />
       <Route component={NotFound} />
     </Switch>
   );

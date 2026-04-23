@@ -185,6 +185,14 @@ export const CreateOrderBody = zod.object({
 });
 
 /**
+ * @summary Direct purchase of a bundle (deducts wallet balance instantly)
+ */
+export const PurchaseBundleBody = zod.object({
+  bundleId: zod.number(),
+  phoneNumber: zod.string(),
+});
+
+/**
  * @summary Get an order by ID
  */
 export const GetOrderParams = zod.object({

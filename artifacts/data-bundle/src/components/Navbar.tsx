@@ -45,6 +45,11 @@ export function Navbar() {
                 Browse Plans
               </Button>
             </Link>
+            <Link href="/shop">
+              <Button variant={location === "/shop" ? "secondary" : "ghost"} size="sm">
+                Shop
+              </Button>
+            </Link>
             {isAuthenticated && !isAdmin && (
               <Link href="/orders">
                 <Button variant={location === "/orders" ? "secondary" : "ghost"} size="sm">
@@ -163,6 +168,9 @@ export function Navbar() {
             )}
             <Link href="/bundles" onClick={() => setMenuOpen(false)}>
               <Button variant="ghost" className="w-full justify-start">Browse Plans</Button>
+            </Link>
+            <Link href="/shop" onClick={() => setMenuOpen(false)}>
+              <Button variant="ghost" className="w-full justify-start">Shop</Button>
             </Link>
             {isAuthenticated && !isAdmin && (
               <>
