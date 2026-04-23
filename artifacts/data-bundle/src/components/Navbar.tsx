@@ -5,7 +5,7 @@ import { useCart } from "@/context/CartContext";
 import { useGetWalletBalance } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
 import {
-  Menu, X, Wifi, LogOut, ShieldCheck, ShoppingCart, Wallet, UserCircle,
+  Menu, X, Wifi, LogOut, ShieldCheck, ShoppingCart, Wallet, UserCircle, Store,
 } from "lucide-react";
 import {
   Tooltip, TooltipContent, TooltipTrigger,
@@ -54,6 +54,13 @@ export function Navbar() {
               <Link href="/orders">
                 <Button variant={location === "/orders" ? "secondary" : "ghost"} size="sm">
                   My Orders
+                </Button>
+              </Link>
+            )}
+            {isAuthenticated && !isAdmin && (
+              <Link href="/store-manager">
+                <Button variant={location.startsWith("/store-manager") ? "secondary" : "ghost"} size="sm" className="gap-1.5">
+                  <Store className="w-3.5 h-3.5" /> My Store
                 </Button>
               </Link>
             )}
@@ -181,6 +188,11 @@ export function Navbar() {
                   <Button variant="ghost" className="w-full justify-start">
                     <Wallet className="w-4 h-4 mr-2" />
                     Wallet {wallet ? `(GH₵${wallet.balance.toFixed(2)})` : ""}
+                  </Button>
+                </Link>
+                <Link href="/store-manager" onClick={() => setMenuOpen(false)}>
+                  <Button variant="ghost" className="w-full justify-start">
+                    <Store className="w-4 h-4 mr-2" /> My Store
                   </Button>
                 </Link>
                 <Link href="/profile" onClick={() => setMenuOpen(false)}>

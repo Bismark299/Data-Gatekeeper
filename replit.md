@@ -4,6 +4,15 @@
 
 A full-stack data bundle sales platform with a modern client interface and admin dashboard. The backend acts as a gatekeeper — all business logic, validation, and access control runs server-side. The frontend only handles presentation.
 
+## Key Features
+
+- Multi-network bundle sales (MTN, Telecel, AT iShare, AT Big-Time)
+- Wallet system with Paystack top-up
+- Shopping cart + wallet-deducted instant purchase (/shop)
+- **Agent Store System**: Users create branded stores, set custom prices, earn profits, withdraw earnings. Public store pages at `/s/:slug` accept Paystack payments directly.
+- Admin dashboard (users, bundles, orders, deposits, wallets, stats)
+- User dashboard, order history, profile
+
 ## Architecture
 
 - **Monorepo tool**: pnpm workspaces
