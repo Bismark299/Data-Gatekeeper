@@ -28,63 +28,53 @@ interface Bundle {
 
 const NETWORKS: Record<Network, {
   label: string;
+  shortLabel: string;
   tagline: string;
-  headerBg: string;
-  headerText: string;
-  accentBg: string;
-  accentText: string;
-  badgeBg: string;
-  checkColor: string;
-  btnClass: string;
+  cardBg: string;
+  cardText: string;
+  badgeBorder: string;
   tabActive: string;
+  btnClass: string;
 }> = {
   mtn: {
     label: "MTN",
+    shortLabel: "MTN",
     tagline: "Everywhere You Go",
-    headerBg: "bg-gradient-to-br from-yellow-400 to-amber-500",
-    headerText: "text-gray-900",
-    accentBg: "bg-yellow-50 dark:bg-yellow-900/20",
-    accentText: "text-yellow-700 dark:text-yellow-300",
-    badgeBg: "bg-yellow-500",
-    checkColor: "text-yellow-600",
-    btnClass: "bg-yellow-500 hover:bg-yellow-600 text-gray-900 border-yellow-500",
+    cardBg: "bg-[#FFCC00]",
+    cardText: "text-gray-900",
+    badgeBorder: "border-gray-900 text-gray-900",
     tabActive: "bg-yellow-400 text-gray-900 border-yellow-500",
+    btnClass: "bg-yellow-500 hover:bg-yellow-600 text-gray-900",
   },
   telecel: {
     label: "Telecel",
+    shortLabel: "TELECEL",
     tagline: "Advancing Lives",
-    headerBg: "bg-gradient-to-br from-red-600 to-rose-700",
-    headerText: "text-white",
-    accentBg: "bg-red-50 dark:bg-red-900/20",
-    accentText: "text-red-700 dark:text-red-300",
-    badgeBg: "bg-red-600",
-    checkColor: "text-red-600",
-    btnClass: "bg-red-600 hover:bg-red-700 text-white border-red-600",
+    cardBg: "bg-red-600",
+    cardText: "text-white",
+    badgeBorder: "border-white text-white",
     tabActive: "bg-red-600 text-white border-red-600",
+    btnClass: "bg-red-600 hover:bg-red-700 text-white",
   },
   "at-ishare": {
     label: "AT iShare",
+    shortLabel: "AT",
     tagline: "Share the Experience",
-    headerBg: "bg-gradient-to-br from-blue-600 to-blue-800",
-    headerText: "text-white",
-    accentBg: "bg-blue-50 dark:bg-blue-900/20",
-    accentText: "text-blue-700 dark:text-blue-300",
-    badgeBg: "bg-blue-600",
-    checkColor: "text-blue-600",
-    btnClass: "bg-blue-600 hover:bg-blue-700 text-white border-blue-600",
+    cardBg: "bg-blue-600",
+    cardText: "text-white",
+    badgeBorder: "border-white text-white",
     tabActive: "bg-blue-600 text-white border-blue-600",
+    btnClass: "bg-blue-600 hover:bg-blue-700 text-white",
   },
   "at-bigtime": {
     label: "AT Big-Time",
+    shortLabel: "AT",
     tagline: "Go Big or Go Home",
-    headerBg: "bg-gradient-to-br from-green-700 to-emerald-800",
-    headerText: "text-white",
-    accentBg: "bg-green-50 dark:bg-green-900/20",
-    accentText: "text-green-700 dark:text-green-300",
-    badgeBg: "bg-green-700",
-    checkColor: "text-green-600",
-    btnClass: "bg-green-700 hover:bg-green-800 text-white border-green-700",
+    cardBg: "bg-green-700",
+    cardText: "text-white",
+    badgeBorder: "border-white text-white",
     tabActive: "bg-green-700 text-white border-green-700",
+    btnClass: "bg-green-700 hover:bg-green-800 text-white",
   },
 };
 
@@ -105,12 +95,10 @@ export default function Bundles() {
   const [showDialog, setShowDialog] = useState(false);
 
   const { data: bundles, isLoading } = useListBundles({ network: activeNetwork });
-
   const filtered = bundles ?? [];
-
   const theme = NETWORKS[activeNetwork];
 
-  const handleAddToCart = (bundle: Bundle) => {
+  const handleSelect = (bundle: Bundle) => {
     if (!isAuthenticated) { setLocation("/login"); return; }
     setSelected(bundle);
     setShowDialog(true);
@@ -121,6 +109,14 @@ export default function Bundles() {
     addItem(selected.id, phoneNumber.trim());
     setShowDialog(false);
     setPhoneNumber("");
+  };
+
+  const formatDuration = (days: number | undefined | null) => {
+    if (!days) return "No Expiry";
+    if (days === 1) return "1 Day";
+    if (days === 7) return "7 Days";
+    if (days === 30) return "30 Days";
+    return `${days} Days`;
   };
 
   return (
@@ -151,56 +147,53 @@ export default function Bundles() {
           ))}
         </div>
 
-        <div className={`${theme.headerBg} rounded-2xl p-5 mb-6 flex items-center justify-between`}>
-          <div>
-            <div className={`text-2xl font-extrabold ${theme.headerText} tracking-tight`}>{theme.label}</div>
-            <div className={`text-sm font-medium mt-0.5 ${theme.headerText} opacity-80`}>{theme.tagline}</div>
-          </div>
-          <div className={`text-4xl font-black ${theme.headerText} opacity-20 uppercase tracking-tighter select-none`}>
-            {theme.label.split(" ")[0]}
-          </div>
-        </div>
-
         {isLoading ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
             {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="h-64 rounded-2xl bg-muted animate-pulse" />
+              <div key={i} className="h-52 rounded-2xl bg-muted animate-pulse" />
             ))}
           </div>
         ) : filtered.length === 0 ? (
           <div className="text-center py-20">
             <Wifi className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
             <h3 className="text-lg font-semibold">No plans found</h3>
-            <p className="text-muted-foreground mt-1">Try a different search.</p>
+            <p className="text-muted-foreground mt-1">Try a different network.</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
             {filtered.map(bundle => (
               <div
                 key={bundle.id}
-                className="bg-card border border-border rounded-2xl overflow-hidden flex flex-col hover:shadow-lg hover:-translate-y-0.5 transition-all"
+                className="rounded-2xl overflow-hidden cursor-pointer hover:shadow-xl hover:-translate-y-1 transition-all duration-200 group"
+                onClick={() => handleSelect(bundle as Bundle)}
                 data-testid={`card-bundle-${bundle.id}`}
               >
-                <div className={`${theme.headerBg} px-4 py-3`}>
-                  <div className={`text-xs font-bold uppercase tracking-widest ${theme.headerText} opacity-70 mb-1`}>
-                    {theme.label}
+                {/* Coloured top — network colour, centered data amount, badge top-left */}
+                <div className={`${theme.cardBg} relative flex items-center justify-center`} style={{ height: "160px" }}>
+                  {/* Network badge — top left */}
+                  <div className={`absolute top-3 left-3 border-2 rounded-full px-2.5 py-0.5 text-xs font-extrabold tracking-widest select-none ${theme.badgeBorder}`}>
+                    {theme.shortLabel}
                   </div>
-                  <div className={`text-2xl font-extrabold ${theme.headerText}`}>{bundle.dataAmount}</div>
+
+                  {/* Large centred data amount */}
+                  <span className={`text-5xl font-black tracking-tight ${theme.cardText}`}>
+                    {bundle.dataAmount}
+                  </span>
                 </div>
 
-                <div className="p-4 flex flex-col flex-1">
-                  <div className="mt-auto pt-3 border-t border-border flex items-center justify-between">
-                    <div>
-                      <span className="text-xl font-extrabold text-foreground">GH₵{bundle.price}</span>
-                    </div>
-                    <button
-                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${theme.btnClass}`}
-                      onClick={() => handleAddToCart(bundle as Bundle)}
-                      data-testid={`button-add-${bundle.id}`}
-                    >
-                      <ShoppingCart className="w-3.5 h-3.5" />
-                      Add
-                    </button>
+                {/* Dark info bar — Price / Rollover / Duration */}
+                <div className="bg-[#2b2b2b] grid grid-cols-3 divide-x divide-gray-600">
+                  <div className="py-3 px-2 text-center">
+                    <div className="text-sm font-bold text-white">GH₵{bundle.price}</div>
+                    <div className="text-[10px] text-gray-400 mt-0.5 uppercase tracking-wide">Price</div>
+                  </div>
+                  <div className="py-3 px-2 text-center">
+                    <div className="text-sm font-bold text-white">N/A</div>
+                    <div className="text-[10px] text-gray-400 mt-0.5 uppercase tracking-wide">Rollover</div>
+                  </div>
+                  <div className="py-3 px-2 text-center">
+                    <div className="text-sm font-bold text-white">{formatDuration(bundle.validityDays)}</div>
+                    <div className="text-[10px] text-gray-400 mt-0.5 uppercase tracking-wide">Duration</div>
                   </div>
                 </div>
               </div>
@@ -216,12 +209,27 @@ export default function Bundles() {
           </DialogHeader>
           <div className="space-y-4 py-2">
             {selected && (
-              <div className={`${theme.headerBg} rounded-xl p-4 flex items-center justify-between`}>
-                <div>
-                  <div className={`font-bold ${theme.headerText}`}>{selected.name}</div>
-                  <div className={`text-sm ${theme.headerText} opacity-75`}>{selected.validityDays}-day validity</div>
+              <div className={`${theme.cardBg} rounded-xl overflow-hidden`}>
+                <div className={`relative flex items-center justify-center py-6`}>
+                  <div className={`absolute top-2 left-3 border-2 rounded-full px-2.5 py-0.5 text-xs font-extrabold tracking-widest ${theme.badgeBorder}`}>
+                    {theme.shortLabel}
+                  </div>
+                  <span className={`text-4xl font-black ${theme.cardText}`}>{selected.dataAmount}</span>
                 </div>
-                <div className={`text-2xl font-extrabold ${theme.headerText}`}>GH₵{selected.price}</div>
+                <div className="bg-[#2b2b2b] grid grid-cols-3 divide-x divide-gray-600">
+                  <div className="py-2 text-center">
+                    <div className="text-sm font-bold text-white">GH₵{selected.price}</div>
+                    <div className="text-[10px] text-gray-400 mt-0.5 uppercase">Price</div>
+                  </div>
+                  <div className="py-2 text-center">
+                    <div className="text-sm font-bold text-white">N/A</div>
+                    <div className="text-[10px] text-gray-400 mt-0.5 uppercase">Rollover</div>
+                  </div>
+                  <div className="py-2 text-center">
+                    <div className="text-sm font-bold text-white">{formatDuration(selected.validityDays)}</div>
+                    <div className="text-[10px] text-gray-400 mt-0.5 uppercase">Duration</div>
+                  </div>
+                </div>
               </div>
             )}
             <div className="space-y-1.5">
