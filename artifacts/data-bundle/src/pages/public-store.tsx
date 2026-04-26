@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/dialog";
 import {
   Wifi, Zap, Loader2, XCircle, CheckCircle2, Clock, ShoppingBag,
-  Phone, Mail, Globe, ArrowRight, RotateCcw,
+  Phone, Mail, Globe, ArrowRight, RotateCcw, Search, PackageSearch,
 } from "lucide-react";
 
 // ─── Store Theme system ───────────────────────────────────────────────────────
@@ -234,6 +234,24 @@ export default function PublicStorePage() {
   const [selected, setSelected] = useState<StoreBundle | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
 
+  const [trackPhone, setTrackPhone] = useState("");
+  const [trackedOrders, setTrackedOrders] = useState<any[] | null>(null);
+  const [trackLoading, setTrackLoading] = useState(false);
+  const [trackError, setTrackError] = useState("");
+
+  const handleTrack = async () => {
+    if (!trackPhone.trim() || trackPhone.trim().length < 7) return;
+    setTrackLoading(true); setTrackError(""); setTrackedOrders(null);
+    try {
+      const results = await storeApi.trackOrders(slug, trackPhone.trim());
+      setTrackedOrders(results);
+    } catch (e) {
+      setTrackError((e as Error).message ?? "Could not find orders");
+    } finally {
+      setTrackLoading(false);
+    }
+  };
+
   const { data, isLoading, error } = useQuery<PublicStore>({
     queryKey: ["publicStore", slug],
     queryFn: () => storeApi.getPublicStore(slug),
@@ -395,6 +413,84 @@ export default function PublicStorePage() {
             ))}
           </div>
         )}
+
+        {/* Track My Order */}
+        <div className="mt-10">
+          <div className="bg-card border border-border rounded-2xl overflow-hidden">
+            <div className={`px-5 py-4 border-b border-border flex items-center gap-3 ${storeTheme.accentLight} ${storeTheme.accentBorder}`}>
+              <PackageSearch className="w-5 h-5 text-muted-foreground" />
+              <div>
+                <h3 className="font-bold text-foreground">Track My Order</h3>
+                <p className="text-xs text-muted-foreground">Enter the phone number you used to buy to see your orders</p>
+              </div>
+            </div>
+            <div className="p-5 space-y-4">
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <Input
+                    type="tel"
+                    placeholder="e.g. 0244123456"
+                    value={trackPhone}
+                    onChange={e => { setTrackPhone(e.target.value); setTrackedOrders(null); setTrackError(""); }}
+                    onKeyDown={e => e.key === "Enter" && handleTrack()}
+                    className="pl-9 h-10"
+                  />
+                </div>
+                <Button onClick={handleTrack} disabled={trackLoading || trackPhone.trim().length < 7} className="gap-2 shrink-0">
+                  {trackLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+                  {trackLoading ? "Searching…" : "Track"}
+                </Button>
+              </div>
+
+              {trackError && (
+                <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-red-50 border border-red-200 dark:bg-red-900/10 dark:border-red-800">
+                  <XCircle className="w-4 h-4 text-red-500 shrink-0" />
+                  <p className="text-sm text-red-700 dark:text-red-400">{trackError}</p>
+                </div>
+              )}
+
+              {trackedOrders !== null && (
+                trackedOrders.length === 0 ? (
+                  <div className="text-center py-8 space-y-2">
+                    <PackageSearch className="w-10 h-10 text-muted-foreground mx-auto" />
+                    <p className="text-sm font-semibold text-foreground">No orders found</p>
+                    <p className="text-xs text-muted-foreground">No orders were placed with this phone number.</p>
+                  </div>
+                ) : (
+                  <div className="divide-y divide-border rounded-xl border border-border overflow-hidden">
+                    {trackedOrders.map((o: any) => {
+                      const statusColor = o.status === "completed" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400"
+                        : o.status === "processing" ? "bg-blue-100 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400"
+                        : o.status === "pending" ? "bg-amber-100 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400"
+                        : "bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400";
+                      const StatusIcon = o.status === "completed" ? CheckCircle2 : o.status === "cancelled" ? XCircle : Clock;
+                      const nStyle = NETWORK_STYLES[o.bundleNetwork];
+                      return (
+                        <div key={o.id} className="flex items-center gap-3 px-4 py-3.5 bg-background hover:bg-muted/30 transition-colors">
+                          <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${nStyle?.gradient ?? "bg-gradient-to-br from-gray-600 to-gray-800"}`}>
+                            <span className={`text-xs font-black ${nStyle?.text ?? "text-white"}`}>{o.bundleData}</span>
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm font-semibold text-foreground">{o.bundleData} — {NETWORK_LABELS[o.bundleNetwork] ?? o.bundleNetwork}</div>
+                            <div className="text-xs text-muted-foreground">{new Date(o.createdAt).toLocaleString("en-GH", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true })}</div>
+                          </div>
+                          <div className="text-right shrink-0 space-y-1">
+                            <div className="text-sm font-bold text-foreground">GH₵{o.sellingPrice.toFixed(2)}</div>
+                            <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full ${statusColor}`}>
+                              <StatusIcon className="w-2.5 h-2.5" />
+                              {o.status}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )
+              )}
+            </div>
+          </div>
+        </div>
 
         {/* Footer */}
         <div className="mt-12 pt-8 border-t border-border text-center text-xs text-muted-foreground space-y-2">

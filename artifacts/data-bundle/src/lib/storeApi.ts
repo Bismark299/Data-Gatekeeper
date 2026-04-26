@@ -65,4 +65,6 @@ export const storeApi = {
     request<{ authorizationUrl: string; reference: string; storeOrderId: number }>("POST", `/s/${slug}/checkout`, data),
   verifyPayment: (slug: string, ref: string) =>
     request<StoreOrder>("POST", `/s/${slug}/verify`, { ref }),
+  trackOrders: (slug: string, phone: string) =>
+    request<Array<{ id: number; bundleData: string; bundleNetwork: string; sellingPrice: number; status: string; paystackReference: string; createdAt: string }>>("GET", `/s/${slug}/orders?phone=${encodeURIComponent(phone)}`),
 };

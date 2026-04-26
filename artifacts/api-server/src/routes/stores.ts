@@ -391,6 +391,31 @@ router.post("/s/:slug/checkout", async (req, res) => {
   res.json({ authorizationUrl: psData.data!.authorization_url, reference, storeOrderId: storeOrder.id });
 });
 
+router.get("/s/:slug/orders", async (req, res) => {
+  const { slug } = req.params;
+  const { phone } = req.query as { phone?: string };
+  if (!phone || phone.trim().length < 7) {
+    res.status(400).json({ error: "Valid phone number required" }); return;
+  }
+  const [store] = await db.select().from(storesTable).where(eq(storesTable.slug, slug));
+  if (!store) { res.status(404).json({ error: "Store not found" }); return; }
+  const orders = await db
+    .select({
+      id: storeOrdersTable.id,
+      bundleData: storeOrdersTable.bundleData,
+      bundleNetwork: storeOrdersTable.bundleNetwork,
+      sellingPrice: storeOrdersTable.sellingPrice,
+      status: storeOrdersTable.status,
+      paystackReference: storeOrdersTable.paystackReference,
+      createdAt: storeOrdersTable.createdAt,
+    })
+    .from(storeOrdersTable)
+    .where(and(eq(storeOrdersTable.storeId, store.id), eq(storeOrdersTable.customerPhone, phone.trim())))
+    .orderBy(desc(storeOrdersTable.createdAt))
+    .limit(50);
+  res.json(orders.map(o => ({ ...o, sellingPrice: parseFloat(o.sellingPrice as any) })));
+});
+
 router.post("/s/:slug/verify", async (req, res) => {
   const { ref } = req.body as { ref?: string };
   if (!ref) { res.status(400).json({ error: "Reference required" }); return; }
