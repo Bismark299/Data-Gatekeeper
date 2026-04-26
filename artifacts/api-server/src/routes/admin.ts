@@ -57,11 +57,20 @@ router.get("/admin/users", requireAdmin, async (req, res): Promise<void> => {
     conditions.push(eq(usersTable.role, role));
   }
 
-  const users = conditions.length > 0
-    ? await db.select().from(usersTable).where(and(...conditions)).orderBy(desc(usersTable.createdAt))
-    : await db.select().from(usersTable).orderBy(desc(usersTable.createdAt));
+  const rows = conditions.length > 0
+    ? await db
+        .select({ user: usersTable, balance: walletsTable.balance })
+        .from(usersTable)
+        .leftJoin(walletsTable, eq(walletsTable.userId, usersTable.id))
+        .where(and(...conditions))
+        .orderBy(desc(usersTable.createdAt))
+    : await db
+        .select({ user: usersTable, balance: walletsTable.balance })
+        .from(usersTable)
+        .leftJoin(walletsTable, eq(walletsTable.userId, usersTable.id))
+        .orderBy(desc(usersTable.createdAt));
 
-  res.json(users.map(formatUser));
+  res.json(rows.map(r => ({ ...formatUser(r.user), walletBalance: Number(r.balance ?? 0) })));
 });
 
 router.patch("/admin/users/:id", requireAdmin, async (req, res): Promise<void> => {
@@ -169,6 +178,64 @@ router.patch("/admin/orders/:id/status", requireAdmin, async (req, res): Promise
   res.json(formatOrder(order));
 });
 
+router.post("/admin/orders/:id/refund", requireAdmin, async (req, res): Promise<void> => {
+  const id = Number(req.params.id);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid order ID" }); return; }
+
+  const [order] = await db.select().from(ordersTable).where(eq(ordersTable.id, id));
+  if (!order) { res.status(404).json({ error: "Order not found" }); return; }
+
+  if (order.status === "completed") {
+    res.status(400).json({ error: "Cannot refund a completed order" });
+    return;
+  }
+
+  await db.update(ordersTable).set({ status: "failed" }).where(eq(ordersTable.id, id));
+
+  const [wallet] = await db.select().from(walletsTable).where(eq(walletsTable.userId, order.userId));
+  if (wallet) {
+    await db.update(walletsTable)
+      .set({ balance: String(Number(wallet.balance) + Number(order.price)) })
+      .where(eq(walletsTable.userId, order.userId));
+  } else {
+    await db.insert(walletsTable).values({ userId: order.userId, balance: String(Number(order.price)) });
+  }
+
+  res.json({ success: true, refunded: Number(order.price) });
+});
+
+router.post("/admin/orders/complete-processing", requireAdmin, async (req, res): Promise<void> => {
+  const processingOrders = await db.select().from(ordersTable).where(eq(ordersTable.status, "processing"));
+
+  if (processingOrders.length === 0) {
+    res.json({ updated: 0 });
+    return;
+  }
+
+  await db.update(ordersTable).set({ status: "completed" }).where(eq(ordersTable.status, "processing"));
+
+  res.json({ updated: processingOrders.length });
+});
+
+router.post("/admin/users/:id/reset-password", requireAdmin, async (req, res): Promise<void> => {
+  const id = Number(req.params.id);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid user ID" }); return; }
+
+  const { default: bcrypt } = await import("bcryptjs");
+  const tempPassword = "Reset@" + Math.floor(100000 + Math.random() * 900000);
+  const passwordHash = await bcrypt.hash(tempPassword, 12);
+
+  const [user] = await db
+    .update(usersTable)
+    .set({ passwordHash })
+    .where(eq(usersTable.id, id))
+    .returning();
+
+  if (!user) { res.status(404).json({ error: "User not found" }); return; }
+
+  res.json({ success: true, tempPassword });
+});
+
 router.get("/admin/wallets", requireAdmin, async (req, res): Promise<void> => {
   const rows = await db
     .select({
@@ -223,16 +290,22 @@ router.get("/admin/stats", requireAdmin, async (req, res): Promise<void> => {
   const [activeBundles] = await db.select({ count: count() }).from(bundlesTable).where(eq(bundlesTable.isActive, true));
   const [pendingOrders] = await db.select({ count: count() }).from(ordersTable).where(eq(ordersTable.status, "pending"));
   const [completedOrders] = await db.select({ count: count() }).from(ordersTable).where(eq(ordersTable.status, "completed"));
+  const [processingOrders] = await db.select({ count: count() }).from(ordersTable).where(eq(ordersTable.status, "processing"));
+  const [failedOrders] = await db.select({ count: count() }).from(ordersTable).where(eq(ordersTable.status, "failed"));
   const [recentUsers] = await db.select({ count: count() }).from(usersTable).where(gte(usersTable.createdAt, thirtyDaysAgo));
   const [recentOrders] = await db.select({ count: count() }).from(ordersTable).where(gte(ordersTable.createdAt, thirtyDaysAgo));
+  const [walletRow] = await db.select({ total: sum(walletsTable.balance) }).from(walletsTable);
 
   res.json({
     totalUsers: totalUsers.count,
     totalOrders: totalOrders.count,
     totalRevenue: Number(revenueRow.total ?? 0),
+    totalWalletBalance: Number(walletRow?.total ?? 0),
     activeBundles: activeBundles.count,
     pendingOrders: pendingOrders.count,
     completedOrders: completedOrders.count,
+    processingOrders: processingOrders.count,
+    failedOrders: failedOrders.count,
     recentUsers: recentUsers.count,
     recentOrders: recentOrders.count,
   });

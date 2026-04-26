@@ -11,11 +11,14 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
+} from "@/components/ui/dialog";
+import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
   Menu, Search, Users, Trash2, ShieldCheck, User, CheckCircle2, XCircle,
-  RefreshCw, Download, ChevronLeft, ChevronRight, X, Filter,
+  RefreshCw, Download, ChevronLeft, ChevronRight, X, Filter, KeyRound, Wallet,
 } from "lucide-react";
 
 const PAGE_SIZES = [10, 25, 50];
@@ -33,6 +36,7 @@ function AdminUsersContent() {
   const [roleFilter, setRoleFilter]    = useState<"all" | "user" | "admin">("all");
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("all");
   const [deleting, setDeleting]        = useState<{ id: number; name: string } | null>(null);
+  const [resetResult, setResetResult]  = useState<{ name: string; tempPassword: string } | null>(null);
   const [page, setPage]                = useState(1);
   const [pageSize, setPageSize]        = useState(25);
 
@@ -56,6 +60,20 @@ function AdminUsersContent() {
     updateUser.mutate({ id: u.id, data: { role: newRole } }, {
       onSuccess: () => { toast({ title: `${u.name} is now ${newRole}` }); invalidate(); },
     });
+  };
+
+  const handleResetPassword = async (u: { id: number; name: string }) => {
+    try {
+      const res = await fetch(`/api/admin/users/${u.id}/reset-password`, {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error);
+      setResetResult({ name: u.name, tempPassword: json.tempPassword });
+    } catch (e: unknown) {
+      toast({ title: (e as Error).message || "Error resetting password", variant: "destructive" });
+    }
   };
 
   const confirmDelete = () => {
@@ -92,8 +110,8 @@ function AdminUsersContent() {
   const clearFilters = () => { setSearch(""); setRoleFilter("all"); setStatusFilter("all"); setPage(1); };
 
   const handleExport = () => {
-    const rows = filtered.map(u => [u.id, `"${u.name}"`, u.email, u.phone ?? "", u.role, u.isActive ? "Active" : "Inactive", fmtDate(u.createdAt)]);
-    const csv  = [["ID", "Name", "Email", "Phone", "Role", "Status", "Joined"].join(","), ...rows.map(r => r.join(","))].join("\n");
+    const rows = filtered.map(u => [u.id, fmtDate(u.createdAt), `"${u.name}"`, u.email, u.phone ?? "", u.role, u.isActive ? "Active" : "Inactive", `GH₵${((u as { walletBalance?: number }).walletBalance ?? 0).toFixed(2)}`]);
+    const csv  = [["ID", "Joined", "Name", "Email", "Phone", "Role", "Status", "Balance"].join(","), ...rows.map(r => r.join(","))].join("\n");
     const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
     a.download = "users.csv"; a.click();
     toast({ title: `Exported ${filtered.length} users` });
@@ -133,7 +151,7 @@ function AdminUsersContent() {
             ].map(c => (
               <div key={c.label} className="bg-card border border-border rounded-2xl p-4 flex items-center gap-3">
                 <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${c.bg}`}>
-                  <c.icon className={`w-4.5 h-4.5 ${c.color}`} />
+                  <c.icon className={`w-4 h-4 ${c.color}`} />
                 </div>
                 <div>
                   <div className="text-2xl font-extrabold text-foreground">{c.value}</div>
@@ -204,62 +222,79 @@ function AdminUsersContent() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-border bg-muted/20">
-                      {["User", "Phone", "Role", "Status", "Joined", "Actions"].map(h => (
+                      {["Joined", "Name", "Email", "Phone", "Balance", "Role", "Status", "Actions"].map(h => (
                         <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
-                    {paged.map(u => (
-                      <tr key={u.id} className="hover:bg-muted/20 transition-colors" data-testid={`row-user-${u.id}`}>
-                        <td className="px-5 py-3.5">
-                          <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0 text-xs font-bold text-primary">
-                              {u.name.charAt(0).toUpperCase()}
+                    {paged.map(u => {
+                      const walletBalance = (u as { walletBalance?: number }).walletBalance ?? 0;
+                      return (
+                        <tr key={u.id} className="hover:bg-muted/20 transition-colors" data-testid={`row-user-${u.id}`}>
+                          <td className="px-5 py-3.5 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(u.createdAt)}</td>
+                          <td className="px-5 py-3.5">
+                            <div className="flex items-center gap-2">
+                              <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center shrink-0 text-xs font-bold text-primary">
+                                {u.name.charAt(0).toUpperCase()}
+                              </div>
+                              <span className="font-semibold text-foreground whitespace-nowrap">{u.name}</span>
                             </div>
-                            <div>
-                              <div className="font-semibold text-foreground">{u.name}</div>
-                              <div className="text-xs text-muted-foreground">{u.email}</div>
+                          </td>
+                          <td className="px-5 py-3.5 text-xs text-muted-foreground">{u.email}</td>
+                          <td className="px-5 py-3.5 text-sm text-muted-foreground font-mono">{u.phone ?? "—"}</td>
+                          <td className="px-5 py-3.5">
+                            <span className={`inline-flex items-center gap-1 text-xs font-bold ${walletBalance > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}`}>
+                              <Wallet className="w-3 h-3" />
+                              GH₵{walletBalance.toFixed(2)}
+                            </span>
+                          </td>
+                          <td className="px-5 py-3.5">
+                            <button
+                              onClick={() => toggleRole({ id: u.id, role: u.role, name: u.name })}
+                              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold capitalize transition-colors cursor-pointer ${
+                                u.role === "admin"
+                                  ? "bg-violet-100 text-violet-700 dark:bg-violet-900/20 dark:text-violet-400 hover:bg-violet-200"
+                                  : "bg-muted text-muted-foreground hover:bg-muted/80"
+                              }`}
+                              data-testid={`badge-role-${u.id}`}
+                            >
+                              {u.role === "admin" ? <ShieldCheck className="w-3 h-3" /> : <User className="w-3 h-3" />}
+                              {u.role}
+                            </button>
+                          </td>
+                          <td className="px-5 py-3.5">
+                            <button
+                              onClick={() => toggleActive({ id: u.id, isActive: u.isActive, name: u.name })}
+                              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold transition-colors ${
+                                u.isActive
+                                  ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400 hover:bg-emerald-200"
+                                  : "bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400 hover:bg-red-200"
+                              }`}
+                              data-testid={`button-toggle-user-${u.id}`}
+                            >
+                              {u.isActive ? <CheckCircle2 className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
+                              {u.isActive ? "Active" : "Inactive"}
+                            </button>
+                          </td>
+                          <td className="px-5 py-3.5">
+                            <div className="flex items-center gap-1">
+                              <Button
+                                variant="ghost" size="icon" className="h-7 w-7 text-amber-600 hover:text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-900/20"
+                                onClick={() => handleResetPassword({ id: u.id, name: u.name })}
+                                title="Reset password"
+                                data-testid={`button-reset-pw-${u.id}`}
+                              >
+                                <KeyRound className="w-3.5 h-3.5" />
+                              </Button>
+                              <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => setDeleting({ id: u.id, name: u.name })} data-testid={`button-delete-user-${u.id}`}>
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </Button>
                             </div>
-                          </div>
-                        </td>
-                        <td className="px-5 py-3.5 text-sm text-muted-foreground font-mono">{u.phone ?? "—"}</td>
-                        <td className="px-5 py-3.5">
-                          <button
-                            onClick={() => toggleRole({ id: u.id, role: u.role, name: u.name })}
-                            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold capitalize transition-colors cursor-pointer ${
-                              u.role === "admin"
-                                ? "bg-violet-100 text-violet-700 dark:bg-violet-900/20 dark:text-violet-400 hover:bg-violet-200"
-                                : "bg-muted text-muted-foreground hover:bg-muted/80"
-                            }`}
-                            data-testid={`badge-role-${u.id}`}
-                          >
-                            {u.role === "admin" ? <ShieldCheck className="w-3 h-3" /> : <User className="w-3 h-3" />}
-                            {u.role}
-                          </button>
-                        </td>
-                        <td className="px-5 py-3.5">
-                          <button
-                            onClick={() => toggleActive({ id: u.id, isActive: u.isActive, name: u.name })}
-                            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold transition-colors ${
-                              u.isActive
-                                ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400 hover:bg-emerald-200"
-                                : "bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400 hover:bg-red-200"
-                            }`}
-                            data-testid={`button-toggle-user-${u.id}`}
-                          >
-                            {u.isActive ? <CheckCircle2 className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
-                            {u.isActive ? "Active" : "Inactive"}
-                          </button>
-                        </td>
-                        <td className="px-5 py-3.5 text-xs text-muted-foreground">{fmtDate(u.createdAt)}</td>
-                        <td className="px-5 py-3.5">
-                          <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => setDeleting({ id: u.id, name: u.name })} data-testid={`button-delete-user-${u.id}`}>
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </Button>
-                        </td>
-                      </tr>
-                    ))}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -301,6 +336,33 @@ function AdminUsersContent() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Password Reset Result Dialog */}
+      <Dialog open={!!resetResult} onOpenChange={v => !v && setResetResult(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Password Reset</DialogTitle>
+            <DialogDescription>Share this temporary password with {resetResult?.name}. They should change it after logging in.</DialogDescription>
+          </DialogHeader>
+          <div className="py-3">
+            <div className="bg-muted rounded-xl px-4 py-3 font-mono text-lg font-bold text-center tracking-widest text-foreground select-all">
+              {resetResult?.tempPassword}
+            </div>
+            <p className="text-xs text-muted-foreground text-center mt-2">Click the password above to select it, then copy</p>
+          </div>
+          <DialogFooter>
+            <Button
+              onClick={() => {
+                navigator.clipboard.writeText(resetResult?.tempPassword ?? "");
+                toast({ title: "Password copied to clipboard" });
+              }}
+              className="w-full"
+            >
+              Copy Password
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

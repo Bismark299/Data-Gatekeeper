@@ -43,10 +43,7 @@ const NETWORK_COLORS: Record<string, { bg: string; text: string; badge: string }
 const netLabel = (v: string) => NETWORKS.find(n => n.value === v)?.label ?? v;
 
 const bundleSchema = z.object({
-  name: z.string().min(2, "Name is required"),
-  description: z.string().min(5, "Description too short"),
   dataAmount: z.string().min(1, "Data amount required"),
-  validityDays: z.coerce.number().int().positive("Must be positive"),
   price: z.coerce.number().positive("Must be positive"),
   network: z.string().min(1, "Select a network"),
 });
@@ -70,7 +67,7 @@ function AdminBundlesContent() {
   const [editing, setEditing]         = useState<Bundle | null>(null);
   const [deleting, setDeleting]       = useState<Bundle | null>(null);
   const [networkFilter, setNetworkFilter] = useState("all");
-  const [statusFilter, setStatusFilter]   = useState<"all" | "active" | "inactive">("all");
+  const [statusFilter, setStatusFilter]   = useState<"all" | "active" | "failed">("all");
   const [search, setSearch]           = useState("");
   const [page, setPage]               = useState(1);
   const [pageSize, setPageSize]       = useState(10);
@@ -90,10 +87,19 @@ function AdminBundlesContent() {
   });
 
   const openCreate = () => { setEditing(null); reset({ network: "mtn" }); setShowForm(true); };
-  const openEdit   = (b: Bundle) => { setEditing(b); reset({ name: b.name, description: b.description, dataAmount: b.dataAmount, validityDays: b.validityDays, price: b.price, network: b.network }); setShowForm(true); };
+  const openEdit   = (b: Bundle) => { setEditing(b); reset({ dataAmount: b.dataAmount, price: b.price, network: b.network }); setShowForm(true); };
 
   const onSubmit = (data: BundleForm) => {
-    const payload = { ...data, category: "standard" };
+    const networkLbl = netLabel(data.network);
+    const payload = {
+      name: `${networkLbl} ${data.dataAmount}`,
+      description: `${networkLbl} ${data.dataAmount} Data Bundle`,
+      dataAmount: data.dataAmount,
+      validityDays: 30,
+      price: data.price,
+      network: data.network,
+      category: "standard",
+    };
     if (editing) {
       updateBundle.mutate({ id: editing.id, data: payload }, {
         onSuccess: () => { toast({ title: "Bundle updated" }); setShowForm(false); invalidate(); },
@@ -130,11 +136,11 @@ function AdminBundlesContent() {
   const filtered = useMemo(() => {
     let src = bundles ?? [];
     if (networkFilter !== "all") src = src.filter(b => b.network === networkFilter);
-    if (statusFilter === "active")   src = src.filter(b => b.isActive);
-    if (statusFilter === "inactive") src = src.filter(b => !b.isActive);
+    if (statusFilter === "active") src = src.filter(b => b.isActive);
+    if (statusFilter === "failed") src = src.filter(b => !b.isActive);
     if (search.trim()) {
       const q = search.trim().toLowerCase();
-      src = src.filter(b => b.name.toLowerCase().includes(q) || b.dataAmount.toLowerCase().includes(q));
+      src = src.filter(b => b.dataAmount.toLowerCase().includes(q) || netLabel(b.network).toLowerCase().includes(q));
     }
     return src;
   }, [bundles, networkFilter, statusFilter, search]);
@@ -146,8 +152,8 @@ function AdminBundlesContent() {
   const clearFilters = () => { setNetworkFilter("all"); setStatusFilter("all"); setSearch(""); setPage(1); };
 
   const handleExport = () => {
-    const rows = filtered.map(b => [b.id, `"${b.name}"`, b.network, b.dataAmount, b.price, b.validityDays, b.isActive ? "Active" : "Inactive"]);
-    const csv  = [["ID", "Name", "Network", "Data", "Price", "Validity (days)", "Status"].join(","), ...rows.map(r => r.join(","))].join("\n");
+    const rows = filtered.map(b => [b.id, b.network, b.dataAmount, b.price, b.isActive ? "Active" : "Failed"]);
+    const csv  = [["ID", "Network", "Data", "Price", "Status"].join(","), ...rows.map(r => r.join(","))].join("\n");
     const a    = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
     a.download = "bundles.csv"; a.click();
     toast({ title: `Exported ${filtered.length} bundles` });
@@ -224,12 +230,12 @@ function AdminBundlesContent() {
               </div>
               {/* Status */}
               <div className="flex items-center gap-1 ml-2 pl-2 border-l border-border">
-                {(["all", "active", "inactive"] as const).map(s => (
+                {(["all", "active", "failed"] as const).map(s => (
                   <button
                     key={s}
                     onClick={() => { setStatusFilter(s); setPage(1); }}
                     className={`px-3 py-1.5 rounded-lg text-xs font-semibold capitalize transition-colors ${statusFilter === s ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}
-                  >{s}</button>
+                  >{s === "all" ? "All" : s === "active" ? "Active" : "Failed"}</button>
                 ))}
               </div>
               {/* Page size */}
@@ -258,7 +264,7 @@ function AdminBundlesContent() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-border bg-muted/20">
-                      {["Network", "Bundle Name", "Data", "Validity", "Price", "Status", "Actions"].map(h => (
+                      {["Network", "Data", "Price", "Status", "Actions"].map(h => (
                         <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
                       ))}
                     </tr>
@@ -274,12 +280,7 @@ function AdminBundlesContent() {
                               {netLabel(bundle.network ?? "")}
                             </span>
                           </td>
-                          <td className="px-5 py-3.5">
-                            <div className="font-semibold text-foreground">{bundle.name}</div>
-                            <div className="text-xs text-muted-foreground truncate max-w-[200px]">{bundle.description}</div>
-                          </td>
-                          <td className="px-5 py-3.5 font-bold text-foreground">{bundle.dataAmount}</td>
-                          <td className="px-5 py-3.5 text-muted-foreground text-sm">{bundle.validityDays}d</td>
+                          <td className="px-5 py-3.5 font-bold text-foreground text-base">{bundle.dataAmount}</td>
                           <td className="px-5 py-3.5 font-bold text-foreground">GH₵{Number(bundle.price).toFixed(2)}</td>
                           <td className="px-5 py-3.5">
                             <button
@@ -287,12 +288,12 @@ function AdminBundlesContent() {
                               className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold transition-colors ${
                                 bundle.isActive
                                   ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400 hover:bg-emerald-200"
-                                  : "bg-muted text-muted-foreground hover:bg-muted/80"
+                                  : "bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400 hover:bg-red-200"
                               }`}
                               data-testid={`button-toggle-${bundle.id}`}
                             >
                               {bundle.isActive ? <CheckCircle2 className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
-                              {bundle.isActive ? "Active" : "Inactive"}
+                              {bundle.isActive ? "Active" : "Failed"}
                             </button>
                           </td>
                           <td className="px-5 py-3.5">
@@ -318,7 +319,7 @@ function AdminBundlesContent() {
               <div className="flex items-center justify-between px-5 py-3 border-t border-border text-xs text-muted-foreground">
                 <span>Showing {Math.min((page - 1) * pageSize + 1, filtered.length)}–{Math.min(page * pageSize, filtered.length)} of {filtered.length}</span>
                 <div className="flex items-center gap-1">
-                  <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} className="p-1.5 rounded-lg hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed"><X className="w-3 h-3 rotate-90 opacity-0" /><ChevronLeftIcon /></button>
+                  <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} className="p-1.5 rounded-lg hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed"><ChevronLeftIcon /></button>
                   {Array.from({ length: totalPages }, (_, i) => i + 1)
                     .filter(p => p === 1 || p === totalPages || Math.abs(p - page) <= 1)
                     .reduce<(number | "…")[]>((acc, p, idx, arr) => { if (idx > 0 && (p as number) - (arr[idx - 1] as number) > 1) acc.push("…"); acc.push(p); return acc; }, [])
@@ -335,7 +336,7 @@ function AdminBundlesContent() {
 
       {/* Create / Edit Dialog */}
       <Dialog open={showForm} onOpenChange={setShowForm}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle>{editing ? "Edit Bundle" : "New Bundle"}</DialogTitle>
             <DialogDescription>{editing ? "Update the bundle details below." : "Fill in the details to create a new bundle."}</DialogDescription>
@@ -357,26 +358,11 @@ function AdminBundlesContent() {
               )} />
               {errors.network && <p className="text-xs text-destructive">{errors.network.message}</p>}
             </div>
-            <div className="space-y-1.5">
-              <Label>Bundle Name</Label>
-              <Input {...register("name")} placeholder="e.g. MTN 5GB Bundle" data-testid="input-bundle-name" />
-              {errors.name && <p className="text-xs text-destructive">{errors.name.message}</p>}
-            </div>
-            <div className="space-y-1.5">
-              <Label>Description</Label>
-              <Input {...register("description")} placeholder="Brief description" data-testid="input-bundle-desc" />
-              {errors.description && <p className="text-xs text-destructive">{errors.description.message}</p>}
-            </div>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label>Data</Label>
-                <Input {...register("dataAmount")} placeholder="5GB" data-testid="input-data-amount" />
+                <Label>Data Amount</Label>
+                <Input {...register("dataAmount")} placeholder="e.g. 5GB" data-testid="input-data-amount" />
                 {errors.dataAmount && <p className="text-xs text-destructive">{errors.dataAmount.message}</p>}
-              </div>
-              <div className="space-y-1.5">
-                <Label>Validity (days)</Label>
-                <Input type="number" {...register("validityDays")} placeholder="7" data-testid="input-validity-days" />
-                {errors.validityDays && <p className="text-xs text-destructive">{errors.validityDays.message}</p>}
               </div>
               <div className="space-y-1.5">
                 <Label>Price (GH₵)</Label>
@@ -398,7 +384,7 @@ function AdminBundlesContent() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Bundle</AlertDialogTitle>
-            <AlertDialogDescription>Delete "{deleting?.name}"? This cannot be undone.</AlertDialogDescription>
+            <AlertDialogDescription>Delete this {netLabel(deleting?.network ?? "")} {deleting?.dataAmount} bundle? This cannot be undone.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>

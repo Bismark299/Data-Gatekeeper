@@ -255,6 +255,7 @@ function OrdersContent() {
                     <th className="text-left px-5 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wide">Order ID</th>
                     <th className="text-left px-5 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wide">Phone</th>
                     <th className="text-left px-5 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wide">Network</th>
+                    <th className="text-left px-5 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wide">Package</th>
                     <th className="text-left px-5 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wide">Amount</th>
                     <th className="text-left px-5 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wide">Status</th>
                   </tr>
@@ -281,6 +282,7 @@ function OrdersContent() {
                             {netLabel}
                           </span>
                         </td>
+                        <td className="px-5 py-3.5 font-bold text-foreground text-xs">{order.bundleData ?? "—"}</td>
                         <td className="px-5 py-3.5 font-bold text-foreground">GH₵{order.price}</td>
                         <td className="px-5 py-3.5">
                           <span

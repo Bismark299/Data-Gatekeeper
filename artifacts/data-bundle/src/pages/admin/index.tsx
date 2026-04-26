@@ -19,7 +19,8 @@ import {
 import {
   Menu, Users, ShoppingCart, DollarSign, Package, Clock,
   CheckCircle2, AlertTriangle, ChevronLeft, ChevronRight,
-  Search, X, RefreshCw, ArrowUpRight, BarChart3,
+  Search, X, RefreshCw, ArrowUpRight, BarChart3, Wallet,
+  XCircle, Copy, Zap, AlertCircle,
 } from "lucide-react";
 
 const PAGE_SIZE = 10;
@@ -37,6 +38,13 @@ const STATUS_DOT: Record<string, string> = {
 };
 
 const ORDER_STATUSES = ["all", "pending", "processing", "completed", "failed"] as const;
+
+const NETWORKS = [
+  { value: "mtn",         label: "MTN",         dot: "bg-yellow-400", badge: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400" },
+  { value: "telecel",     label: "Telecel",      dot: "bg-red-500",    badge: "bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400" },
+  { value: "at-ishare",   label: "AT iShare",    dot: "bg-blue-500",   badge: "bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400" },
+  { value: "at-bigtime",  label: "AT Big-Time",  dot: "bg-green-600",  badge: "bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400" },
+] as const;
 
 const fmtDate = (iso: string) =>
   new Date(iso).toLocaleDateString("en-GH", { day: "numeric", month: "short", year: "numeric" });
@@ -90,12 +98,16 @@ export default function AdminDashboard() {
 function AdminDashboardContent() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [statusTab, setStatusTab]     = useState<typeof ORDER_STATUSES[number]>("all");
-  const [search, setSearch]           = useState("");
+  const [phoneSearch, setPhoneSearch] = useState("");
+  const [orderIdSearch, setOrderIdSearch] = useState("");
   const [page, setPage]               = useState(1);
+  const [completing, setCompleting]   = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  const { data: stats, isLoading: statsLoading, refetch: refetchStats } = useAdminGetStats();
+  const { data: stats, isLoading: statsLoading, refetch: refetchStats } = useAdminGetStats({
+    refetchInterval: 5000,
+  } as Parameters<typeof useAdminGetStats>[0]);
   const { data: deposits } = useAdminListDeposits({});
   const { data: allOrders, refetch: refetchOrders } = useAdminListOrders({});
   const updateStatus = useAdminUpdateOrderStatus();
@@ -113,13 +125,48 @@ function AdminDashboardContent() {
     });
   };
 
+  const handleCompleteAll = async () => {
+    setCompleting(true);
+    try {
+      const res = await fetch("/api/admin/orders/complete-processing", {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+      });
+      const json = await res.json();
+      toast({ title: `Completed ${json.updated} processing orders` });
+      refetchOrders(); refetchStats();
+    } catch {
+      toast({ title: "Error completing orders", variant: "destructive" });
+    } finally {
+      setCompleting(false);
+    }
+  };
+
+  const networkPendingCounts = useMemo(() => {
+    const src = allOrders ?? [];
+    return NETWORKS.map(n => ({
+      ...n,
+      count: src.filter(o => o.status === "pending" && (o as { network?: string }).network === n.value).length,
+      orders: src.filter(o => o.status === "pending" && (o as { network?: string }).network === n.value),
+    }));
+  }, [allOrders]);
+
+  const handleNetworkCopy = (network: typeof networkPendingCounts[number]) => {
+    const text = network.orders
+      .map(o => `${o.phoneNumber} - ${o.bundleData}`)
+      .join("\n");
+    navigator.clipboard.writeText(text).then(() => {
+      toast({ title: `Copied ${network.count} ${network.label} pending orders` });
+    });
+  };
+
   const statCards = useMemo(() => stats ? [
-    { icon: DollarSign,   label: "Total Revenue",   value: `GH₵${stats.totalRevenue.toFixed(2)}`,  sub: "From completed orders",             colorClass: "text-emerald-600", bgClass: "bg-emerald-100 dark:bg-emerald-900/20", accent: true },
+    { icon: Wallet,       label: "Wallet Balance",  value: `GH₵${((stats as { totalWalletBalance?: number }).totalWalletBalance ?? 0).toFixed(2)}`, sub: "Total user wallet funds",              colorClass: "text-emerald-600", bgClass: "bg-emerald-100 dark:bg-emerald-900/20", accent: true },
     { icon: ShoppingCart, label: "Total Orders",    value: stats.totalOrders,    sub: `+${stats.recentOrders} this month`,         colorClass: "text-violet-600",  bgClass: "bg-violet-100 dark:bg-violet-900/20" },
     { icon: Clock,        label: "Pending Orders",  value: stats.pendingOrders,  sub: "Awaiting processing",                       colorClass: "text-amber-600",   bgClass: "bg-amber-100 dark:bg-amber-900/20",   pulse: stats.pendingOrders > 0 },
     { icon: CheckCircle2, label: "Completed",       value: stats.completedOrders, sub: "Successfully fulfilled",                   colorClass: "text-teal-600",    bgClass: "bg-teal-100 dark:bg-teal-900/20" },
-    { icon: Users,        label: "Total Users",     value: stats.totalUsers,     sub: `+${stats.recentUsers} new this month`,      colorClass: "text-sky-600",     bgClass: "bg-sky-100 dark:bg-sky-900/20" },
-    { icon: Package,      label: "Active Bundles",  value: stats.activeBundles,  sub: "Currently listed",                          colorClass: "text-pink-600",    bgClass: "bg-pink-100 dark:bg-pink-900/20" },
+    { icon: Zap,          label: "Processing",      value: (stats as { processingOrders?: number }).processingOrders ?? 0, sub: "Currently being processed",     colorClass: "text-sky-600",     bgClass: "bg-sky-100 dark:bg-sky-900/20",       pulse: ((stats as { processingOrders?: number }).processingOrders ?? 0) > 0 },
+    { icon: AlertCircle,  label: "Failed",          value: (stats as { failedOrders?: number }).failedOrders ?? 0, sub: "Failed or cancelled",                  colorClass: "text-red-600",     bgClass: "bg-red-100 dark:bg-red-900/20" },
   ] : [], [stats]);
 
   const pendingDeposits = useMemo(() => (deposits ?? []).filter(d => d.status === "pending"), [deposits]);
@@ -127,12 +174,16 @@ function AdminDashboardContent() {
   const filteredOrders = useMemo(() => {
     let src = allOrders ?? [];
     if (statusTab !== "all") src = src.filter(o => o.status === statusTab);
-    if (search.trim()) {
-      const q = search.trim().toLowerCase();
-      src = src.filter(o => o.bundleName.toLowerCase().includes(q) || o.phoneNumber.includes(q));
+    if (phoneSearch.trim()) {
+      const q = phoneSearch.trim();
+      src = src.filter(o => o.phoneNumber.includes(q));
+    }
+    if (orderIdSearch.trim()) {
+      const q = orderIdSearch.trim();
+      src = src.filter(o => String(o.id).includes(q));
     }
     return src;
-  }, [allOrders, statusTab, search]);
+  }, [allOrders, statusTab, phoneSearch, orderIdSearch]);
 
   const statusCounts = useMemo(() => {
     const src = allOrders ?? [];
@@ -145,9 +196,10 @@ function AdminDashboardContent() {
   const pagedOrders = useMemo(() => filteredOrders.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [filteredOrders, page]);
 
   const changeTab = (t: typeof ORDER_STATUSES[number]) => { setStatusTab(t); setPage(1); };
-  const changeSearch = (v: string) => { setSearch(v); setPage(1); };
 
   const today = new Date().toLocaleDateString("en-GH", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+
+  const processingCount = (stats as { processingOrders?: number } | undefined)?.processingOrders ?? 0;
 
   return (
     <div className="flex h-screen bg-background overflow-hidden">
@@ -195,6 +247,38 @@ function AdminDashboardContent() {
             </div>
           )}
 
+          {/* Network pending buttons */}
+          <div className="flex flex-wrap gap-2 items-center">
+            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Pending by Network:</span>
+            {networkPendingCounts.map(n => (
+              <button
+                key={n.value}
+                onClick={() => handleNetworkCopy(n)}
+                disabled={n.count === 0}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${n.badge} hover:opacity-80`}
+                title={n.count > 0 ? `Click to copy ${n.count} pending ${n.label} orders` : `No pending ${n.label} orders`}
+              >
+                <span className={`w-2 h-2 rounded-full ${n.dot}`} />
+                {n.label}
+                <span className="font-extrabold">({n.count})</span>
+                {n.count > 0 && <Copy className="w-3 h-3 ml-0.5 opacity-70" />}
+              </button>
+            ))}
+            {processingCount > 0 && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1.5 ml-auto border-emerald-500 text-emerald-700 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-900/20"
+                onClick={handleCompleteAll}
+                disabled={completing}
+                data-testid="button-complete-all"
+              >
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                Complete all processing ({processingCount})
+              </Button>
+            )}
+          </div>
+
           {/* Orders Table */}
           <div className="bg-card border border-border rounded-2xl overflow-hidden">
             <div className="px-6 py-4 border-b border-border flex flex-col sm:flex-row sm:items-center gap-3">
@@ -202,20 +286,37 @@ function AdminDashboardContent() {
                 <h2 className="font-bold text-foreground">Orders</h2>
                 <p className="text-xs text-muted-foreground mt-0.5">{filteredOrders.length} orders</p>
               </div>
-              <div className="relative w-full sm:w-60">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-                <Input
-                  placeholder="Bundle or phone…"
-                  value={search}
-                  onChange={e => changeSearch(e.target.value)}
-                  className="pl-8 h-8 text-xs"
-                  data-testid="input-order-search"
-                />
-                {search && (
-                  <button className="absolute right-2 top-1/2 -translate-y-1/2" onClick={() => changeSearch("")}>
-                    <X className="w-3 h-3 text-muted-foreground" />
-                  </button>
-                )}
+              <div className="flex gap-2 flex-wrap">
+                <div className="relative">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                  <Input
+                    placeholder="Phone number…"
+                    value={phoneSearch}
+                    onChange={e => { setPhoneSearch(e.target.value); setPage(1); }}
+                    className="pl-8 h-8 text-xs w-40"
+                    data-testid="input-phone-search"
+                  />
+                  {phoneSearch && (
+                    <button className="absolute right-2 top-1/2 -translate-y-1/2" onClick={() => { setPhoneSearch(""); setPage(1); }}>
+                      <X className="w-3 h-3 text-muted-foreground" />
+                    </button>
+                  )}
+                </div>
+                <div className="relative">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                  <Input
+                    placeholder="Order ID…"
+                    value={orderIdSearch}
+                    onChange={e => { setOrderIdSearch(e.target.value); setPage(1); }}
+                    className="pl-8 h-8 text-xs w-32"
+                    data-testid="input-orderid-search"
+                  />
+                  {orderIdSearch && (
+                    <button className="absolute right-2 top-1/2 -translate-y-1/2" onClick={() => { setOrderIdSearch(""); setPage(1); }}>
+                      <X className="w-3 h-3 text-muted-foreground" />
+                    </button>
+                  )}
+                </div>
               </div>
               <Link href="/admin/orders">
                 <Button variant="outline" size="sm" className="gap-1.5 shrink-0">
@@ -245,7 +346,7 @@ function AdminDashboardContent() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border bg-muted/20">
-                    {["Date", "Order ID", "Bundle", "Phone", "Amount", "Status", "Update"].map(h => (
+                    {["Date", "Order ID", "Phone", "Bundle", "Amount", "Status", "Update"].map(h => (
                       <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
@@ -262,11 +363,11 @@ function AdminDashboardContent() {
                     <tr key={order.id} className="hover:bg-muted/20 transition-colors" data-testid={`row-order-${order.id}`}>
                       <td className="px-5 py-3.5 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(order.createdAt)}</td>
                       <td className="px-5 py-3.5 text-xs font-mono text-muted-foreground">#{order.id}</td>
+                      <td className="px-5 py-3.5 font-mono text-xs text-muted-foreground">{order.phoneNumber}</td>
                       <td className="px-5 py-3.5 max-w-[140px]">
                         <div className="font-medium text-foreground truncate">{order.bundleName}</div>
                         <div className="text-xs text-muted-foreground">{order.bundleData}</div>
                       </td>
-                      <td className="px-5 py-3.5 font-mono text-xs text-muted-foreground">{order.phoneNumber}</td>
                       <td className="px-5 py-3.5 font-bold text-foreground">GH₵{Number(order.price).toFixed(2)}</td>
                       <td className="px-5 py-3.5">
                         <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold capitalize ${STATUS_COLORS[order.status]}`}>

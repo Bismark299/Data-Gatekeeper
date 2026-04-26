@@ -16,7 +16,8 @@ import {
 } from "@/components/ui/select";
 import {
   Menu, ShoppingCart, Search, X, Download, ChevronLeft, ChevronRight,
-  ArrowUpDown, ArrowUp, ArrowDown, RefreshCw, Filter,
+  ArrowUpDown, ArrowUp, ArrowDown, RefreshCw, Filter, Copy,
+  CheckCircle2, XCircle, Banknote, Zap, AlertCircle,
 } from "lucide-react";
 
 // ─── constants ────────────────────────────────────────────────────────────────
@@ -34,6 +35,13 @@ const STATUS_DOT: Record<string, string> = {
 
 const ORDER_STATUSES = ["all", "pending", "processing", "completed", "failed"] as const;
 const PAGE_SIZES = [10, 25, 50, 100];
+
+const NETWORKS = [
+  { value: "mtn",         label: "MTN",         dot: "bg-yellow-400", badge: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400" },
+  { value: "telecel",     label: "Telecel",      dot: "bg-red-500",    badge: "bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400" },
+  { value: "at-ishare",   label: "AT iShare",    dot: "bg-blue-500",   badge: "bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400" },
+  { value: "at-bigtime",  label: "AT Big-Time",  dot: "bg-green-600",  badge: "bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400" },
+] as const;
 
 type SortField = "date" | "amount" | "id";
 type SortDir   = "asc" | "desc";
@@ -63,7 +71,8 @@ export default function AdminOrders() {
 function AdminOrdersContent() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [statusTab, setStatusTab]     = useState<typeof ORDER_STATUSES[number]>("all");
-  const [search, setSearch]           = useState("");
+  const [phoneSearch, setPhoneSearch] = useState("");
+  const [orderIdSearch, setOrderIdSearch] = useState("");
   const [dateFrom, setDateFrom]       = useState("");
   const [dateTo, setDateTo]           = useState("");
   const [page, setPage]               = useState(1);
@@ -71,6 +80,8 @@ function AdminOrdersContent() {
   const [sortField, setSortField]     = useState<SortField>("date");
   const [sortDir, setSortDir]         = useState<SortDir>("desc");
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [refundingId, setRefundingId] = useState<number | null>(null);
+  const [completing, setCompleting]   = useState(false);
 
   const { toast }   = useToast();
   const queryClient = useQueryClient();
@@ -89,14 +100,66 @@ function AdminOrdersContent() {
     });
   };
 
+  const handleRefund = async (orderId: number) => {
+    setRefundingId(orderId);
+    try {
+      const res = await fetch(`/api/admin/orders/${orderId}/refund`, {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error);
+      toast({ title: `Order #${orderId} cancelled & GH₵${json.refunded?.toFixed(2)} refunded` });
+      invalidate();
+    } catch (e: unknown) {
+      toast({ title: (e as Error).message || "Error refunding order", variant: "destructive" });
+    } finally {
+      setRefundingId(null);
+    }
+  };
+
+  const handleCompleteAll = async () => {
+    setCompleting(true);
+    try {
+      const res = await fetch("/api/admin/orders/complete-processing", {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+      });
+      const json = await res.json();
+      toast({ title: `Completed ${json.updated} processing orders` });
+      invalidate();
+    } catch {
+      toast({ title: "Error completing orders", variant: "destructive" });
+    } finally {
+      setCompleting(false);
+    }
+  };
+
   const handleSort = (field: SortField) => {
     if (sortField === field) setSortDir(d => d === "asc" ? "desc" : "asc");
     else { setSortField(field); setSortDir("desc"); }
     setPage(1);
   };
 
-  const clearFilters = () => { setSearch(""); setDateFrom(""); setDateTo(""); setStatusTab("all"); setPage(1); };
-  const hasFilters = search || dateFrom || dateTo || statusTab !== "all";
+  const clearFilters = () => { setPhoneSearch(""); setOrderIdSearch(""); setDateFrom(""); setDateTo(""); setStatusTab("all"); setPage(1); };
+  const hasFilters = phoneSearch || orderIdSearch || dateFrom || dateTo || statusTab !== "all";
+
+  // ── network pending counts ──
+  const networkPendingCounts = useMemo(() => {
+    const src = allOrders ?? [];
+    return NETWORKS.map(n => ({
+      ...n,
+      count: src.filter(o => o.status === "pending" && (o as { network?: string }).network === n.value).length,
+      orders: src.filter(o => o.status === "pending" && (o as { network?: string }).network === n.value),
+    }));
+  }, [allOrders]);
+
+  const handleNetworkCopy = (network: typeof networkPendingCounts[number]) => {
+    const text = network.orders.map(o => `${o.phoneNumber} - ${o.bundleData}`).join("\n");
+    navigator.clipboard.writeText(text).then(() => {
+      toast({ title: `Copied ${network.count} ${network.label} pending orders` });
+    });
+  };
 
   // ── status counts ──
   const statusCounts = useMemo(() => {
@@ -106,18 +169,20 @@ function AdminOrdersContent() {
     );
   }, [allOrders]);
 
+  const processingCount = statusCounts["processing"] ?? 0;
+
   // ── filtering + sorting ──
   const processedOrders = useMemo(() => {
     let src = allOrders ?? [];
 
     if (statusTab !== "all") src = src.filter(o => o.status === statusTab);
-    if (search.trim()) {
-      const q = search.trim().toLowerCase();
-      src = src.filter(o =>
-        o.bundleName.toLowerCase().includes(q) ||
-        o.phoneNumber.includes(q) ||
-        String(o.id).includes(q)
-      );
+    if (phoneSearch.trim()) {
+      const q = phoneSearch.trim();
+      src = src.filter(o => o.phoneNumber.includes(q));
+    }
+    if (orderIdSearch.trim()) {
+      const q = orderIdSearch.trim();
+      src = src.filter(o => String(o.id).includes(q));
     }
     if (dateFrom) src = src.filter(o => new Date(o.createdAt) >= new Date(dateFrom));
     if (dateTo) {
@@ -134,7 +199,7 @@ function AdminOrdersContent() {
     });
 
     return src;
-  }, [allOrders, statusTab, search, dateFrom, dateTo, sortField, sortDir]);
+  }, [allOrders, statusTab, phoneSearch, orderIdSearch, dateFrom, dateTo, sortField, sortDir]);
 
   const totalPages  = Math.max(1, Math.ceil(processedOrders.length / pageSize));
   const pagedOrders = useMemo(() => processedOrders.slice((page - 1) * pageSize, page * pageSize), [processedOrders, page, pageSize]);
@@ -143,13 +208,13 @@ function AdminOrdersContent() {
 
   // ── CSV export ──
   const handleExport = () => {
-    const headers = ["ID", "Date", "Bundle", "Data", "Phone", "Amount", "Status"];
+    const headers = ["ID", "Date", "Phone", "Bundle", "Data", "Amount", "Status"];
     const rows = processedOrders.map(o => [
       `#${o.id}`,
       fmtDate(o.createdAt),
+      o.phoneNumber,
       `"${o.bundleName}"`,
       `"${o.bundleData}"`,
-      o.phoneNumber,
       Number(o.price).toFixed(2),
       o.status,
     ]);
@@ -176,7 +241,19 @@ function AdminOrdersContent() {
             <h1 className="text-xl font-bold text-foreground">Orders</h1>
             <p className="text-xs text-muted-foreground">{processedOrders.length} order{processedOrders.length !== 1 ? "s" : ""} {hasFilters ? "(filtered)" : "total"}</p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            {processingCount > 0 && (
+              <Button
+                size="sm"
+                className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
+                onClick={handleCompleteAll}
+                disabled={completing}
+                data-testid="button-complete-all"
+              >
+                <Zap className="w-3.5 h-3.5" />
+                Complete all processing ({processingCount})
+              </Button>
+            )}
             <Button variant="outline" size="sm" onClick={() => refetch()} className="gap-1.5">
               <RefreshCw className="w-3.5 h-3.5" /> Refresh
             </Button>
@@ -191,6 +268,24 @@ function AdminOrdersContent() {
 
         <main className="flex-1 p-6 space-y-4">
 
+          {/* ─── Network pending buttons ─── */}
+          <div className="flex flex-wrap gap-2 items-center bg-card border border-border rounded-xl px-4 py-3">
+            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide shrink-0">Pending by Network:</span>
+            {networkPendingCounts.map(n => (
+              <button
+                key={n.value}
+                onClick={() => handleNetworkCopy(n)}
+                disabled={n.count === 0}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${n.badge} hover:opacity-80`}
+                title={n.count > 0 ? `Click to copy ${n.count} pending ${n.label} orders` : `No pending ${n.label} orders`}
+              >
+                <span className={`w-2 h-2 rounded-full ${n.dot}`} />
+                {n.label} <span className="font-extrabold">({n.count})</span>
+                {n.count > 0 && <Copy className="w-3 h-3 opacity-70" />}
+              </button>
+            ))}
+          </div>
+
           {/* ─── Filter bar ─── */}
           {filtersOpen && (
             <div className="bg-card border border-border rounded-2xl p-4 space-y-4" data-testid="filter-panel">
@@ -203,19 +298,34 @@ function AdminOrdersContent() {
                 )}
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                {/* Search */}
+                {/* Phone search */}
                 <div className="space-y-1">
-                  <Label className="text-xs">Search</Label>
+                  <Label className="text-xs">Phone Number</Label>
                   <div className="relative">
                     <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
                     <Input
-                      placeholder="Bundle, phone, or ID…"
-                      value={search}
-                      onChange={e => { setSearch(e.target.value); setPage(1); }}
+                      placeholder="e.g. 0244xxxxxx"
+                      value={phoneSearch}
+                      onChange={e => { setPhoneSearch(e.target.value); setPage(1); }}
                       className="pl-8 h-8 text-xs"
-                      data-testid="input-order-search"
+                      data-testid="input-phone-search"
                     />
-                    {search && <button className="absolute right-2 top-1/2 -translate-y-1/2" onClick={() => { setSearch(""); setPage(1); }}><X className="w-3 h-3 text-muted-foreground" /></button>}
+                    {phoneSearch && <button className="absolute right-2 top-1/2 -translate-y-1/2" onClick={() => { setPhoneSearch(""); setPage(1); }}><X className="w-3 h-3 text-muted-foreground" /></button>}
+                  </div>
+                </div>
+                {/* Order ID search */}
+                <div className="space-y-1">
+                  <Label className="text-xs">Order ID</Label>
+                  <div className="relative">
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                    <Input
+                      placeholder="e.g. 42"
+                      value={orderIdSearch}
+                      onChange={e => { setOrderIdSearch(e.target.value); setPage(1); }}
+                      className="pl-8 h-8 text-xs"
+                      data-testid="input-orderid-search"
+                    />
+                    {orderIdSearch && <button className="absolute right-2 top-1/2 -translate-y-1/2" onClick={() => { setOrderIdSearch(""); setPage(1); }}><X className="w-3 h-3 text-muted-foreground" /></button>}
                   </div>
                 </div>
                 {/* Date from */}
@@ -228,18 +338,18 @@ function AdminOrdersContent() {
                   <Label className="text-xs">To Date</Label>
                   <Input type="date" value={dateTo} onChange={e => { setDateTo(e.target.value); setPage(1); }} className="h-8 text-xs" data-testid="input-date-to" />
                 </div>
-                {/* Page size */}
-                <div className="space-y-1">
-                  <Label className="text-xs">Rows per page</Label>
-                  <Select value={String(pageSize)} onValueChange={v => { setPageSize(Number(v)); setPage(1); }}>
-                    <SelectTrigger className="h-8 text-xs" data-testid="select-page-size">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {PAGE_SIZES.map(n => <SelectItem key={n} value={String(n)}>{n}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
+              </div>
+              {/* Page size */}
+              <div className="flex items-center gap-2">
+                <Label className="text-xs text-muted-foreground">Rows per page</Label>
+                <Select value={String(pageSize)} onValueChange={v => { setPageSize(Number(v)); setPage(1); }}>
+                  <SelectTrigger className="h-8 text-xs w-20" data-testid="select-page-size">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PAGE_SIZES.map(n => <SelectItem key={n} value={String(n)}>{n}</SelectItem>)}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
           )}
@@ -285,24 +395,19 @@ function AdminOrdersContent() {
                   <thead>
                     <tr className="border-b border-border bg-muted/20">
                       <th className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                        <div className="flex items-center gap-1">
-                          Date <SortButton field="date" current={sortField} dir={sortDir} onToggle={handleSort} />
-                        </div>
+                        <div className="flex items-center gap-1">Date <SortButton field="date" current={sortField} dir={sortDir} onToggle={handleSort} /></div>
                       </th>
                       <th className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                        <div className="flex items-center gap-1">
-                          ID <SortButton field="id" current={sortField} dir={sortDir} onToggle={handleSort} />
-                        </div>
+                        <div className="flex items-center gap-1">ID <SortButton field="id" current={sortField} dir={sortDir} onToggle={handleSort} /></div>
                       </th>
-                      <th className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Bundle</th>
                       <th className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Phone</th>
+                      <th className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Bundle</th>
                       <th className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                        <div className="flex items-center gap-1">
-                          Amount <SortButton field="amount" current={sortField} dir={sortDir} onToggle={handleSort} />
-                        </div>
+                        <div className="flex items-center gap-1">Amount <SortButton field="amount" current={sortField} dir={sortDir} onToggle={handleSort} /></div>
                       </th>
                       <th className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Status</th>
                       <th className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Update</th>
+                      <th className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
@@ -310,11 +415,11 @@ function AdminOrdersContent() {
                       <tr key={order.id} className="hover:bg-muted/20 transition-colors group" data-testid={`row-order-${order.id}`}>
                         <td className="px-5 py-3.5 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(order.createdAt)}</td>
                         <td className="px-5 py-3.5 text-xs font-mono text-muted-foreground">#{order.id}</td>
+                        <td className="px-5 py-3.5 font-mono text-sm text-muted-foreground">{order.phoneNumber}</td>
                         <td className="px-5 py-3.5 max-w-[160px]">
                           <div className="font-medium text-foreground truncate">{order.bundleName}</div>
                           <div className="text-xs text-muted-foreground">{order.bundleData}</div>
                         </td>
-                        <td className="px-5 py-3.5 font-mono text-sm text-muted-foreground">{order.phoneNumber}</td>
                         <td className="px-5 py-3.5 font-bold text-foreground">GH₵{Number(order.price).toFixed(2)}</td>
                         <td className="px-5 py-3.5">
                           <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold capitalize ${STATUS_COLORS[order.status]}`}>
@@ -334,6 +439,21 @@ function AdminOrdersContent() {
                               <SelectItem value="failed">Failed</SelectItem>
                             </SelectContent>
                           </Select>
+                        </td>
+                        <td className="px-5 py-3.5">
+                          {order.status !== "completed" && order.status !== "failed" ? (
+                            <button
+                              onClick={() => handleRefund(order.id)}
+                              disabled={refundingId === order.id}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400 hover:bg-red-200 disabled:opacity-50 transition-colors"
+                              data-testid={`button-refund-${order.id}`}
+                            >
+                              <Banknote className="w-3 h-3" />
+                              {refundingId === order.id ? "…" : "Cancel & Refund"}
+                            </button>
+                          ) : (
+                            <span className="text-xs text-muted-foreground/50 italic">—</span>
+                          )}
                         </td>
                       </tr>
                     ))}
