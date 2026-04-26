@@ -434,14 +434,9 @@ router.post("/s/:slug/verify", async (req, res) => {
     return;
   }
 
-  // Mark order completed, credit store profit
-  await db.update(storeOrdersTable).set({ status: "completed" }).where(eq(storeOrdersTable.id, storeOrder.id));
-
-  const profit = parseFloat(storeOrder.profit);
-  const [store] = await db.select().from(storesTable).where(eq(storesTable.id, storeOrder.storeId));
-  if (store) {
-    const newProfit = (parseFloat(store.profitBalance) + profit).toFixed(2);
-    await db.update(storesTable).set({ profitBalance: newProfit }).where(eq(storesTable.id, store.id));
+  // Payment confirmed — move to "processing" for admin to fulfil; profit credited on admin completion
+  if (storeOrder.status !== "processing") {
+    await db.update(storeOrdersTable).set({ status: "processing" }).where(eq(storeOrdersTable.id, storeOrder.id));
   }
 
   const [updated] = await db.select().from(storeOrdersTable).where(eq(storeOrdersTable.id, storeOrder.id));
@@ -459,25 +454,85 @@ router.post("/s/paystack/webhook", async (req, res) => {
   if (event !== "charge.success" || !data.reference.startsWith("STORE-")) { res.sendStatus(200); return; }
 
   const [storeOrder] = await db.select().from(storeOrdersTable).where(eq(storeOrdersTable.paystackReference, data.reference));
-  if (!storeOrder || storeOrder.status === "completed") { res.sendStatus(200); return; }
+  if (!storeOrder || storeOrder.status === "completed" || storeOrder.status === "processing") { res.sendStatus(200); return; }
 
-  await db.update(storeOrdersTable).set({ status: "completed" }).where(eq(storeOrdersTable.id, storeOrder.id));
-
-  const profit = parseFloat(storeOrder.profit);
-  const [store] = await db.select().from(storesTable).where(eq(storesTable.id, storeOrder.storeId));
-  if (store) {
-    const newProfit = (parseFloat(store.profitBalance) + profit).toFixed(2);
-    await db.update(storesTable).set({ profitBalance: newProfit }).where(eq(storesTable.id, store.id));
-  }
+  // Payment confirmed via webhook — move to processing for admin to fulfil
+  await db.update(storeOrdersTable).set({ status: "processing" }).where(eq(storeOrdersTable.id, storeOrder.id));
 
   res.sendStatus(200);
 });
 
 // Admin: list all stores
 router.get("/admin/stores", requireAuth, async (req, res) => {
-  if (req.session.role !== "admin") { res.status(403).json({ error: "Forbidden" }); return; }
+  if (req.session.userRole !== "admin") { res.status(403).json({ error: "Forbidden" }); return; }
   const stores = await db.select().from(storesTable).orderBy(desc(storesTable.createdAt));
   res.json(stores.map(formatStore));
+});
+
+// ─── ADMIN: STORE ORDERS ──────────────────────────────────────────────────────
+
+router.get("/admin/store-orders", requireAuth, async (req, res) => {
+  if (req.session.userRole !== "admin") { res.status(403).json({ error: "Forbidden" }); return; }
+  const rows = await db
+    .select({
+      id: storeOrdersTable.id,
+      storeId: storeOrdersTable.storeId,
+      storeName: storesTable.name,
+      storeSlug: storesTable.slug,
+      bundleData: storeOrdersTable.bundleData,
+      bundleNetwork: storeOrdersTable.bundleNetwork,
+      customerPhone: storeOrdersTable.customerPhone,
+      customerEmail: storeOrdersTable.customerEmail,
+      sellingPrice: storeOrdersTable.sellingPrice,
+      basePrice: storeOrdersTable.basePrice,
+      profit: storeOrdersTable.profit,
+      status: storeOrdersTable.status,
+      paystackReference: storeOrdersTable.paystackReference,
+      createdAt: storeOrdersTable.createdAt,
+      updatedAt: storeOrdersTable.updatedAt,
+    })
+    .from(storeOrdersTable)
+    .innerJoin(storesTable, eq(storeOrdersTable.storeId, storesTable.id))
+    .orderBy(desc(storeOrdersTable.createdAt));
+  res.json(rows.map(o => ({
+    ...o,
+    sellingPrice: parseFloat(o.sellingPrice as any),
+    basePrice: parseFloat(o.basePrice as any),
+    profit: parseFloat(o.profit as any),
+  })));
+});
+
+router.patch("/admin/store-orders/:id/complete", requireAuth, async (req, res) => {
+  if (req.session.userRole !== "admin") { res.status(403).json({ error: "Forbidden" }); return; }
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  const [order] = await db.select().from(storeOrdersTable).where(eq(storeOrdersTable.id, id));
+  if (!order) { res.status(404).json({ error: "Order not found" }); return; }
+  if (order.status === "completed") { res.json(formatStoreOrder(order)); return; }
+
+  await db.update(storeOrdersTable).set({ status: "completed" }).where(eq(storeOrdersTable.id, id));
+
+  // Credit profit to store owner
+  const profit = parseFloat(order.profit);
+  const [store] = await db.select().from(storesTable).where(eq(storesTable.id, order.storeId));
+  if (store) {
+    const newProfit = (parseFloat(store.profitBalance) + profit).toFixed(2);
+    await db.update(storesTable).set({ profitBalance: newProfit }).where(eq(storesTable.id, store.id));
+  }
+
+  const [updated] = await db.select().from(storeOrdersTable).where(eq(storeOrdersTable.id, id));
+  res.json(formatStoreOrder(updated));
+});
+
+router.patch("/admin/store-orders/:id/cancel", requireAuth, async (req, res) => {
+  if (req.session.userRole !== "admin") { res.status(403).json({ error: "Forbidden" }); return; }
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  const [order] = await db.select().from(storeOrdersTable).where(eq(storeOrdersTable.id, id));
+  if (!order) { res.status(404).json({ error: "Order not found" }); return; }
+  await db.update(storeOrdersTable).set({ status: "cancelled" }).where(eq(storeOrdersTable.id, id));
+  const [updated] = await db.select().from(storeOrdersTable).where(eq(storeOrdersTable.id, id));
+  res.json(formatStoreOrder(updated));
 });
 
 export { router as storesRouter };
