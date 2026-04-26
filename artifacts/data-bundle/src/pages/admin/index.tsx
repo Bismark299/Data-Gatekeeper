@@ -20,7 +20,7 @@ import {
   Menu, Users, ShoppingCart, DollarSign, Package, Clock,
   CheckCircle2, AlertTriangle, ChevronLeft, ChevronRight,
   Search, X, RefreshCw, ArrowUpRight, BarChart3, Wallet,
-  XCircle, Copy, Zap, AlertCircle,
+  XCircle, Copy, Zap, AlertCircle, Trash2,
 } from "lucide-react";
 
 const PAGE_SIZE = 10;
@@ -101,7 +101,9 @@ function AdminDashboardContent() {
   const [phoneSearch, setPhoneSearch] = useState("");
   const [orderIdSearch, setOrderIdSearch] = useState("");
   const [page, setPage]               = useState(1);
+  const [pageSize, setPageSize]       = useState(10);
   const [completing, setCompleting]   = useState(false);
+  const [refunding, setRefunding]     = useState<number | null>(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -120,9 +122,26 @@ function AdminDashboardContent() {
 
   const handleStatusChange = (orderId: number, status: string) => {
     updateStatus.mutate({ id: orderId, data: { status } }, {
-      onSuccess: () => { toast({ title: `Order #${orderId} → ${status}` }); invalidateOrders(); },
+      onSuccess: () => { toast({ title: `Order #${orderId} → ${status}` }); invalidateOrders(); refetchStats(); },
       onError:   () => toast({ title: "Error updating status", variant: "destructive" }),
     });
+  };
+
+  const handleRefundOrder = async (orderId: number, price: number) => {
+    setRefunding(orderId);
+    try {
+      const res = await fetch(`/api/admin/orders/${orderId}/refund`, {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!res.ok) throw new Error();
+      toast({ title: `Order #${orderId} cancelled & GH₵${price.toFixed(2)} refunded to wallet` });
+      invalidateOrders(); refetchStats();
+    } catch {
+      toast({ title: "Refund failed", variant: "destructive" });
+    } finally {
+      setRefunding(null);
+    }
   };
 
   const handleCompleteAll = async () => {
@@ -192,8 +211,8 @@ function AdminDashboardContent() {
     );
   }, [allOrders]);
 
-  const totalPages  = Math.max(1, Math.ceil(filteredOrders.length / PAGE_SIZE));
-  const pagedOrders = useMemo(() => filteredOrders.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [filteredOrders, page]);
+  const totalPages  = Math.max(1, Math.ceil(filteredOrders.length / pageSize));
+  const pagedOrders = useMemo(() => filteredOrders.slice((page - 1) * pageSize, page * pageSize), [filteredOrders, page, pageSize]);
 
   const changeTab = (t: typeof ORDER_STATUSES[number]) => { setStatusTab(t); setPage(1); };
 
@@ -346,7 +365,7 @@ function AdminDashboardContent() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border bg-muted/20">
-                    {["Date", "Order ID", "Phone", "Network", "Data", "Amount", "Status", "Update"].map(h => (
+                    {["Date", "Order ID", "Phone", "Network", "Data", "Amount", "Status", "Update", "Actions"].map(h => (
                       <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
@@ -354,7 +373,7 @@ function AdminDashboardContent() {
                 <tbody className="divide-y divide-border">
                   {pagedOrders.length === 0 ? (
                     <tr>
-                      <td colSpan={8} className="text-center py-14 text-muted-foreground text-sm">
+                      <td colSpan={9} className="text-center py-14 text-muted-foreground text-sm">
                         <ShoppingCart className="w-8 h-8 mx-auto mb-2 opacity-20" />
                         No orders match your filters
                       </td>
@@ -397,6 +416,24 @@ function AdminDashboardContent() {
                           </SelectContent>
                         </Select>
                       </td>
+                      <td className="px-5 py-3.5">
+                        {order.status !== "failed" && (
+                          <button
+                            onClick={() => handleRefundOrder(order.id, Number(order.price))}
+                            disabled={refunding === order.id}
+                            title="Cancel order & refund wallet"
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-red-50 text-red-700 hover:bg-red-100 dark:bg-red-900/20 dark:text-red-400 dark:hover:bg-red-900/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors border border-red-200 dark:border-red-800"
+                            data-testid={`button-refund-${order.id}`}
+                          >
+                            {refunding === order.id ? (
+                              <RefreshCw className="w-3 h-3 animate-spin" />
+                            ) : (
+                              <Trash2 className="w-3 h-3" />
+                            )}
+                            Cancel
+                          </button>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -405,7 +442,20 @@ function AdminDashboardContent() {
 
             {filteredOrders.length > 0 && (
               <div className="flex items-center justify-between px-5 py-3 border-t border-border text-xs text-muted-foreground">
-                <span>Showing {Math.min((page - 1) * PAGE_SIZE + 1, filteredOrders.length)}–{Math.min(page * PAGE_SIZE, filteredOrders.length)} of {filteredOrders.length}</span>
+                <div className="flex items-center gap-3">
+                  <span>Showing {Math.min((page - 1) * pageSize + 1, filteredOrders.length)}–{Math.min(page * pageSize, filteredOrders.length)} of {filteredOrders.length}</span>
+                  <div className="flex items-center gap-1.5">
+                    <span>Per page:</span>
+                    <Select value={String(pageSize)} onValueChange={v => { setPageSize(Number(v)); setPage(1); }}>
+                      <SelectTrigger className="h-6 w-16 text-xs px-2">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {[10, 25, 50, 100].map(n => <SelectItem key={n} value={String(n)}>{n}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
                 <div className="flex items-center gap-1">
                   <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} className="p-1.5 rounded-lg hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed">
                     <ChevronLeft className="w-4 h-4" />
