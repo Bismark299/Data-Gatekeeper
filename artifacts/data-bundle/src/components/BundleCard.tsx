@@ -64,9 +64,8 @@ export interface BundleCardProps {
   "data-testid"?: string;
 }
 
-function formatDuration(days: number) {
-  if (!days) return "No Expiry";
-  return `${days} Day${days !== 1 ? "s" : ""}`;
+function formatDuration(_days: number) {
+  return "∞";
 }
 
 export function BundleCard({

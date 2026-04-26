@@ -380,7 +380,7 @@ function BundlesTab({ storeBundles, store }: { storeBundles: StoreBundle[]; stor
                   className={`relative p-3 rounded-xl border-2 text-left transition-all ${selectedBundleId === b.id ? "border-primary bg-primary/5" : "border-border hover:border-primary/40"}`}>
                   {selectedBundleId === b.id && <Check className="absolute top-2 right-2 w-4 h-4 text-primary" />}
                   <div className="text-xl font-black text-foreground">{b.dataAmount}</div>
-                  <div className="text-xs text-muted-foreground mt-0.5">{b.validityDays}d · Base GH₵{b.price}</div>
+                  <div className="text-xs text-muted-foreground mt-0.5">∞ · Base GH₵{b.price}</div>
                 </button>
               ))}
             </div>
