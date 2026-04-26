@@ -346,7 +346,7 @@ function AdminDashboardContent() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border bg-muted/20">
-                    {["Date", "Order ID", "Phone", "Network", "Bundle", "Amount", "Status", "Update"].map(h => (
+                    {["Date", "Order ID", "Phone", "Network", "Data", "Amount", "Status", "Update"].map(h => (
                       <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
@@ -376,10 +376,7 @@ function AdminDashboardContent() {
                           </span>
                         ) : <span className="text-muted-foreground/40 text-xs">—</span>}
                       </td>
-                      <td className="px-5 py-3.5 max-w-[140px]">
-                        <div className="font-medium text-foreground truncate">{order.bundleName}</div>
-                        <div className="text-xs text-muted-foreground">{order.bundleData}</div>
-                      </td>
+                      <td className="px-5 py-3.5 font-bold text-foreground text-xs">{(order as { bundleData?: string }).bundleData ?? "—"}</td>
                       <td className="px-5 py-3.5 font-bold text-foreground">GH₵{Number(order.price).toFixed(2)}</td>
                       <td className="px-5 py-3.5">
                         <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold capitalize ${STATUS_COLORS[order.status]}`}>

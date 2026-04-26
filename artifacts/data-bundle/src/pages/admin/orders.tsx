@@ -208,12 +208,12 @@ function AdminOrdersContent() {
 
   // ── CSV export ──
   const handleExport = () => {
-    const headers = ["ID", "Date", "Phone", "Bundle", "Data", "Amount", "Status"];
+    const headers = ["ID", "Date", "Phone", "Network", "Data", "Amount", "Status"];
     const rows = processedOrders.map(o => [
       `#${o.id}`,
       fmtDate(o.createdAt),
       o.phoneNumber,
-      `"${o.bundleName}"`,
+      `"${(o as { network?: string }).network ?? ""}"`,
       `"${o.bundleData}"`,
       Number(o.price).toFixed(2),
       o.status,
@@ -401,7 +401,7 @@ function AdminOrdersContent() {
                         <div className="flex items-center gap-1">ID <SortButton field="id" current={sortField} dir={sortDir} onToggle={handleSort} /></div>
                       </th>
                       <th className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Phone</th>
-                      <th className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Bundle</th>
+                      <th className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Data</th>
                       <th className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
                         <div className="flex items-center gap-1">Amount <SortButton field="amount" current={sortField} dir={sortDir} onToggle={handleSort} /></div>
                       </th>
@@ -416,10 +416,7 @@ function AdminOrdersContent() {
                         <td className="px-5 py-3.5 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(order.createdAt)}</td>
                         <td className="px-5 py-3.5 text-xs font-mono text-muted-foreground">#{order.id}</td>
                         <td className="px-5 py-3.5 font-mono text-sm text-muted-foreground">{order.phoneNumber}</td>
-                        <td className="px-5 py-3.5 max-w-[160px]">
-                          <div className="font-medium text-foreground truncate">{order.bundleName}</div>
-                          <div className="text-xs text-muted-foreground">{order.bundleData}</div>
-                        </td>
+                        <td className="px-5 py-3.5 font-bold text-foreground text-xs">{order.bundleData ?? "—"}</td>
                         <td className="px-5 py-3.5 font-bold text-foreground">GH₵{Number(order.price).toFixed(2)}</td>
                         <td className="px-5 py-3.5">
                           <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold capitalize ${STATUS_COLORS[order.status]}`}>

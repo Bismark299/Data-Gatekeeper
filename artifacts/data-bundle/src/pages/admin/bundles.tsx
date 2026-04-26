@@ -133,6 +133,17 @@ function AdminBundlesContent() {
     return Object.fromEntries(NETWORKS.map(n => [n.value, src.filter(b => b.network === n.value).length]));
   }, [bundles]);
 
+  function parseDataMB(str: string): number {
+    if (/unlimited/i.test(str)) return Infinity;
+    const m = str.match(/^([\d.]+)\s*(GB|MB|TB)?$/i);
+    if (!m) return Infinity;
+    const v = parseFloat(m[1]);
+    const u = (m[2] ?? "GB").toUpperCase();
+    if (u === "MB") return v;
+    if (u === "TB") return v * 1024 * 1024;
+    return v * 1024;
+  }
+
   const filtered = useMemo(() => {
     let src = bundles ?? [];
     if (networkFilter !== "all") src = src.filter(b => b.network === networkFilter);
@@ -142,7 +153,7 @@ function AdminBundlesContent() {
       const q = search.trim().toLowerCase();
       src = src.filter(b => b.dataAmount.toLowerCase().includes(q) || netLabel(b.network).toLowerCase().includes(q));
     }
-    return src;
+    return [...src].sort((a, b) => parseDataMB(a.dataAmount) - parseDataMB(b.dataAmount));
   }, [bundles, networkFilter, statusFilter, search]);
 
   const totalPages  = Math.max(1, Math.ceil(filtered.length / pageSize));
