@@ -277,7 +277,7 @@ function OverviewTab({ stats, orders, storeBundles }: { stats?: StoreStats; orde
                 <div className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide ${NETWORK_COLORS[o.bundleNetwork] ?? "bg-gray-100 text-gray-800"}`}>{NETWORK_LABELS[o.bundleNetwork] ?? o.bundleNetwork}</div>
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-semibold text-foreground truncate">{o.bundleData} — {o.customerPhone}</div>
-                  <div className="text-xs text-muted-foreground">{new Date(o.createdAt).toLocaleString()}</div>
+                  <div className="text-xs text-muted-foreground">{new Date(o.createdAt).toLocaleString("en-GH", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true })}</div>
                 </div>
                 <div className="text-right shrink-0">
                   <div className="text-sm font-bold text-foreground">GH₵{o.sellingPrice.toFixed(2)}</div>
@@ -423,7 +423,9 @@ function BundlesTab({ storeBundles, store }: { storeBundles: StoreBundle[]; stor
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {storeBundles.map(sb => (
+          {[...storeBundles].sort((a, b) => {
+            const parseMB = (s: string) => { if (/unlimited/i.test(s)) return Infinity; const m = s.match(/^([\d.]+)\s*(GB|MB|TB)?$/i); if (!m) return Infinity; const v = parseFloat(m[1]); const u = (m[2] ?? "GB").toUpperCase(); return u === "MB" ? v : u === "TB" ? v * 1024 * 1024 : v * 1024; }; return parseMB(a.dataAmount) - parseMB(b.dataAmount);
+          }).map(sb => (
             <div key={sb.id} className="bg-card border border-border rounded-2xl overflow-hidden shadow-md hover:shadow-lg transition-shadow">
               <div className={`relative ${NETWORK_STYLES[sb.network]?.gradient ?? "bg-gradient-to-br from-gray-600 to-gray-800"} flex items-center justify-center`} style={{ height: 120 }}>
                 <div className={`absolute inset-0 bg-gradient-to-b ${NETWORK_STYLES[sb.network]?.shimmer ?? "from-white/20 to-transparent"} pointer-events-none`} />
@@ -501,7 +503,7 @@ function OrdersTab({ orders }: { orders: any[] }) {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-muted/40">
-                {["#", "Bundle", "Network", "Phone", "Revenue", "Profit", "Status", "Date"].map(h => (
+                {["#", "Data", "Network", "Phone", "Revenue", "Profit", "Status", "Date"].map(h => (
                   <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide">{h}</th>
                 ))}
               </tr>
@@ -516,7 +518,7 @@ function OrdersTab({ orders }: { orders: any[] }) {
                   <td className="px-4 py-3 font-semibold">GH₵{o.sellingPrice.toFixed(2)}</td>
                   <td className="px-4 py-3 text-emerald-600 font-semibold">+GH₵{o.profit.toFixed(2)}</td>
                   <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${STATUS_COLORS[o.status] ?? "bg-gray-100"}`}>{o.status}</span></td>
-                  <td className="px-4 py-3 text-xs text-muted-foreground">{new Date(o.createdAt).toLocaleDateString()}</td>
+                  <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(o.createdAt).toLocaleString("en-GH", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true })}</td>
                 </tr>
               ))}
             </tbody>
