@@ -346,7 +346,7 @@ function AdminDashboardContent() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border bg-muted/20">
-                    {["Date", "Order ID", "Phone", "Bundle", "Amount", "Status", "Update"].map(h => (
+                    {["Date", "Order ID", "Phone", "Network", "Bundle", "Amount", "Status", "Update"].map(h => (
                       <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
@@ -354,7 +354,7 @@ function AdminDashboardContent() {
                 <tbody className="divide-y divide-border">
                   {pagedOrders.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="text-center py-14 text-muted-foreground text-sm">
+                      <td colSpan={8} className="text-center py-14 text-muted-foreground text-sm">
                         <ShoppingCart className="w-8 h-8 mx-auto mb-2 opacity-20" />
                         No orders match your filters
                       </td>
@@ -364,6 +364,18 @@ function AdminDashboardContent() {
                       <td className="px-5 py-3.5 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(order.createdAt)}</td>
                       <td className="px-5 py-3.5 text-xs font-mono text-muted-foreground">#{order.id}</td>
                       <td className="px-5 py-3.5 font-mono text-xs text-muted-foreground">{order.phoneNumber}</td>
+                      <td className="px-5 py-3.5">
+                        {(order as { network?: string | null }).network ? (
+                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-bold ${
+                            (order as { network?: string }).network === "mtn" ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400" :
+                            (order as { network?: string }).network === "telecel" ? "bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400" :
+                            (order as { network?: string }).network === "at-ishare" ? "bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400" :
+                            "bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400"
+                          }`}>
+                            {NETWORKS.find(n => n.value === (order as { network?: string }).network)?.label ?? (order as { network?: string }).network}
+                          </span>
+                        ) : <span className="text-muted-foreground/40 text-xs">—</span>}
+                      </td>
                       <td className="px-5 py-3.5 max-w-[140px]">
                         <div className="font-medium text-foreground truncate">{order.bundleName}</div>
                         <div className="text-xs text-muted-foreground">{order.bundleData}</div>

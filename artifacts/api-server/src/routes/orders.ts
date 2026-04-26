@@ -10,13 +10,14 @@ import { getOrCreateWallet } from "./wallet";
 
 const router: IRouter = Router();
 
-function formatOrder(o: typeof ordersTable.$inferSelect) {
+function formatOrder(o: typeof ordersTable.$inferSelect, network?: string | null) {
   return {
     id: o.id,
     userId: o.userId,
     bundleId: o.bundleId,
     bundleName: o.bundleName,
     bundleData: o.bundleData,
+    network: network ?? null,
     price: Number(o.price),
     status: o.status,
     phoneNumber: o.phoneNumber,
@@ -26,13 +27,14 @@ function formatOrder(o: typeof ordersTable.$inferSelect) {
 
 router.get("/orders", requireAuth, async (req, res): Promise<void> => {
   const userId = req.session.userId!;
-  const orders = await db
-    .select()
+  const rows = await db
+    .select({ order: ordersTable, network: bundlesTable.network })
     .from(ordersTable)
+    .leftJoin(bundlesTable, eq(bundlesTable.id, ordersTable.bundleId))
     .where(eq(ordersTable.userId, userId))
     .orderBy(desc(ordersTable.createdAt));
 
-  res.json(orders.map(formatOrder));
+  res.json(rows.map(r => formatOrder(r.order, r.network)));
 });
 
 router.post("/orders", requireAuth, async (req, res): Promise<void> => {

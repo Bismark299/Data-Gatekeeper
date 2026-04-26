@@ -26,13 +26,14 @@ function formatUser(u: typeof usersTable.$inferSelect) {
   };
 }
 
-function formatOrder(o: typeof ordersTable.$inferSelect) {
+function formatOrder(o: typeof ordersTable.$inferSelect, network?: string | null) {
   return {
     id: o.id,
     userId: o.userId,
     bundleId: o.bundleId,
     bundleName: o.bundleName,
     bundleData: o.bundleData,
+    network: network ?? null,
     price: Number(o.price),
     status: o.status,
     phoneNumber: o.phoneNumber,
@@ -137,11 +138,20 @@ router.get("/admin/orders", requireAdmin, async (req, res): Promise<void> => {
     conditions.push(eq(ordersTable.userId, userId));
   }
 
-  const orders = conditions.length > 0
-    ? await db.select().from(ordersTable).where(and(...conditions)).orderBy(desc(ordersTable.createdAt))
-    : await db.select().from(ordersTable).orderBy(desc(ordersTable.createdAt));
+  const rows = conditions.length > 0
+    ? await db
+        .select({ order: ordersTable, network: bundlesTable.network })
+        .from(ordersTable)
+        .leftJoin(bundlesTable, eq(bundlesTable.id, ordersTable.bundleId))
+        .where(and(...conditions))
+        .orderBy(desc(ordersTable.createdAt))
+    : await db
+        .select({ order: ordersTable, network: bundlesTable.network })
+        .from(ordersTable)
+        .leftJoin(bundlesTable, eq(bundlesTable.id, ordersTable.bundleId))
+        .orderBy(desc(ordersTable.createdAt));
 
-  res.json(orders.map(formatOrder));
+  res.json(rows.map(r => formatOrder(r.order, r.network)));
 });
 
 router.patch("/admin/orders/:id/status", requireAdmin, async (req, res): Promise<void> => {
