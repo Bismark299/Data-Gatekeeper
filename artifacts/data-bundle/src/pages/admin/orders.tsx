@@ -48,7 +48,7 @@ type SortDir   = "asc" | "desc";
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 const fmtDate = (iso: string) =>
-  new Date(iso).toLocaleDateString("en-GH", { day: "numeric", month: "short", year: "numeric" });
+  new Date(iso).toLocaleString("en-GH", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true });
 
 function SortButton({ field, current, dir, onToggle }: { field: SortField; current: SortField; dir: SortDir; onToggle: (f: SortField) => void }) {
   const active = current === field;

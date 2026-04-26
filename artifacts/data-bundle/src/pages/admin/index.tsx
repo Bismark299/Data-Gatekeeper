@@ -47,7 +47,7 @@ const NETWORKS = [
 ] as const;
 
 const fmtDate = (iso: string) =>
-  new Date(iso).toLocaleDateString("en-GH", { day: "numeric", month: "short", year: "numeric" });
+  new Date(iso).toLocaleString("en-GH", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true });
 
 function StatCard({
   icon: Icon, label, value, sub, colorClass, bgClass, accent, pulse,

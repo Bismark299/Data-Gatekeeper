@@ -270,8 +270,8 @@ function OrdersContent() {
                         data-testid={`row-order-${order.id}`}
                       >
                         <td className="px-5 py-3.5 text-muted-foreground text-xs whitespace-nowrap">
-                          {new Date(order.createdAt).toLocaleDateString("en-GH", {
-                            day: "numeric", month: "short", year: "numeric",
+                          {new Date(order.createdAt).toLocaleString("en-GH", {
+                            day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true,
                           })}
                         </td>
                         <td className="px-5 py-3.5 text-muted-foreground text-xs font-mono">#{order.id}</td>
