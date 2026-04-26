@@ -154,11 +154,24 @@ function AdminOrdersContent() {
     }));
   }, [allOrders]);
 
-  const handleNetworkCopy = (network: typeof networkPendingCounts[number]) => {
-    const text = network.orders.map(o => `${o.phoneNumber} - ${o.bundleData}`).join("\n");
-    navigator.clipboard.writeText(text).then(() => {
+  const handleNetworkCopy = async (network: typeof networkPendingCounts[number]) => {
+    if (network.count === 0) return;
+    const parseDataNum = (s: string) => s.match(/^([\d.]+)/)?.[1] ?? s;
+    const text = network.orders.map(o => `${o.phoneNumber}\t${parseDataNum(o.bundleData ?? "")}`).join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
       toast({ title: `Copied ${network.count} ${network.label} pending orders` });
-    });
+      const ids = network.orders.map(o => o.id);
+      await fetch("/api/admin/orders/bulk-status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids, status: "processing" }),
+        credentials: "include",
+      });
+      invalidate();
+    } catch {
+      toast({ title: "Copy failed", variant: "destructive" });
+    }
   };
 
   // ── status counts ──

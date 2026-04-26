@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { eq, count, sum, desc, gte, and, ilike, type SQL } from "drizzle-orm";
+import { eq, count, sum, desc, gte, and, ilike, inArray, type SQL } from "drizzle-orm";
 import { db, usersTable, bundlesTable, ordersTable, walletsTable, depositsTable } from "@workspace/db";
 import {
   AdminListUsersQueryParams,
@@ -212,6 +212,19 @@ router.post("/admin/orders/:id/refund", requireAdmin, async (req, res): Promise<
   }
 
   res.json({ success: true, refunded: Number(order.price) });
+});
+
+router.post("/admin/orders/bulk-status", requireAdmin, async (req, res): Promise<void> => {
+  const { ids, status } = req.body as { ids?: unknown; status?: unknown };
+  if (!Array.isArray(ids) || ids.length === 0 || typeof status !== "string") {
+    res.status(400).json({ error: "ids (array) and status (string) are required" });
+    return;
+  }
+  const numIds = ids.map(Number).filter(n => !isNaN(n));
+  if (numIds.length === 0) { res.status(400).json({ error: "No valid IDs" }); return; }
+
+  await db.update(ordersTable).set({ status }).where(inArray(ordersTable.id, numIds));
+  res.json({ updated: numIds.length });
 });
 
 router.post("/admin/orders/complete-processing", requireAdmin, async (req, res): Promise<void> => {
