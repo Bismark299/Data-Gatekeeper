@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
-import { eq, count, sum, desc, gte, and, ilike, inArray, type SQL } from "drizzle-orm";
+import { eq, count, sum, desc, gte, and, ilike, inArray, type SQL, sql } from "drizzle-orm";
 import { db, usersTable, bundlesTable, ordersTable, walletsTable, depositsTable } from "@workspace/db";
+import { creditWallet } from "./wallet";
 import {
   AdminListUsersQueryParams,
   AdminUpdateUserParams,
@@ -268,10 +269,28 @@ router.get("/admin/wallets", requireAdmin, async (req, res): Promise<void> => {
       updatedAt: walletsTable.updatedAt,
       userName: usersTable.name,
       userEmail: usersTable.email,
+      userPhone: usersTable.phone,
+      userRole: usersTable.role,
     })
     .from(walletsTable)
     .leftJoin(usersTable, eq(walletsTable.userId, usersTable.id))
-    .orderBy(desc(walletsTable.updatedAt));
+    .orderBy(desc(walletsTable.balance));
+
+  // Aggregate totals per user
+  const depositTotals = await db
+    .select({ userId: depositsTable.userId, total: sum(depositsTable.amount) })
+    .from(depositsTable)
+    .where(eq(depositsTable.status, "completed"))
+    .groupBy(depositsTable.userId);
+
+  const orderTotals = await db
+    .select({ userId: ordersTable.userId, total: sum(ordersTable.price) })
+    .from(ordersTable)
+    .where(eq(ordersTable.status, "completed"))
+    .groupBy(ordersTable.userId);
+
+  const depMap = new Map(depositTotals.map(d => [d.userId, Number(d.total ?? 0)]));
+  const ordMap = new Map(orderTotals.map(o => [o.userId, Number(o.total ?? 0)]));
 
   res.json(rows.map(w => ({
     id: w.id,
@@ -280,7 +299,48 @@ router.get("/admin/wallets", requireAdmin, async (req, res): Promise<void> => {
     updatedAt: w.updatedAt?.toISOString() ?? null,
     userName: w.userName ?? "Unknown",
     userEmail: w.userEmail ?? "Unknown",
+    userPhone: w.userPhone ?? null,
+    userRole: w.userRole ?? "user",
+    totalLoaded: depMap.get(w.userId!) ?? 0,
+    totalOrders: ordMap.get(w.userId!) ?? 0,
   })));
+});
+
+router.post("/admin/wallets/:userId/topup", requireAdmin, async (req, res): Promise<void> => {
+  const userId = Number(req.params.userId);
+  const amount = Number(req.body.amount);
+  const note   = String(req.body.note ?? "Admin top-up");
+  if (isNaN(userId) || isNaN(amount) || amount <= 0) {
+    res.status(400).json({ error: "Invalid user ID or amount" }); return;
+  }
+  const updated = await creditWallet(userId, amount);
+  await db.insert(depositsTable).values({
+    userId,
+    amount: String(amount.toFixed(2)),
+    method: "admin",
+    reference: `admin-topup-${Date.now()}`,
+    status: "completed",
+    note,
+  });
+  res.json({ balance: Number(updated.balance), message: `GH₵${amount.toFixed(2)} added to wallet` });
+});
+
+router.post("/admin/wallets/:userId/debit", requireAdmin, async (req, res): Promise<void> => {
+  const userId = Number(req.params.userId);
+  const amount = Number(req.body.amount);
+  if (isNaN(userId) || isNaN(amount) || amount <= 0) {
+    res.status(400).json({ error: "Invalid user ID or amount" }); return;
+  }
+  const [wallet] = await db.select().from(walletsTable).where(eq(walletsTable.userId, userId));
+  if (!wallet) { res.status(404).json({ error: "Wallet not found" }); return; }
+  const currentBal = Number(wallet.balance);
+  if (currentBal < amount) { res.status(400).json({ error: `Insufficient balance. Current: GH₵${currentBal.toFixed(2)}` }); return; }
+  const [updated] = await db
+    .update(walletsTable)
+    .set({ balance: sql`${walletsTable.balance} - ${amount.toFixed(2)}`, updatedAt: new Date() })
+    .where(eq(walletsTable.userId, userId))
+    .returning();
+  res.json({ balance: Number(updated.balance), message: `GH₵${amount.toFixed(2)} debited from wallet` });
 });
 
 router.get("/admin/wallets/:userId/deposits", requireAdmin, async (req, res): Promise<void> => {
