@@ -253,39 +253,317 @@ function DepositHistory({ userId }: { userId: number }) {
   );
 }
 
+// ── Transaction ledger types & helpers ────────────────────────────────────────
+interface TxRow {
+  key: string; ref: string; userId: number; userName: string; agentCode: string;
+  date: string; amount: number; prevBalance: number; currBalance: number;
+  status: string; type: "credit" | "debit"; source: string; note: string | null;
+}
+interface TxResponse { total: number; page: number; pageSize: number; data: TxRow[]; }
+
+const SOURCE_META: Record<string, { label: string; color: string }> = {
+  paystack: { label: "Paystack", color: "bg-blue-100 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400" },
+  momo:     { label: "MoMo",     color: "bg-purple-100 text-purple-700 dark:bg-purple-900/20 dark:text-purple-400" },
+  admin:    { label: "Admin",    color: "bg-violet-100 text-violet-700 dark:bg-violet-900/20 dark:text-violet-400" },
+  manual:   { label: "Manual",   color: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300" },
+  order:    { label: "Order",    color: "bg-orange-100 text-orange-700 dark:bg-orange-900/20 dark:text-orange-400" },
+};
+
+const TX_STATUS_COLORS: Record<string, string> = {
+  completed:  "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400",
+  pending:    "bg-amber-100 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400",
+  processing: "bg-blue-100 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400",
+  failed:     "bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400",
+  rejected:   "bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400",
+  cancelled:  "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300",
+};
+
+async function fetchTransactions(params: Record<string, string>): Promise<TxResponse> {
+  const qs = new URLSearchParams(params).toString();
+  const res = await fetch(`/api/admin/wallet-transactions?${qs}`, { credentials: "include" });
+  if (!res.ok) throw new Error("Failed to fetch transactions");
+  return res.json();
+}
+
 // ── All-Transactions view ──────────────────────────────────────────────────────
 function AllTransactions() {
-  const [search, setSearch]   = useState("");
-  const [page, setPage]       = useState(1);
-  const pageSize = 25;
+  const [agentId, setAgentId]   = useState("");
+  const [type, setType]         = useState("all");
+  const [status, setStatus]     = useState("all");
+  const [source, setSource]     = useState("all");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo]     = useState("");
+  const [pageSize, setPageSize] = useState(50);
+  const [page, setPage]         = useState(1);
 
-  const { data: wallets } = useQuery({ queryKey: ["admin-wallets"], queryFn: fetchWallets });
+  const params = useMemo(() => ({
+    agentId, type, status, source, dateFrom, dateTo,
+    page: String(page), pageSize: String(pageSize),
+  }), [agentId, type, status, source, dateFrom, dateTo, page, pageSize]);
 
-  const userMap = useMemo(() => {
-    const m = new Map<number, WalletRow>();
-    (wallets ?? []).forEach(w => m.set(w.userId, w));
-    return m;
-  }, [wallets]);
+  const { data, isLoading, refetch, isFetching } = useQuery({
+    queryKey: ["admin-tx", params],
+    queryFn:  () => fetchTransactions(params),
+    placeholderData: (prev) => prev,
+  });
 
-  // We fetch all deposit records for each wallet — merged & sorted
-  // For simplicity, we embed a "recent transactions" approach using
-  // each wallet's deposit endpoint; here we use the deposit history
-  // endpoint which already returns all records for each user.
-  // A dedicated global endpoint would be ideal — for now we show
-  // a summary and link to individual user histories.
+  const rows      = data?.data ?? [];
+  const total     = data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+  const hasFilters = agentId || type !== "all" || status !== "all" || source !== "all" || dateFrom || dateTo;
+
+  const clearFilters = () => {
+    setAgentId(""); setType("all"); setStatus("all");
+    setSource("all"); setDateFrom(""); setDateTo("");
+    setPage(1);
+  };
+
+  const handleExport = () => {
+    const header = ["Date", "Reference", "Agent", "Agent Code", "Amount (GH₵)", "Prev Balance", "Curr Balance", "Status", "Type", "Source", "Note"];
+    const csv = [header, ...rows.map(r => [
+      fmtDatetime(r.date), r.ref, r.userName, r.agentCode,
+      r.amount.toFixed(2), r.prevBalance.toFixed(2), r.currBalance.toFixed(2),
+      r.status, r.type, r.source, r.note ?? "",
+    ])].map(row => row.join("\t")).join("\n");
+    const blob = new Blob([csv], { type: "text/plain" });
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+    a.download = `transactions_${new Date().toISOString().slice(0,10)}.txt`; a.click();
+  };
 
   return (
-    <div className="bg-card border border-border rounded-2xl overflow-hidden">
-      <div className="px-6 py-4 border-b border-border flex items-center gap-3">
-        <History className="w-5 h-5 text-muted-foreground" />
-        <div>
-          <h3 className="font-bold text-foreground">Transaction History</h3>
-          <p className="text-xs text-muted-foreground mt-0.5">Click any wallet row to view individual deposit history</p>
+    <div className="space-y-4">
+      {/* Filter bar */}
+      <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
+        <div className="flex flex-wrap gap-3 items-end">
+          {/* Agent search */}
+          <div className="flex-1 min-w-[160px] space-y-1">
+            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">Search by Agent</label>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+              <input
+                type="text" placeholder="Name or ID…" value={agentId}
+                onChange={e => { setAgentId(e.target.value); setPage(1); }}
+                className="w-full pl-8 pr-3 h-9 rounded-xl border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              />
+            </div>
+          </div>
+
+          {/* Type */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">Type</label>
+            <select value={type} onChange={e => { setType(e.target.value); setPage(1); }}
+              className="h-9 px-3 rounded-xl border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30">
+              <option value="all">All Types</option>
+              <option value="credit">Credit</option>
+              <option value="debit">Debit</option>
+            </select>
+          </div>
+
+          {/* Status */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">Status</label>
+            <select value={status} onChange={e => { setStatus(e.target.value); setPage(1); }}
+              className="h-9 px-3 rounded-xl border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30">
+              <option value="all">All Statuses</option>
+              <option value="completed">Completed</option>
+              <option value="pending">Pending</option>
+              <option value="processing">Processing</option>
+              <option value="failed">Failed</option>
+              <option value="cancelled">Cancelled</option>
+            </select>
+          </div>
+
+          {/* Source */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">Source</label>
+            <select value={source} onChange={e => { setSource(e.target.value); setPage(1); }}
+              className="h-9 px-3 rounded-xl border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30">
+              <option value="all">All Sources</option>
+              <option value="order">Order</option>
+              <option value="paystack">Paystack</option>
+              <option value="momo">MoMo</option>
+              <option value="admin">Admin</option>
+              <option value="manual">Manual</option>
+            </select>
+          </div>
+
+          {/* Date From */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">Date From</label>
+            <input type="date" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setPage(1); }}
+              className="h-9 px-3 rounded-xl border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
+          </div>
+
+          {/* Date To */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">Date To</label>
+            <input type="date" value={dateTo} onChange={e => { setDateTo(e.target.value); setPage(1); }}
+              className="h-9 px-3 rounded-xl border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
+          </div>
+
+          {/* Per Page */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wide">Per Page</label>
+            <select value={pageSize} onChange={e => { setPageSize(Number(e.target.value)); setPage(1); }}
+              className="h-9 px-3 rounded-xl border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30">
+              {[25, 50, 100, 200].map(n => <option key={n} value={n}>{n}</option>)}
+            </select>
+          </div>
+
+          {/* Actions */}
+          <div className="flex items-end gap-2 pb-0.5">
+            {hasFilters && (
+              <button onClick={clearFilters}
+                className="h-9 px-3 rounded-xl border border-border text-xs font-semibold flex items-center gap-1.5 hover:bg-muted transition-colors">
+                <X className="w-3.5 h-3.5" /> Clear
+              </button>
+            )}
+            <button onClick={() => refetch()}
+              className="h-9 px-3 rounded-xl border border-border text-xs font-semibold flex items-center gap-1.5 hover:bg-muted transition-colors">
+              <RefreshCw className={`w-3.5 h-3.5 ${isFetching ? "animate-spin" : ""}`} />
+            </button>
+            <button onClick={handleExport} disabled={rows.length === 0}
+              className="h-9 px-3 rounded-xl bg-primary text-primary-foreground text-xs font-semibold flex items-center gap-1.5 hover:bg-primary/90 transition-colors disabled:opacity-40">
+              <Download className="w-3.5 h-3.5" /> Export
+            </button>
+          </div>
+        </div>
+
+        {/* Summary strip */}
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <span className="font-semibold text-foreground">{total.toLocaleString()}</span> transactions
+          {hasFilters && <span className="px-2 py-0.5 bg-primary/10 text-primary rounded-full font-semibold">Filtered</span>}
         </div>
       </div>
-      <div className="py-12 text-center space-y-3">
-        <CreditCard className="w-12 h-12 mx-auto text-muted-foreground/20" />
-        <p className="text-sm text-muted-foreground">Select a wallet below to view its full transaction history</p>
+
+      {/* Table */}
+      <div className="bg-card border border-border rounded-2xl overflow-hidden">
+        <div className="overflow-x-auto">
+          {isLoading ? (
+            <div className="p-8 space-y-3">
+              {Array.from({ length: 8 }).map((_, i) => (
+                <div key={i} className="h-10 rounded-xl bg-muted animate-pulse" style={{ opacity: 1 - i * 0.1 }} />
+              ))}
+            </div>
+          ) : rows.length === 0 ? (
+            <div className="py-16 text-center space-y-3">
+              <History className="w-12 h-12 mx-auto text-muted-foreground/20" />
+              <p className="text-sm text-muted-foreground">No transactions found</p>
+              {hasFilters && (
+                <button onClick={clearFilters} className="text-xs text-primary hover:underline">Clear filters</button>
+              )}
+            </div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-muted/40 border-b border-border">
+                  {["Date", "Reference", "Agent", "Amount (GHS)", "Prev Balance", "Curr Balance", "Status", "Type", "Source"].map(h => (
+                    <th key={h} className="text-left px-4 py-3.5 text-[11px] font-bold text-muted-foreground uppercase tracking-wider whitespace-nowrap">
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {rows.map(r => (
+                  <tr key={r.key} className={`hover:bg-muted/30 transition-colors ${isFetching ? "opacity-60" : ""}`}>
+                    {/* Date */}
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <span className="text-muted-foreground text-xs">{fmtDatetime(r.date)}</span>
+                    </td>
+
+                    {/* Reference */}
+                    <td className="px-4 py-3 max-w-[180px]">
+                      <span className="font-mono text-xs text-foreground/80 truncate block" title={r.ref}>{r.ref}</span>
+                      {r.note && <span className="text-[10px] text-muted-foreground truncate block max-w-[160px]" title={r.note}>{r.note}</span>}
+                    </td>
+
+                    {/* Agent */}
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <div className="font-semibold text-foreground text-xs">{r.userName}</div>
+                      <div className="text-[10px] text-muted-foreground font-mono">{r.agentCode}</div>
+                    </td>
+
+                    {/* Amount */}
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <span className={`font-bold text-sm ${r.amount >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
+                        {r.amount >= 0 ? "+" : ""}{r.amount.toFixed(2)}
+                      </span>
+                    </td>
+
+                    {/* Prev Balance */}
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <span className="text-muted-foreground text-xs">{r.prevBalance.toFixed(2)}</span>
+                    </td>
+
+                    {/* Curr Balance */}
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <span className="font-semibold text-xs text-foreground">{r.currBalance.toFixed(2)}</span>
+                    </td>
+
+                    {/* Status */}
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold capitalize ${TX_STATUS_COLORS[r.status] ?? "bg-muted text-muted-foreground"}`}>
+                        {r.status}
+                      </span>
+                    </td>
+
+                    {/* Type */}
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold capitalize ${
+                        r.type === "credit"
+                          ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400"
+                          : "bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400"
+                      }`}>
+                        {r.type}
+                      </span>
+                    </td>
+
+                    {/* Source */}
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${SOURCE_META[r.source]?.color ?? "bg-muted text-muted-foreground"}`}>
+                        {SOURCE_META[r.source]?.label ?? r.source}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {/* Pagination */}
+        {total > pageSize && (
+          <div className="flex items-center justify-between px-5 py-3.5 border-t border-border text-xs text-muted-foreground">
+            <span>
+              Showing {Math.min((page - 1) * pageSize + 1, total)}–{Math.min(page * pageSize, total)} of {total.toLocaleString()}
+            </span>
+            <div className="flex items-center gap-1">
+              <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}
+                className="p-1.5 rounded-lg hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed">
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              {Array.from({ length: totalPages }, (_, i) => i + 1)
+                .filter(p => p === 1 || p === totalPages || Math.abs(p - page) <= 1)
+                .reduce<(number | "…")[]>((acc, p, idx, arr) => {
+                  if (idx > 0 && (p as number) - (arr[idx - 1] as number) > 1) acc.push("…");
+                  acc.push(p); return acc;
+                }, [])
+                .map((p, i) => p === "…"
+                  ? <span key={`e${i}`} className="px-2">…</span>
+                  : <button key={p} onClick={() => setPage(p as number)}
+                      className={`w-7 h-7 rounded-lg text-xs font-semibold transition-colors ${page === (p as number) ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}>
+                      {p}
+                    </button>
+                )}
+              <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages}
+                className="p-1.5 rounded-lg hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed">
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

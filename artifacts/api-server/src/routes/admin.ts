@@ -583,4 +583,145 @@ router.post("/admin/deposits/:id/reject", requireAdmin, async (req, res): Promis
   });
 });
 
+// ── GET /admin/wallet-transactions ─────────────────────────────────────────
+router.get("/admin/wallet-transactions", requireAdmin, async (req, res) => {
+  const {
+    agentId = "", type = "all", status = "all",
+    source = "all", dateFrom = "", dateTo = "",
+    page = "1", pageSize = "50",
+  } = req.query as Record<string, string>;
+
+  // Current wallet balances for running-balance computation
+  const wallets = await db.select().from(walletsTable);
+  const walletByUser = new Map(wallets.map(w => [w.userId, parseFloat(w.balance)]));
+
+  // Completed deposits → credits
+  const deposits = await db
+    .select({
+      id:        depositsTable.id,
+      userId:    depositsTable.userId,
+      amount:    depositsTable.amount,
+      status:    depositsTable.status,
+      method:    depositsTable.method,
+      reference: depositsTable.reference,
+      note:      depositsTable.note,
+      createdAt: depositsTable.createdAt,
+      userName:  usersTable.name,
+    })
+    .from(depositsTable)
+    .leftJoin(usersTable, eq(depositsTable.userId, usersTable.id))
+    .where(eq(depositsTable.status, "completed"));
+
+  // All orders → debits (wallet deducted at creation time)
+  const orders = await db
+    .select({
+      id:         ordersTable.id,
+      userId:     ordersTable.userId,
+      price:      ordersTable.price,
+      status:     ordersTable.status,
+      bundleName: ordersTable.bundleName,
+      createdAt:  ordersTable.createdAt,
+      userName:   usersTable.name,
+    })
+    .from(ordersTable)
+    .leftJoin(usersTable, eq(ordersTable.userId, usersTable.id));
+
+  interface TxItem {
+    key: string; userId: number; userName: string;
+    amount: number; status: string;
+    type: "credit" | "debit"; source: string;
+    reference: string; note: string | null; date: Date;
+  }
+
+  const txns: TxItem[] = [
+    ...deposits.map(d => ({
+      key: `DEP-${d.id}`,
+      userId: d.userId,
+      userName: d.userName ?? "Unknown",
+      amount: parseFloat(d.amount),
+      status: d.status,
+      type: "credit" as const,
+      source: d.method,
+      reference: d.reference || `DEP-${d.id}`,
+      note: d.note,
+      date: d.createdAt,
+    })),
+    ...orders.map(o => ({
+      key: `ORD-${o.id}`,
+      userId: o.userId,
+      userName: o.userName ?? "Unknown",
+      amount: -parseFloat(o.price),
+      status: o.status,
+      type: "debit" as const,
+      source: "order",
+      reference: `#${String(o.id).padStart(6, "0")}`,
+      note: o.bundleName,
+      date: o.createdAt,
+    })),
+  ].sort((a, b) => b.date.getTime() - a.date.getTime()); // newest first
+
+  // Compute running balances per user (backward from current balance)
+  const userTxns = new Map<number, TxItem[]>();
+  for (const t of txns) {
+    if (!userTxns.has(t.userId)) userTxns.set(t.userId, []);
+    userTxns.get(t.userId)!.push(t);
+  }
+  const balMap = new Map<string, { prev: number; curr: number }>();
+  for (const [uid, utxns] of userTxns) {
+    let running = walletByUser.get(uid) ?? 0;
+    for (const t of utxns) { // newest first
+      const curr = running;
+      const prev = curr - t.amount;
+      balMap.set(t.key, { curr, prev });
+      running = prev;
+    }
+  }
+
+  interface ResultTx {
+    key: string; ref: string; userId: number; userName: string; agentCode: string;
+    date: string; amount: number; prevBalance: number; currBalance: number;
+    status: string; type: "credit" | "debit"; source: string; note: string | null;
+  }
+
+  let result: ResultTx[] = txns.map(t => {
+    const bal = balMap.get(t.key) ?? { prev: 0, curr: 0 };
+    return {
+      key: t.key, ref: t.reference,
+      userId: t.userId, userName: t.userName,
+      agentCode: `BT-${String(t.userId).padStart(4, "0")}`,
+      date: t.date.toISOString(),
+      amount: t.amount,
+      prevBalance: Math.round(bal.prev * 100) / 100,
+      currBalance: Math.round(bal.curr * 100) / 100,
+      status: t.status, type: t.type, source: t.source, note: t.note,
+    };
+  });
+
+  // Apply filters
+  if (agentId.trim()) {
+    const q = agentId.trim().toLowerCase();
+    result = result.filter(t =>
+      String(t.userId).includes(q) ||
+      t.agentCode.toLowerCase().includes(q) ||
+      t.userName.toLowerCase().includes(q)
+    );
+  }
+  if (type !== "all")   result = result.filter(t => t.type === type);
+  if (status !== "all") result = result.filter(t => t.status === status);
+  if (source !== "all") result = result.filter(t => t.source === source);
+  if (dateFrom) {
+    const from = new Date(dateFrom);
+    result = result.filter(t => new Date(t.date) >= from);
+  }
+  if (dateTo) {
+    const to = new Date(dateTo); to.setHours(23, 59, 59, 999);
+    result = result.filter(t => new Date(t.date) <= to);
+  }
+
+  const total = result.length;
+  const pg = Math.max(1, parseInt(page));
+  const ps = Math.min(500, Math.max(1, parseInt(pageSize)));
+  res.json({ total, page: pg, pageSize: ps, data: result.slice((pg - 1) * ps, pg * ps) });
+});
+
 export default router;
