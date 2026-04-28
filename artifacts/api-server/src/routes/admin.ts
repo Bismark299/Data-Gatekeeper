@@ -283,10 +283,10 @@ router.get("/admin/wallets", requireAdmin, async (req, res): Promise<void> => {
     .where(eq(depositsTable.status, "completed"))
     .groupBy(depositsTable.userId);
 
+  // All orders regardless of status — total monetary value of orders placed
   const orderTotals = await db
     .select({ userId: ordersTable.userId, total: sum(ordersTable.price) })
     .from(ordersTable)
-    .where(eq(ordersTable.status, "completed"))
     .groupBy(ordersTable.userId);
 
   const depMap = new Map(depositTotals.map(d => [d.userId, Number(d.total ?? 0)]));

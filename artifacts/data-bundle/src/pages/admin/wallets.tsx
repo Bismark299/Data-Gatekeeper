@@ -514,18 +514,18 @@ function AdminWalletsContent() {
                         <thead>
                           <tr className="bg-muted/30 border-b border-border">
                             {[
-                              { label: "User #", field: null },
-                              { label: "Name", field: "name" as SortField },
-                              { label: "Total Loads", field: "totalLoaded" as SortField },
-                              { label: "Total Orders", field: "totalOrders" as SortField },
-                              { label: "Current Balance", field: "balance" as SortField },
-                              { label: "Role", field: null },
-                              { label: "Last Active", field: "updated" as SortField },
-                              { label: "Action", field: null },
-                            ].map(({ label, field }) => (
-                              <th key={label} className="text-left px-5 py-3.5 text-xs font-bold text-muted-foreground uppercase tracking-wider whitespace-nowrap">
+                              { label: "User #", field: null, hint: "" },
+                              { label: "Name", field: "name" as SortField, hint: "" },
+                              { label: "Total Loads", field: "totalLoaded" as SortField, hint: "Sum of all deposits via Paystack, MoMo, Admin & Manual" },
+                              { label: "Total Orders (GH₵)", field: "totalOrders" as SortField, hint: "Total monetary value of all orders placed" },
+                              { label: "Current Balance", field: "balance" as SortField, hint: "" },
+                              { label: "Role", field: null, hint: "" },
+                              { label: "Last Active", field: "updated" as SortField, hint: "" },
+                              { label: "Action", field: null, hint: "" },
+                            ].map(({ label, field, hint }) => (
+                              <th key={label} title={hint || undefined} className="text-left px-5 py-3.5 text-xs font-bold text-muted-foreground uppercase tracking-wider whitespace-nowrap">
                                 {field ? (
-                                  <button className="flex items-center hover:text-foreground transition-colors" onClick={() => handleSort(field)}>
+                                  <button className="flex items-center hover:text-foreground transition-colors" onClick={() => handleSort(field)} title={hint || undefined}>
                                     {label}
                                     <SortIcon field={field} active={sortField === field} dir={sortDir} />
                                   </button>
