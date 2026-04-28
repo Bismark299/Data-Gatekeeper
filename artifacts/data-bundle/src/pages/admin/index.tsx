@@ -122,7 +122,12 @@ function AdminDashboardContent() {
 
   const { data: storeOrders, refetch: refetchStoreOrders } = useQuery<any[]>({
     queryKey: ["adminStoreOrdersDash"],
-    queryFn: () => fetch("/api/admin/store-orders", { credentials: "include" }).then(r => r.json()),
+    queryFn: async () => {
+      const r = await fetch("/api/admin/store-orders", { credentials: "include" });
+      if (!r.ok) return [];
+      const data = await r.json();
+      return Array.isArray(data) ? data : [];
+    },
     refetchInterval: 10000,
   });
 
@@ -245,7 +250,7 @@ function AdminDashboardContent() {
 
   // Filtered store orders for the dashboard view
   const filteredStoreOrders = useMemo(() => {
-    let src = storeOrders ?? [];
+    let src = Array.isArray(storeOrders) ? storeOrders : [];
     if (dateFrom) src = src.filter((o: any) => new Date(o.createdAt) >= new Date(dateFrom));
     if (dateTo) { const to = new Date(dateTo); to.setHours(23, 59, 59, 999); src = src.filter((o: any) => new Date(o.createdAt) <= to); }
     return src;
