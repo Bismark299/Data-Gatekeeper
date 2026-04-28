@@ -20,6 +20,7 @@ import AdminOrders from "@/pages/admin/orders";
 import AdminWallets from "@/pages/admin/wallets";
 import AdminDeposits from "@/pages/admin/deposits";
 import AdminStats from "@/pages/admin/stats";
+import AdminStores from "@/pages/admin/stores";
 import Shop from "@/pages/shop";
 import StoreManager from "@/pages/store-manager";
 import PublicStore from "@/pages/public-store";
@@ -57,6 +58,7 @@ function Router() {
       <Route path="/admin/wallets" component={AdminWallets} />
       <Route path="/admin/deposits" component={AdminDeposits} />
       <Route path="/admin/stats" component={AdminStats} />
+      <Route path="/admin/stores" component={AdminStores} />
       <Route path="/shop" component={Shop} />
       <Route path="/store-manager" component={StoreManager} />
       <Route path="/s/:slug" component={PublicStore} />

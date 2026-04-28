@@ -7,7 +7,7 @@ import {
   useAdminListDeposits,
   getAdminListOrdersQueryKey,
 } from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { AdminSidebar } from "@/components/AdminSidebar";
 import { Button } from "@/components/ui/button";
@@ -20,7 +20,7 @@ import {
   Menu, Users, ShoppingCart, DollarSign, Package, Clock,
   CheckCircle2, AlertTriangle, ChevronLeft, ChevronRight,
   Search, X, RefreshCw, ArrowUpRight, BarChart3, Wallet,
-  XCircle, Copy, Zap, AlertCircle, Trash2,
+  XCircle, Copy, Zap, AlertCircle, Trash2, Store,
 } from "lucide-react";
 
 const PAGE_SIZE = 10;
@@ -96,14 +96,20 @@ export default function AdminDashboard() {
 }
 
 function AdminDashboardContent() {
+  const todayStr = new Date().toISOString().slice(0, 10);
+
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [statusTab, setStatusTab]     = useState<typeof ORDER_STATUSES[number]>("all");
   const [phoneSearch, setPhoneSearch] = useState("");
   const [orderIdSearch, setOrderIdSearch] = useState("");
+  const [dateFrom, setDateFrom]       = useState(todayStr);
+  const [dateTo, setDateTo]           = useState(todayStr);
+  const [pageView, setPageView]       = useState<"platform" | "store">("platform");
   const [page, setPage]               = useState(1);
   const [pageSize, setPageSize]       = useState(10);
   const [completing, setCompleting]   = useState(false);
   const [refunding, setRefunding]     = useState<number | null>(null);
+  const [storeActionId, setStoreActionId] = useState<number | null>(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -114,7 +120,13 @@ function AdminDashboardContent() {
   const { data: allOrders, refetch: refetchOrders } = useAdminListOrders({});
   const updateStatus = useAdminUpdateOrderStatus();
 
-  const handleRefresh = () => { refetchStats(); refetchOrders(); toast({ title: "Dashboard refreshed" }); };
+  const { data: storeOrders, refetch: refetchStoreOrders } = useQuery<any[]>({
+    queryKey: ["adminStoreOrdersDash"],
+    queryFn: () => fetch("/api/admin/store-orders", { credentials: "include" }).then(r => r.json()),
+    refetchInterval: 10000,
+  });
+
+  const handleRefresh = () => { refetchStats(); refetchOrders(); refetchStoreOrders(); toast({ title: "Dashboard refreshed" }); };
 
   const invalidateOrders = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: getAdminListOrdersQueryKey({}) });
@@ -170,46 +182,101 @@ function AdminDashboardContent() {
     }));
   }, [allOrders]);
 
-  const handleNetworkCopy = (network: typeof networkPendingCounts[number]) => {
-    const text = network.orders
-      .map(o => `${o.phoneNumber} - ${o.bundleData}`)
-      .join("\n");
-    navigator.clipboard.writeText(text).then(() => {
+  const handleNetworkCopy = async (network: typeof networkPendingCounts[number]) => {
+    if (network.count === 0) return;
+    const addGB = (s: string) => {
+      const m = s.match(/^([\d.]+)\s*(GB|MB|TB)?$/i);
+      if (!m) return s;
+      const unit = (m[2] ?? "GB").toUpperCase();
+      return `${m[1]}${unit === "GB" ? "GB" : unit}`;
+    };
+    const text = network.orders.map(o => `${o.phoneNumber}\t${addGB(o.bundleData ?? "")}`).join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
       toast({ title: `Copied ${network.count} ${network.label} pending orders` });
-    });
+      const ids = network.orders.map(o => o.id);
+      await fetch("/api/admin/orders/bulk-status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids, status: "processing" }),
+        credentials: "include",
+      });
+      invalidateOrders(); refetchStats();
+    } catch {
+      toast({ title: "Copy failed", variant: "destructive" });
+    }
   };
+
+  // Orders filtered only by date (for stat cards — not affected by status/phone/ID search)
+  const dayOrders = useMemo(() => {
+    let src = allOrders ?? [];
+    if (dateFrom) src = src.filter(o => new Date(o.createdAt) >= new Date(dateFrom));
+    if (dateTo) { const to = new Date(dateTo); to.setHours(23, 59, 59, 999); src = src.filter(o => new Date(o.createdAt) <= to); }
+    return src;
+  }, [allOrders, dateFrom, dateTo]);
 
   const statCards = useMemo(() => stats ? [
     { icon: Wallet,       label: "Wallet Balance",  value: `GH₵${((stats as { totalWalletBalance?: number }).totalWalletBalance ?? 0).toFixed(2)}`, sub: "Total user wallet funds",              colorClass: "text-emerald-600", bgClass: "bg-emerald-100 dark:bg-emerald-900/20", accent: true },
-    { icon: ShoppingCart, label: "Total Orders",    value: stats.totalOrders,    sub: `+${stats.recentOrders} this month`,         colorClass: "text-violet-600",  bgClass: "bg-violet-100 dark:bg-violet-900/20" },
-    { icon: Clock,        label: "Pending Orders",  value: stats.pendingOrders,  sub: "Awaiting processing",                       colorClass: "text-amber-600",   bgClass: "bg-amber-100 dark:bg-amber-900/20",   pulse: stats.pendingOrders > 0 },
-    { icon: CheckCircle2, label: "Completed",       value: stats.completedOrders, sub: "Successfully fulfilled",                   colorClass: "text-teal-600",    bgClass: "bg-teal-100 dark:bg-teal-900/20" },
-    { icon: Zap,          label: "Processing",      value: (stats as { processingOrders?: number }).processingOrders ?? 0, sub: "Currently being processed",     colorClass: "text-sky-600",     bgClass: "bg-sky-100 dark:bg-sky-900/20",       pulse: ((stats as { processingOrders?: number }).processingOrders ?? 0) > 0 },
-    { icon: AlertCircle,  label: "Failed",          value: (stats as { failedOrders?: number }).failedOrders ?? 0, sub: "Failed or cancelled",                  colorClass: "text-red-600",     bgClass: "bg-red-100 dark:bg-red-900/20" },
-  ] : [], [stats]);
+    { icon: ShoppingCart, label: "Total Orders",    value: dayOrders.length,    sub: dateFrom === dateTo ? `For ${dateFrom}` : `${dateFrom} → ${dateTo}`,         colorClass: "text-violet-600",  bgClass: "bg-violet-100 dark:bg-violet-900/20" },
+    { icon: Clock,        label: "Pending Orders",  value: dayOrders.filter(o => o.status === "pending").length,  sub: "Awaiting processing",                       colorClass: "text-amber-600",   bgClass: "bg-amber-100 dark:bg-amber-900/20",   pulse: dayOrders.filter(o => o.status === "pending").length > 0 },
+    { icon: CheckCircle2, label: "Completed",       value: dayOrders.filter(o => o.status === "completed").length, sub: "Successfully fulfilled",                   colorClass: "text-teal-600",    bgClass: "bg-teal-100 dark:bg-teal-900/20" },
+    { icon: Zap,          label: "Processing",      value: dayOrders.filter(o => o.status === "processing").length, sub: "Currently being processed",     colorClass: "text-sky-600",     bgClass: "bg-sky-100 dark:bg-sky-900/20",       pulse: dayOrders.filter(o => o.status === "processing").length > 0 },
+    { icon: AlertCircle,  label: "Failed",          value: dayOrders.filter(o => o.status === "failed" || o.status === "cancelled").length, sub: "Failed or cancelled",                  colorClass: "text-red-600",     bgClass: "bg-red-100 dark:bg-red-900/20" },
+  ] : [], [stats, dayOrders, dateFrom, dateTo]);
 
   const pendingDeposits = useMemo(() => (deposits ?? []).filter(d => d.status === "pending"), [deposits]);
 
   const filteredOrders = useMemo(() => {
     let src = allOrders ?? [];
+    if (dateFrom) src = src.filter(o => new Date(o.createdAt) >= new Date(dateFrom));
+    if (dateTo) { const to = new Date(dateTo); to.setHours(23, 59, 59, 999); src = src.filter(o => new Date(o.createdAt) <= to); }
     if (statusTab !== "all") src = src.filter(o => o.status === statusTab);
-    if (phoneSearch.trim()) {
-      const q = phoneSearch.trim();
-      src = src.filter(o => o.phoneNumber.includes(q));
-    }
-    if (orderIdSearch.trim()) {
-      const q = orderIdSearch.trim();
-      src = src.filter(o => String(o.id).includes(q));
-    }
+    if (phoneSearch.trim()) src = src.filter(o => o.phoneNumber.includes(phoneSearch.trim()));
+    if (orderIdSearch.trim()) src = src.filter(o => String(o.id).includes(orderIdSearch.trim()));
     return src;
-  }, [allOrders, statusTab, phoneSearch, orderIdSearch]);
+  }, [allOrders, statusTab, phoneSearch, orderIdSearch, dateFrom, dateTo]);
 
   const statusCounts = useMemo(() => {
-    const src = allOrders ?? [];
+    // Status counts from date-filtered orders (dayOrders)
     return Object.fromEntries(
-      ORDER_STATUSES.map(s => [s, s === "all" ? src.length : src.filter(o => o.status === s).length])
+      ORDER_STATUSES.map(s => [s, s === "all" ? dayOrders.length : dayOrders.filter(o => o.status === s).length])
     );
-  }, [allOrders]);
+  }, [dayOrders]);
+
+  // Filtered store orders for the dashboard view
+  const filteredStoreOrders = useMemo(() => {
+    let src = storeOrders ?? [];
+    if (dateFrom) src = src.filter((o: any) => new Date(o.createdAt) >= new Date(dateFrom));
+    if (dateTo) { const to = new Date(dateTo); to.setHours(23, 59, 59, 999); src = src.filter((o: any) => new Date(o.createdAt) <= to); }
+    return src;
+  }, [storeOrders, dateFrom, dateTo]);
+
+  // Store order actions
+  const handleStoreOrderComplete = async (id: number) => {
+    setStoreActionId(id);
+    try {
+      const res = await fetch(`/api/admin/store-orders/${id}/complete`, { method: "PATCH", credentials: "include" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error);
+      toast({ title: `Store order #${id} completed — profit credited` });
+      refetchStoreOrders(); refetchStats();
+    } catch (e: unknown) {
+      toast({ title: (e as Error).message || "Error completing order", variant: "destructive" });
+    } finally { setStoreActionId(null); }
+  };
+
+  const handleStoreOrderCancel = async (id: number) => {
+    setStoreActionId(id);
+    try {
+      const res = await fetch(`/api/admin/store-orders/${id}/cancel`, { method: "PATCH", credentials: "include" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error);
+      toast({ title: `Store order #${id} cancelled` });
+      refetchStoreOrders();
+    } catch (e: unknown) {
+      toast({ title: (e as Error).message || "Error cancelling order", variant: "destructive" });
+    } finally { setStoreActionId(null); }
+  };
 
   const totalPages  = Math.max(1, Math.ceil(filteredOrders.length / pageSize));
   const pagedOrders = useMemo(() => filteredOrders.slice((page - 1) * pageSize, page * pageSize), [filteredOrders, page, pageSize]);
@@ -300,51 +367,66 @@ function AdminDashboardContent() {
 
           {/* Orders Table */}
           <div className="bg-card border border-border rounded-2xl overflow-hidden">
-            <div className="px-6 py-4 border-b border-border flex flex-col sm:flex-row sm:items-center gap-3">
-              <div className="flex-1">
-                <h2 className="font-bold text-foreground">Orders</h2>
-                <p className="text-xs text-muted-foreground mt-0.5">{filteredOrders.length} orders</p>
+            <div className="px-6 py-4 border-b border-border space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                <div className="flex-1">
+                  <h2 className="font-bold text-foreground">Orders</h2>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {pageView === "platform" ? `${filteredOrders.length} platform order${filteredOrders.length !== 1 ? "s" : ""}` : `${filteredStoreOrders.length} store order${filteredStoreOrders.length !== 1 ? "s" : ""}`}
+                    {" "}for {dateFrom === dateTo ? dateFrom : `${dateFrom} → ${dateTo}`}
+                  </p>
+                </div>
+                <div className="flex items-center rounded-xl border border-border bg-muted/40 p-1 gap-1">
+                  <button onClick={() => setPageView("platform")}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${pageView === "platform" ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
+                    <ShoppingCart className="w-3.5 h-3.5" /> Platform
+                  </button>
+                  <button onClick={() => setPageView("store")}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${pageView === "store" ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
+                    Store
+                    {(filteredStoreOrders ?? []).filter((o: any) => o.status === "processing").length > 0 && (
+                      <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-blue-500 text-white text-[10px] font-bold">
+                        {filteredStoreOrders.filter((o: any) => o.status === "processing").length}
+                      </span>
+                    )}
+                  </button>
+                </div>
+                <Link href="/admin/orders">
+                  <Button variant="outline" size="sm" className="gap-1.5 shrink-0">
+                    <ArrowUpRight className="w-3.5 h-3.5" /> Full View
+                  </Button>
+                </Link>
               </div>
-              <div className="flex gap-2 flex-wrap">
+              {/* Date range + search filters */}
+              <div className="flex flex-wrap gap-2 items-center">
+                <input type="date" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setPage(1); }}
+                  className="h-8 rounded-lg border border-border bg-background px-2 text-xs" title="From" />
+                <span className="text-xs text-muted-foreground">to</span>
+                <input type="date" value={dateTo} onChange={e => { setDateTo(e.target.value); setPage(1); }}
+                  className="h-8 rounded-lg border border-border bg-background px-2 text-xs" title="To" />
+                <button onClick={() => { setDateFrom(todayStr); setDateTo(todayStr); setPage(1); }}
+                  className="text-xs text-primary hover:underline px-1">Today</button>
+                <button onClick={() => { setDateFrom(""); setDateTo(""); setPage(1); }}
+                  className="text-xs text-muted-foreground hover:text-foreground px-1">All time</button>
                 <div className="relative">
                   <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-                  <Input
-                    placeholder="Phone number…"
-                    value={phoneSearch}
+                  <Input placeholder="Phone…" value={phoneSearch}
                     onChange={e => { setPhoneSearch(e.target.value); setPage(1); }}
-                    className="pl-8 h-8 text-xs w-40"
-                    data-testid="input-phone-search"
-                  />
-                  {phoneSearch && (
-                    <button className="absolute right-2 top-1/2 -translate-y-1/2" onClick={() => { setPhoneSearch(""); setPage(1); }}>
-                      <X className="w-3 h-3 text-muted-foreground" />
-                    </button>
-                  )}
+                    className="pl-8 h-8 text-xs w-36" data-testid="input-phone-search" />
+                  {phoneSearch && <button className="absolute right-2 top-1/2 -translate-y-1/2" onClick={() => { setPhoneSearch(""); setPage(1); }}><X className="w-3 h-3 text-muted-foreground" /></button>}
                 </div>
                 <div className="relative">
                   <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-                  <Input
-                    placeholder="Order ID…"
-                    value={orderIdSearch}
+                  <Input placeholder="Order ID…" value={orderIdSearch}
                     onChange={e => { setOrderIdSearch(e.target.value); setPage(1); }}
-                    className="pl-8 h-8 text-xs w-32"
-                    data-testid="input-orderid-search"
-                  />
-                  {orderIdSearch && (
-                    <button className="absolute right-2 top-1/2 -translate-y-1/2" onClick={() => { setOrderIdSearch(""); setPage(1); }}>
-                      <X className="w-3 h-3 text-muted-foreground" />
-                    </button>
-                  )}
+                    className="pl-8 h-8 text-xs w-28" data-testid="input-orderid-search" />
+                  {orderIdSearch && <button className="absolute right-2 top-1/2 -translate-y-1/2" onClick={() => { setOrderIdSearch(""); setPage(1); }}><X className="w-3 h-3 text-muted-foreground" /></button>}
                 </div>
               </div>
-              <Link href="/admin/orders">
-                <Button variant="outline" size="sm" className="gap-1.5 shrink-0">
-                  <ArrowUpRight className="w-3.5 h-3.5" /> Full View
-                </Button>
-              </Link>
             </div>
 
-            {/* Status tabs */}
+            {/* Status tabs — platform only */}
+            {pageView === "platform" && (
             <div className="flex items-center gap-1 px-6 py-2.5 border-b border-border overflow-x-auto">
               {ORDER_STATUSES.map(s => (
                 <button
@@ -360,7 +442,74 @@ function AdminDashboardContent() {
                 </button>
               ))}
             </div>
+            )}
 
+            {/* ── Store Orders View ── */}
+            {pageView === "store" && (
+              filteredStoreOrders.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-16 gap-3">
+                  <Store className="w-10 h-10 text-muted-foreground" />
+                  <p className="text-sm text-muted-foreground">No store orders for this period</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-border bg-muted/20">
+                        {["#", "Store", "Data", "Network", "Phone", "Revenue", "Profit", "Status", "Date", "Actions"].map(h => (
+                          <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {filteredStoreOrders.map((o: any) => {
+                        const statusColor = STATUS_COLORS[o.status] ?? "bg-gray-100 text-gray-700";
+                        const isActioning = storeActionId === o.id;
+                        const canAct = o.status !== "completed" && o.status !== "cancelled";
+                        const nConf = NETWORKS.find(n => n.value === o.bundleNetwork);
+                        return (
+                          <tr key={o.id} className="hover:bg-muted/20 transition-colors">
+                            <td className="px-4 py-3 font-mono text-xs text-muted-foreground">#{o.id}</td>
+                            <td className="px-4 py-3">
+                              <div className="text-xs font-semibold text-foreground">{o.storeName}</div>
+                              <div className="text-[10px] text-muted-foreground font-mono">/{o.storeSlug}</div>
+                            </td>
+                            <td className="px-4 py-3 font-bold text-foreground text-xs">{o.bundleData}</td>
+                            <td className="px-4 py-3">
+                              {nConf ? <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${nConf.badge}`}>{nConf.label}</span>
+                                : <span className="text-xs text-muted-foreground">{o.bundleNetwork}</span>}
+                            </td>
+                            <td className="px-4 py-3 font-mono text-xs">{o.customerPhone}</td>
+                            <td className="px-4 py-3 font-semibold text-xs">GH₵{o.sellingPrice.toFixed(2)}</td>
+                            <td className="px-4 py-3 text-emerald-600 font-semibold text-xs">+GH₵{o.profit.toFixed(2)}</td>
+                            <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${statusColor}`}>{o.status}</span></td>
+                            <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(o.createdAt)}</td>
+                            <td className="px-4 py-3">
+                              {canAct ? (
+                                <div className="flex items-center gap-1.5">
+                                  <button onClick={() => handleStoreOrderComplete(o.id)} disabled={isActioning}
+                                    className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold bg-emerald-100 text-emerald-700 hover:bg-emerald-200 disabled:opacity-50 transition-colors">
+                                    <CheckCircle2 className="w-3 h-3" />{isActioning ? "…" : "Complete"}
+                                  </button>
+                                  <button onClick={() => handleStoreOrderCancel(o.id)} disabled={isActioning}
+                                    className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold bg-red-100 text-red-700 hover:bg-red-200 disabled:opacity-50 transition-colors">
+                                    <XCircle className="w-3 h-3" />{isActioning ? "…" : "Cancel"}
+                                  </button>
+                                </div>
+                              ) : <span className="text-xs text-muted-foreground/40 italic">—</span>}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )
+            )}
+
+            {/* ── Platform Orders Table ── */}
+            {pageView === "platform" && (
+            <>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
@@ -478,6 +627,8 @@ function AdminDashboardContent() {
                   </button>
                 </div>
               </div>
+            )}
+            </>
             )}
           </div>
         </main>

@@ -524,7 +524,75 @@ router.post("/s/paystack/webhook", async (req, res) => {
 router.get("/admin/stores", requireAuth, async (req, res) => {
   if (req.session.userRole !== "admin") { res.status(403).json({ error: "Forbidden" }); return; }
   const stores = await db.select().from(storesTable).orderBy(desc(storesTable.createdAt));
-  res.json(stores.map(formatStore));
+
+  // Enrich each store with aggregate stats
+  const enriched = await Promise.all(stores.map(async store => {
+    const orders = await db.select({
+      profit: storeOrdersTable.profit,
+      status: storeOrdersTable.status,
+    }).from(storeOrdersTable).where(eq(storeOrdersTable.storeId, store.id));
+
+    const totalOrders = orders.length;
+    const completedOrders = orders.filter(o => o.status === "completed").length;
+    const processingOrders = orders.filter(o => o.status === "processing").length;
+    const totalEarned = orders.filter(o => o.status === "completed").reduce((s, o) => s + parseFloat(o.profit as any), 0);
+
+    const withdrawals = await db.select({ amount: storeWithdrawalsTable.amount, status: storeWithdrawalsTable.status })
+      .from(storeWithdrawalsTable).where(eq(storeWithdrawalsTable.storeId, store.id));
+
+    const totalWithdrawn = withdrawals.filter(w => w.status === "completed").reduce((s, w) => s + parseFloat(w.amount as any), 0);
+
+    return {
+      ...formatStore(store),
+      totalOrders,
+      completedOrders,
+      processingOrders,
+      totalEarned: parseFloat(totalEarned.toFixed(2)),
+      totalWithdrawn: parseFloat(totalWithdrawn.toFixed(2)),
+    };
+  }));
+  res.json(enriched);
+});
+
+router.get("/admin/stores/:storeId/withdrawals", requireAuth, async (req, res) => {
+  if (req.session.userRole !== "admin") { res.status(403).json({ error: "Forbidden" }); return; }
+  const storeId = parseInt(req.params.storeId);
+  if (isNaN(storeId)) { res.status(400).json({ error: "Invalid store id" }); return; }
+
+  const withdrawals = await db.select().from(storeWithdrawalsTable)
+    .where(eq(storeWithdrawalsTable.storeId, storeId))
+    .orderBy(desc(storeWithdrawalsTable.createdAt));
+
+  res.json(withdrawals.map(w => ({ ...w, amount: parseFloat(w.amount as any) })));
+});
+
+router.get("/admin/stores/:storeId/orders", requireAuth, async (req, res) => {
+  if (req.session.userRole !== "admin") { res.status(403).json({ error: "Forbidden" }); return; }
+  const storeId = parseInt(req.params.storeId);
+  if (isNaN(storeId)) { res.status(400).json({ error: "Invalid store id" }); return; }
+
+  const rows = await db.select({
+    id: storeOrdersTable.id,
+    bundleData: storeOrdersTable.bundleData,
+    bundleNetwork: storeOrdersTable.bundleNetwork,
+    customerPhone: storeOrdersTable.customerPhone,
+    customerEmail: storeOrdersTable.customerEmail,
+    sellingPrice: storeOrdersTable.sellingPrice,
+    basePrice: storeOrdersTable.basePrice,
+    profit: storeOrdersTable.profit,
+    status: storeOrdersTable.status,
+    paystackReference: storeOrdersTable.paystackReference,
+    createdAt: storeOrdersTable.createdAt,
+  }).from(storeOrdersTable)
+    .where(eq(storeOrdersTable.storeId, storeId))
+    .orderBy(desc(storeOrdersTable.createdAt));
+
+  res.json(rows.map(o => ({
+    ...o,
+    sellingPrice: parseFloat(o.sellingPrice as any),
+    basePrice: parseFloat(o.basePrice as any),
+    profit: parseFloat(o.profit as any),
+  })));
 });
 
 // ─── ADMIN: STORE ORDERS ──────────────────────────────────────────────────────

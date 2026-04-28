@@ -242,7 +242,9 @@ function AdminUsersContent() {
                             </div>
                           </td>
                           <td className="px-5 py-3.5 text-xs text-muted-foreground">{u.email}</td>
-                          <td className="px-5 py-3.5 text-sm text-muted-foreground font-mono">{u.phone ?? "—"}</td>
+                          <td className="px-5 py-3.5 text-sm text-muted-foreground font-mono">
+                            {u.phone ? (u.phone.startsWith("+233") ? "0" + u.phone.slice(4) : u.phone) : "—"}
+                          </td>
                           <td className="px-5 py-3.5">
                             <span className={`inline-flex items-center gap-1 text-xs font-bold ${walletBalance > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}`}>
                               <Wallet className="w-3 h-3" />

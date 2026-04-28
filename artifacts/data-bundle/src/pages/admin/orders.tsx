@@ -316,18 +316,6 @@ function AdminOrdersContent() {
             </button>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            {pageView === "platform" && processingCount > 0 && (
-              <Button
-                size="sm"
-                className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
-                onClick={handleCompleteAll}
-                disabled={completing}
-                data-testid="button-complete-all"
-              >
-                <Zap className="w-3.5 h-3.5" />
-                Complete all processing ({processingCount})
-              </Button>
-            )}
             {pageView === "platform" && (
               <>
                 <Button variant="outline" size="sm" onClick={() => refetch()} className="gap-1.5">
