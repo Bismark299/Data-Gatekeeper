@@ -1,4 +1,5 @@
 import { useState, useMemo, useRef, useEffect, Fragment } from "react";
+import { useLocation } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { AdminSidebar } from "@/components/AdminSidebar";
@@ -574,6 +575,7 @@ export default function AdminWallets() {
 }
 
 function AdminWalletsContent() {
+  const [, navigate] = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [tab, setTab]                 = useState<PageTab>("wallets");
   const [search, setSearch]           = useState("");
@@ -825,10 +827,13 @@ function AdminWalletsContent() {
                                   </span>
                                 </td>
                                 <td className="px-5 py-4">
-                                  <div className="flex items-center gap-3">
+                                  <button
+                                    onClick={() => navigate(`/admin/agents/${w.userId}`)}
+                                    className="flex items-center gap-3 text-left hover:opacity-80 transition-opacity group/agent"
+                                  >
                                     <UserAvatar name={w.userName} role={w.userRole} />
                                     <div className="min-w-0">
-                                      <div className="font-semibold text-foreground truncate">{w.userName}</div>
+                                      <div className="font-semibold text-foreground truncate group-hover/agent:text-primary transition-colors">{w.userName}</div>
                                       <div className="text-xs text-muted-foreground truncate">{w.userEmail}</div>
                                       {w.userPhone && (
                                         <div className="text-[10px] text-muted-foreground/70 font-mono">
@@ -836,7 +841,7 @@ function AdminWalletsContent() {
                                         </div>
                                       )}
                                     </div>
-                                  </div>
+                                  </button>
                                 </td>
                                 <td className="px-5 py-4">
                                   <span className="text-sm font-semibold text-foreground">

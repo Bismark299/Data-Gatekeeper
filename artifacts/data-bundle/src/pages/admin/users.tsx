@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { useLocation } from "wouter";
 import { useAdminListUsers, useAdminUpdateUser, useAdminDeleteUser, getAdminListUsersQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
@@ -31,6 +32,7 @@ export default function AdminUsers() {
 }
 
 function AdminUsersContent() {
+  const [, navigate] = useLocation();
   const [sidebarOpen, setSidebarOpen]  = useState(false);
   const [search, setSearch]            = useState("");
   const [roleFilter, setRoleFilter]    = useState<"all" | "user" | "admin">("all");
@@ -234,12 +236,15 @@ function AdminUsersContent() {
                         <tr key={u.id} className="hover:bg-muted/20 transition-colors" data-testid={`row-user-${u.id}`}>
                           <td className="px-5 py-3.5 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(u.createdAt)}</td>
                           <td className="px-5 py-3.5">
-                            <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => navigate(`/admin/agents/${u.id}`)}
+                              className="flex items-center gap-2 text-left group/agent hover:opacity-80 transition-opacity"
+                            >
                               <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center shrink-0 text-xs font-bold text-primary">
                                 {u.name.charAt(0).toUpperCase()}
                               </div>
-                              <span className="font-semibold text-foreground whitespace-nowrap">{u.name}</span>
-                            </div>
+                              <span className="font-semibold text-foreground whitespace-nowrap group-hover/agent:text-primary transition-colors">{u.name}</span>
+                            </button>
                           </td>
                           <td className="px-5 py-3.5 text-xs text-muted-foreground">{u.email}</td>
                           <td className="px-5 py-3.5 text-sm text-muted-foreground font-mono">

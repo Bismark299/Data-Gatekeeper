@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { eq, count, sum, desc, gte, and, ilike, inArray, type SQL, sql } from "drizzle-orm";
-import { db, usersTable, bundlesTable, ordersTable, walletsTable, depositsTable } from "@workspace/db";
+import { db, usersTable, bundlesTable, ordersTable, walletsTable, depositsTable, storesTable } from "@workspace/db";
 import { creditWallet } from "./wallet";
 import {
   AdminListUsersQueryParams,
@@ -580,6 +580,87 @@ router.post("/admin/deposits/:id/reject", requireAdmin, async (req, res): Promis
     amount: parseFloat(updated.amount),
     userName: user?.name ?? "",
     userEmail: user?.email ?? "",
+  });
+});
+
+// ── GET /admin/agents/:userId — full agent profile ──────────────────────────
+router.get("/admin/agents/:userId", requireAdmin, async (req, res): Promise<void> => {
+  const userId = parseInt(req.params.userId, 10);
+  if (isNaN(userId)) { res.status(400).json({ error: "Invalid user ID" }); return; }
+
+  const [user] = await db.select().from(usersTable).where(eq(usersTable.id, userId));
+  if (!user) { res.status(404).json({ error: "User not found" }); return; }
+
+  const [wallet] = await db.select().from(walletsTable).where(eq(walletsTable.userId, userId));
+
+  const [depTotal] = await db
+    .select({ total: sum(depositsTable.amount) })
+    .from(depositsTable)
+    .where(and(eq(depositsTable.userId, userId), eq(depositsTable.status, "completed")));
+
+  const [ordTotal] = await db
+    .select({ total: sum(ordersTable.price), cnt: count() })
+    .from(ordersTable)
+    .where(eq(ordersTable.userId, userId));
+
+  const [completedOrd] = await db
+    .select({ cnt: count() })
+    .from(ordersTable)
+    .where(and(eq(ordersTable.userId, userId), eq(ordersTable.status, "completed")));
+
+  const [pendingOrd] = await db
+    .select({ cnt: count() })
+    .from(ordersTable)
+    .where(and(eq(ordersTable.userId, userId), inArray(ordersTable.status, ["pending", "processing"])));
+
+  const recentOrders = await db
+    .select()
+    .from(ordersTable)
+    .where(eq(ordersTable.userId, userId))
+    .orderBy(desc(ordersTable.createdAt))
+    .limit(50);
+
+  const recentDeposits = await db
+    .select()
+    .from(depositsTable)
+    .where(eq(depositsTable.userId, userId))
+    .orderBy(desc(depositsTable.createdAt))
+    .limit(50);
+
+  const [store] = await db.select().from(storesTable).where(eq(storesTable.userId, userId));
+
+  res.json({
+    user: {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      phone: user.phone,
+      role: user.role,
+      isActive: user.isActive,
+      createdAt: user.createdAt.toISOString(),
+    },
+    wallet: {
+      balance: wallet ? Number(wallet.balance) : 0,
+      updatedAt: wallet?.updatedAt?.toISOString() ?? null,
+    },
+    stats: {
+      totalLoaded: Number(depTotal?.total ?? 0),
+      totalOrderValue: Number(ordTotal?.total ?? 0),
+      totalOrders: Number(ordTotal?.cnt ?? 0),
+      completedOrders: Number(completedOrd?.cnt ?? 0),
+      pendingOrders: Number(pendingOrd?.cnt ?? 0),
+    },
+    recentOrders: recentOrders.map(o => ({
+      id: o.id, bundleName: o.bundleName, bundleData: o.bundleData,
+      price: Number(o.price), status: o.status,
+      phoneNumber: o.phoneNumber, createdAt: o.createdAt.toISOString(),
+    })),
+    recentDeposits: recentDeposits.map(d => ({
+      id: d.id, amount: Number(d.amount), status: d.status,
+      method: d.method, reference: d.reference, note: d.note,
+      createdAt: d.createdAt.toISOString(),
+    })),
+    store: store ? { id: store.id, name: store.name, slug: store.slug, isActive: store.isActive } : null,
   });
 });
 
