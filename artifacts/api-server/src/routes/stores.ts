@@ -133,7 +133,7 @@ router.get("/stores/my/bundles", requireAuth, async (req, res) => {
     .select()
     .from(storeBundlesTable)
     .innerJoin(bundlesTable, eq(storeBundlesTable.bundleId, bundlesTable.id))
-    .where(eq(storeBundlesTable.storeId, store.id))
+    .where(and(eq(storeBundlesTable.storeId, store.id), eq(bundlesTable.isActive, true)))
     .orderBy(desc(storeBundlesTable.createdAt));
 
   res.json(rows.map(r => formatStoreBundle(r.store_bundles, r.bundles)));
@@ -256,6 +256,7 @@ router.get("/stores/my/withdrawals", requireAuth, async (req, res) => {
 const WithdrawBody = z.object({
   amount: z.number().positive(),
   method: z.string().optional(),
+  bankCode: z.string().optional(),
   accountNumber: z.string().min(3),
   note: z.string().optional(),
 });
@@ -272,6 +273,9 @@ router.post("/stores/my/withdraw", requireAuth, async (req, res) => {
     res.status(400).json({ error: `Insufficient profit balance. Available: GH₵${profit.toFixed(2)}` });
     return;
   }
+  if (parsed.data.amount < 1) {
+    res.status(400).json({ error: "Minimum withdrawal is GH₵1.00" }); return;
+  }
 
   // Deduct from profit balance + create withdrawal record
   const newBalance = (profit - parsed.data.amount).toFixed(2);
@@ -286,7 +290,60 @@ router.post("/stores/my/withdraw", requireAuth, async (req, res) => {
     note: parsed.data.note ?? "",
   }).returning();
 
-  res.status(201).json({ ...w, amount: parseFloat(w.amount) });
+  // Initiate Paystack transfer
+  let transferStatus = "pending";
+  let transferCode = "";
+  try {
+    // Step 1: Create transfer recipient
+    const recipientType = parsed.data.method === "bank" ? "ghipss" : "mobile_money";
+    const bankCode = parsed.data.bankCode ?? "MTN";
+    const recipientRes = await fetch("https://api.paystack.co/transferrecipient", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${PAYSTACK_SECRET}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: recipientType,
+        name: store.name,
+        account_number: parsed.data.accountNumber,
+        bank_code: bankCode,
+        currency: "GHS",
+      }),
+    });
+    const recipientData = await recipientRes.json() as any;
+    if (!recipientRes.ok || !recipientData.data?.recipient_code) {
+      throw new Error(recipientData.message ?? "Failed to create recipient");
+    }
+    const recipientCode: string = recipientData.data.recipient_code;
+
+    // Step 2: Initiate transfer (amount in pesewas = GHS * 100)
+    const transferRes = await fetch("https://api.paystack.co/transfer", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${PAYSTACK_SECRET}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        source: "balance",
+        amount: Math.round(parsed.data.amount * 100),
+        recipient: recipientCode,
+        reason: parsed.data.note || `Profit withdrawal - ${store.name}`,
+        currency: "GHS",
+      }),
+    });
+    const transferData = await transferRes.json() as any;
+    if (transferRes.ok && transferData.data?.transfer_code) {
+      transferCode = transferData.data.transfer_code;
+      transferStatus = transferData.data.status === "success" ? "completed" : "processing";
+    }
+  } catch (_err) {
+    // Transfer failed — keep as pending for manual processing
+  }
+
+  if (transferStatus !== "pending") {
+    await db.update(storeWithdrawalsTable).set({
+      status: transferStatus,
+      note: transferCode ? `${parsed.data.note ?? ""} [${transferCode}]`.trim() : (parsed.data.note ?? ""),
+    }).where(eq(storeWithdrawalsTable.id, w.id));
+  }
+
+  const [updated] = await db.select().from(storeWithdrawalsTable).where(eq(storeWithdrawalsTable.id, w.id));
+  res.status(201).json({ ...updated, amount: parseFloat(updated.amount) });
 });
 
 // ─── PUBLIC STORE ROUTES ──────────────────────────────────────────────────────
@@ -404,6 +461,7 @@ router.get("/s/:slug/orders", async (req, res) => {
       id: storeOrdersTable.id,
       bundleData: storeOrdersTable.bundleData,
       bundleNetwork: storeOrdersTable.bundleNetwork,
+      customerPhone: storeOrdersTable.customerPhone,
       sellingPrice: storeOrdersTable.sellingPrice,
       status: storeOrdersTable.status,
       paystackReference: storeOrdersTable.paystackReference,

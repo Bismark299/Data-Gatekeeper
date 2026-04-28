@@ -48,6 +48,7 @@ const NETWORK_COLORS: Record<string, string> = {
 const STATUS_COLORS: Record<string, string> = {
   pending: "bg-amber-100 text-amber-800", processing: "bg-blue-100 text-blue-800",
   completed: "bg-emerald-100 text-emerald-800", failed: "bg-red-100 text-red-800",
+  cancelled: "bg-gray-100 text-gray-600",
 };
 
 function StatCard({ label, value, sub, icon: Icon, color }: {
@@ -421,95 +422,140 @@ function BundlesTab({ storeBundles, store }: { storeBundles: StoreBundle[]; stor
           <p className="text-sm text-muted-foreground mb-4">Add bundles from the admin's collection and set your selling prices.</p>
           <Button onClick={() => setShowAdd(true)} className="gap-2"><Plus className="w-4 h-4" /> Add Your First Bundle</Button>
         </div>
-      ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {[...storeBundles].sort((a, b) => {
-            const parseMB = (s: string) => { if (/unlimited/i.test(s)) return Infinity; const m = s.match(/^([\d.]+)\s*(GB|MB|TB)?$/i); if (!m) return Infinity; const v = parseFloat(m[1]); const u = (m[2] ?? "GB").toUpperCase(); return u === "MB" ? v : u === "TB" ? v * 1024 * 1024 : v * 1024; }; return parseMB(a.dataAmount) - parseMB(b.dataAmount);
-          }).map(sb => (
-            <div key={sb.id} className="bg-card border border-border rounded-2xl overflow-hidden shadow-md hover:shadow-lg transition-shadow">
-              <div className={`relative ${NETWORK_STYLES[sb.network]?.gradient ?? "bg-gradient-to-br from-gray-600 to-gray-800"} flex items-center justify-center`} style={{ height: 120 }}>
-                <div className={`absolute inset-0 bg-gradient-to-b ${NETWORK_STYLES[sb.network]?.shimmer ?? "from-white/20 to-transparent"} pointer-events-none`} />
-                <span className={`relative text-4xl font-black ${NETWORK_STYLES[sb.network]?.text ?? "text-white"}`} style={{ textShadow: "0 2px 8px rgba(0,0,0,0.2)" }}>{sb.dataAmount}</span>
-                <span className={`absolute top-2 left-2 text-[10px] font-extrabold rounded-full px-2 py-0.5 border backdrop-blur-sm ${NETWORK_STYLES[sb.network]?.badge ?? "bg-white/20 text-white border-white/30"}`}>
-                  {BUNDLE_NETWORK_LABELS[sb.network] ?? sb.network}
-                </span>
-                <span className="absolute top-2 right-2 text-[10px] font-bold rounded-full px-2 py-0.5 bg-black/20 text-emerald-300 border border-emerald-500/30 backdrop-blur-sm">
-                  +GH₵{(sb.sellingPrice - sb.basePrice).toFixed(2)} profit
-                </span>
-              </div>
-              <div className="p-4 space-y-3">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-muted-foreground">Base price</span>
-                  <span className="font-semibold text-foreground">GH₵{sb.basePrice.toFixed(2)}</span>
+      ) : storeBundles.length > 0 ? (
+        <div className="space-y-6">
+          {ALL_NETWORKS.map(network => {
+            const parseMB = (s: string) => { if (/unlimited/i.test(s)) return Infinity; const m = s.match(/^([\d.]+)\s*(GB|MB|TB)?$/i); if (!m) return Infinity; const v = parseFloat(m[1]); const u = (m[2] ?? "GB").toUpperCase(); return u === "MB" ? v : u === "TB" ? v * 1024 * 1024 : v * 1024; };
+            const networkBundles = [...storeBundles].filter(sb => sb.network === network).sort((a, b) => parseMB(a.dataAmount) - parseMB(b.dataAmount));
+            if (networkBundles.length === 0) return null;
+            const ns = NETWORK_STYLES[network];
+            return (
+              <div key={network}>
+                <div className="flex items-center gap-2 mb-3">
+                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-extrabold tracking-wider border backdrop-blur-sm ${ns?.badge ?? "bg-gray-100 text-gray-700"}`}>
+                    {BUNDLE_NETWORK_LABELS[network] ?? network.toUpperCase()}
+                  </span>
+                  <span className="text-xs text-muted-foreground">{networkBundles.length} bundle{networkBundles.length !== 1 ? "s" : ""}</span>
                 </div>
-                {editingId === sb.id ? (
-                  <div className="space-y-2">
-                    <Input type="number" value={editPrice} onChange={e => setEditPrice(e.target.value)} className="h-9 font-mono" />
-                    <div className="flex gap-2">
-                      <Button size="sm" className="flex-1" onClick={() => updateBundle.mutate({ id: sb.id, price: parseFloat(editPrice) })}
-                        disabled={!editPrice || parseFloat(editPrice) < sb.basePrice || updateBundle.isPending}>
-                        {updateBundle.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : "Save"}
-                      </Button>
-                      <Button size="sm" variant="outline" onClick={() => setEditingId(null)}>Cancel</Button>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {networkBundles.map(sb => (
+                    <div key={sb.id} className="bg-card border border-border rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-shadow">
+                      <div className={`relative ${ns?.gradient ?? "bg-gradient-to-br from-gray-600 to-gray-800"} flex items-center justify-center`} style={{ height: 80 }}>
+                        <div className={`absolute inset-0 bg-gradient-to-b ${ns?.shimmer ?? "from-white/20 to-transparent"} pointer-events-none`} />
+                        <span className={`relative text-2xl font-black ${ns?.text ?? "text-white"}`} style={{ textShadow: "0 2px 8px rgba(0,0,0,0.2)" }}>{sb.dataAmount}</span>
+                        <span className="absolute top-1.5 right-1.5 text-[9px] font-bold rounded-full px-1.5 py-0.5 bg-black/20 text-emerald-300 border border-emerald-500/30 backdrop-blur-sm">
+                          +GH₵{(sb.sellingPrice - sb.basePrice).toFixed(2)}
+                        </span>
+                      </div>
+                      <div className="p-3 space-y-2.5">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="text-muted-foreground">Base</span>
+                          <span className="font-semibold text-foreground">GH₵{sb.basePrice.toFixed(2)}</span>
+                        </div>
+                        {editingId === sb.id ? (
+                          <div className="space-y-2">
+                            <Input type="number" value={editPrice} onChange={e => setEditPrice(e.target.value)} className="h-8 text-sm font-mono" />
+                            <div className="flex gap-1.5">
+                              <Button size="sm" className="flex-1 h-7 text-xs" onClick={() => updateBundle.mutate({ id: sb.id, price: parseFloat(editPrice) })}
+                                disabled={!editPrice || parseFloat(editPrice) < sb.basePrice || updateBundle.isPending}>
+                                {updateBundle.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : "Save"}
+                              </Button>
+                              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setEditingId(null)}>Cancel</Button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <div className="text-[10px] text-muted-foreground">Your price</div>
+                              <div className="text-base font-bold text-foreground">GH₵{sb.sellingPrice.toFixed(2)}</div>
+                            </div>
+                            <div className="text-right">
+                              <div className="text-[10px] text-muted-foreground">Profit</div>
+                              <div className="text-sm font-bold text-emerald-600">+GH₵{(sb.sellingPrice - sb.basePrice).toFixed(2)}</div>
+                            </div>
+                          </div>
+                        )}
+                        {editingId !== sb.id && (
+                          <div className="flex gap-1.5">
+                            <Button size="sm" variant="outline" className="flex-1 gap-1 h-7 text-xs"
+                              onClick={() => { setEditingId(sb.id); setEditPrice(sb.sellingPrice.toFixed(2)); }}>
+                              <Edit2 className="w-3 h-3" /> Edit
+                            </Button>
+                            <Button size="sm" variant="ghost" className="text-red-500 hover:text-red-600 hover:bg-red-50 h-7"
+                              onClick={() => removeBundle.mutate(sb.id)} disabled={removeBundle.isPending}>
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ) : (
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="text-xs text-muted-foreground">Your price</div>
-                      <div className="text-lg font-bold text-foreground">GH₵{sb.sellingPrice.toFixed(2)}</div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-xs text-muted-foreground">Profit</div>
-                      <div className="text-base font-bold text-emerald-600">+GH₵{(sb.sellingPrice - sb.basePrice).toFixed(2)}</div>
-                    </div>
-                  </div>
-                )}
-                {editingId !== sb.id && (
-                  <div className="flex gap-2">
-                    <Button size="sm" variant="outline" className="flex-1 gap-1"
-                      onClick={() => { setEditingId(sb.id); setEditPrice(sb.sellingPrice.toFixed(2)); }}>
-                      <Edit2 className="w-3 h-3" /> Edit Price
-                    </Button>
-                    <Button size="sm" variant="ghost" className="text-red-500 hover:text-red-600 hover:bg-red-50"
-                      onClick={() => removeBundle.mutate(sb.id)} disabled={removeBundle.isPending}>
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </Button>
-                  </div>
-                )}
+                  ))}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
 
 // ─── Orders Tab ───────────────────────────────────────────────────────────────
 function OrdersTab({ orders }: { orders: any[] }) {
+  const [phoneFilter, setPhoneFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+
+  const filtered = orders.filter(o => {
+    if (phoneFilter && !o.customerPhone.includes(phoneFilter.trim())) return false;
+    if (statusFilter !== "all" && o.status !== statusFilter) return false;
+    if (dateFrom && new Date(o.createdAt) < new Date(dateFrom)) return false;
+    if (dateTo && new Date(o.createdAt) > new Date(dateTo + "T23:59:59")) return false;
+    return true;
+  });
+
   return (
     <div className="bg-card border border-border rounded-2xl overflow-hidden">
-      <div className="px-5 py-4 border-b border-border">
-        <h3 className="font-bold text-foreground">Store Sales</h3>
+      <div className="px-5 py-4 border-b border-border flex flex-wrap items-center gap-3">
+        <h3 className="font-bold text-foreground mr-auto">Store Sales</h3>
+        <Input placeholder="Filter by phone…" value={phoneFilter} onChange={e => setPhoneFilter(e.target.value)}
+          className="h-8 w-40 text-sm font-mono" />
+        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
+          className="h-8 rounded-lg border border-border bg-background px-2 text-xs">
+          <option value="all">All status</option>
+          <option value="pending">Pending</option>
+          <option value="processing">Processing</option>
+          <option value="completed">Completed</option>
+          <option value="cancelled">Cancelled</option>
+          <option value="failed">Failed</option>
+        </select>
+        <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+          className="h-8 rounded-lg border border-border bg-background px-2 text-xs" title="From date" />
+        <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+          className="h-8 rounded-lg border border-border bg-background px-2 text-xs" title="To date" />
+        {(phoneFilter || statusFilter !== "all" || dateFrom || dateTo) && (
+          <button onClick={() => { setPhoneFilter(""); setStatusFilter("all"); setDateFrom(""); setDateTo(""); }}
+            className="text-xs text-muted-foreground hover:text-foreground underline">Clear</button>
+        )}
       </div>
-      {orders.length === 0 ? (
+      {filtered.length === 0 ? (
         <div className="p-12 text-center">
           <ListOrdered className="w-12 h-12 text-muted-foreground mx-auto mb-3" />
-          <p className="text-muted-foreground">No orders yet</p>
+          <p className="text-muted-foreground">{orders.length === 0 ? "No orders yet" : "No orders match your filters"}</p>
         </div>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-muted/40">
-                {["#", "Data", "Network", "Phone", "Revenue", "Profit", "Status", "Date"].map(h => (
+                {["#", "Data", "Network", "Phone", "Revenue", "Profit", "Payment", "Status", "Date"].map(h => (
                   <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {orders.map((o: any) => (
+              {filtered.map((o: any) => (
                 <tr key={o.id} className="hover:bg-muted/30 transition-colors">
                   <td className="px-4 py-3 font-mono text-xs text-muted-foreground">#{o.id}</td>
                   <td className="px-4 py-3 font-semibold text-foreground">{o.bundleData}</td>
@@ -517,6 +563,7 @@ function OrdersTab({ orders }: { orders: any[] }) {
                   <td className="px-4 py-3 font-mono text-xs">{o.customerPhone}</td>
                   <td className="px-4 py-3 font-semibold">GH₵{o.sellingPrice.toFixed(2)}</td>
                   <td className="px-4 py-3 text-emerald-600 font-semibold">+GH₵{o.profit.toFixed(2)}</td>
+                  <td className="px-4 py-3"><span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700">Paid</span></td>
                   <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${STATUS_COLORS[o.status] ?? "bg-gray-100"}`}>{o.status}</span></td>
                   <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(o.createdAt).toLocaleString("en-GH", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true })}</td>
                 </tr>
@@ -529,17 +576,24 @@ function OrdersTab({ orders }: { orders: any[] }) {
   );
 }
 
+const MOMO_NETWORKS = [
+  { value: "MTN", label: "MTN MoMo" },
+  { value: "VDF", label: "Vodafone Cash" },
+  { value: "ATL", label: "AirtelTigo Money" },
+];
+
 // ─── Withdrawals Tab ──────────────────────────────────────────────────────────
 function WithdrawalsTab({ stats, withdrawals, store }: { stats?: StoreStats; withdrawals: any[]; store: Store }) {
   const qc = useQueryClient();
   const [amount, setAmount] = useState("");
   const [accountNumber, setAccountNumber] = useState("");
   const [method, setMethod] = useState("mobile_money");
+  const [bankCode, setBankCode] = useState("MTN");
   const [note, setNote] = useState("");
   const [error, setError] = useState("");
 
   const withdraw = useMutation({
-    mutationFn: () => storeApi.withdraw({ amount: parseFloat(amount), method, accountNumber, note }),
+    mutationFn: () => storeApi.withdraw({ amount: parseFloat(amount), method, bankCode, accountNumber, note }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["myStoreStats"] });
       qc.invalidateQueries({ queryKey: ["myStoreWithdrawals"] });
@@ -567,30 +621,52 @@ function WithdrawalsTab({ stats, withdrawals, store }: { stats?: StoreStats; wit
 
         <div>
           <Label className="text-sm font-semibold mb-1.5 block">Amount (GH₵)</Label>
-          <Input type="number" min="0.01" max={profitBalance} step="0.01" placeholder="0.00"
+          <Input type="number" min="1" max={profitBalance} step="0.01" placeholder="0.00"
             value={amount} onChange={e => setAmount(e.target.value)} className="h-10 font-mono" />
+          <p className="text-xs text-muted-foreground mt-1">Minimum: GH₵1.00</p>
         </div>
         <div>
           <Label className="text-sm font-semibold mb-1.5 block">Payment Method</Label>
-          <select value={method} onChange={e => setMethod(e.target.value)} className="w-full h-10 rounded-lg border border-border bg-background px-3 text-sm">
+          <select value={method} onChange={e => { setMethod(e.target.value); setBankCode(e.target.value === "mobile_money" ? "MTN" : ""); }}
+            className="w-full h-10 rounded-lg border border-border bg-background px-3 text-sm">
             <option value="mobile_money">Mobile Money</option>
             <option value="bank">Bank Transfer</option>
           </select>
         </div>
+        {method === "mobile_money" && (
+          <div>
+            <Label className="text-sm font-semibold mb-1.5 block">Mobile Network</Label>
+            <div className="flex gap-2">
+              {MOMO_NETWORKS.map(n => (
+                <button key={n.value} onClick={() => setBankCode(n.value)}
+                  className={`flex-1 py-2 rounded-lg text-xs font-semibold border transition-all ${bankCode === n.value ? "bg-primary text-primary-foreground border-primary" : "border-border text-muted-foreground hover:border-primary/40"}`}>
+                  {n.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {method === "bank" && (
+          <div>
+            <Label className="text-sm font-semibold mb-1.5 block">Bank Code <span className="font-normal text-muted-foreground text-xs">(Paystack bank code)</span></Label>
+            <Input placeholder="e.g. GCB, ADB, EBG…" value={bankCode} onChange={e => setBankCode(e.target.value)} className="h-10 font-mono" />
+          </div>
+        )}
         <div>
-          <Label className="text-sm font-semibold mb-1.5 block">Account Number / Phone</Label>
-          <Input placeholder="0244xxxxxx" value={accountNumber} onChange={e => setAccountNumber(e.target.value)} className="h-10" />
+          <Label className="text-sm font-semibold mb-1.5 block">Account Number {method === "mobile_money" ? "/ Phone" : ""}</Label>
+          <Input placeholder={method === "mobile_money" ? "0244xxxxxx" : "Account number"} value={accountNumber} onChange={e => setAccountNumber(e.target.value)} className="h-10" />
         </div>
         <div>
           <Label className="text-sm font-semibold mb-1.5 block">Note <span className="font-normal text-muted-foreground">(optional)</span></Label>
-          <Input placeholder="e.g. MTN MoMo" value={note} onChange={e => setNote(e.target.value)} className="h-10" />
+          <Input placeholder="e.g. Weekly profits" value={note} onChange={e => setNote(e.target.value)} className="h-10" />
         </div>
         {error && <p className="text-sm text-red-600">{error}</p>}
         <Button className="w-full gap-2" onClick={() => withdraw.mutate()}
-          disabled={!amount || !accountNumber || parseFloat(amount) <= 0 || parseFloat(amount) > profitBalance || withdraw.isPending}>
+          disabled={!amount || !accountNumber || !bankCode || parseFloat(amount) < 1 || parseFloat(amount) > profitBalance || withdraw.isPending}>
           {withdraw.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowDownToLine className="w-4 h-4" />}
-          Request Withdrawal
+          Withdraw via Paystack
         </Button>
+        <p className="text-xs text-muted-foreground text-center">Funds are transferred via Paystack to your mobile money or bank account.</p>
       </div>
 
       {/* History */}

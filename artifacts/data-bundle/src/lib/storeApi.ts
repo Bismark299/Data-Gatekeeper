@@ -57,7 +57,7 @@ export const storeApi = {
   getOrders: () => request<StoreOrder[]>("GET", "/stores/my/orders"),
   getStats: () => request<StoreStats>("GET", "/stores/my/stats"),
   getWithdrawals: () => request<StoreWithdrawal[]>("GET", "/stores/my/withdrawals"),
-  withdraw: (data: { amount: number; method?: string; accountNumber: string; note?: string }) =>
+  withdraw: (data: { amount: number; method?: string; bankCode?: string; accountNumber: string; note?: string }) =>
     request<StoreWithdrawal>("POST", "/stores/my/withdraw", data),
   // Public
   getPublicStore: (slug: string) => request<PublicStore>("GET", `/s/${slug}`),
@@ -66,5 +66,5 @@ export const storeApi = {
   verifyPayment: (slug: string, ref: string) =>
     request<StoreOrder>("POST", `/s/${slug}/verify`, { ref }),
   trackOrders: (slug: string, phone: string) =>
-    request<Array<{ id: number; bundleData: string; bundleNetwork: string; sellingPrice: number; status: string; paystackReference: string; createdAt: string }>>("GET", `/s/${slug}/orders?phone=${encodeURIComponent(phone)}`),
+    request<Array<{ id: number; bundleData: string; bundleNetwork: string; customerPhone: string; sellingPrice: number; status: string; paystackReference: string; createdAt: string }>>("GET", `/s/${slug}/orders?phone=${encodeURIComponent(phone)}`),
 };

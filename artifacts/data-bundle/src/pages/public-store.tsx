@@ -473,7 +473,12 @@ export default function PublicStorePage() {
                           </div>
                           <div className="flex-1 min-w-0">
                             <div className="text-sm font-semibold text-foreground">{o.bundleData} — {NETWORK_LABELS[o.bundleNetwork] ?? o.bundleNetwork}</div>
-                            <div className="text-xs text-muted-foreground">{new Date(o.createdAt).toLocaleString("en-GH", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true })}</div>
+                            <div className="text-xs text-muted-foreground flex items-center gap-1.5">
+                              <Phone className="w-3 h-3" />
+                              <span className="font-mono">{o.customerPhone}</span>
+                              <span className="text-muted-foreground/50">·</span>
+                              <span>{new Date(o.createdAt).toLocaleString("en-GH", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true })}</span>
+                            </div>
                           </div>
                           <div className="text-right shrink-0 space-y-1">
                             <div className="text-sm font-bold text-foreground">GH₵{o.sellingPrice.toFixed(2)}</div>

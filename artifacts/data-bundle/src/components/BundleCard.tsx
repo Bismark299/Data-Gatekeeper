@@ -78,36 +78,36 @@ export function BundleCard({
 
   return (
     <div
-      className={`group relative rounded-2xl overflow-hidden cursor-pointer transition-all duration-300
-        hover:-translate-y-1.5 hover:scale-[1.01] border border-white/10
-        ${style.glow} hover:shadow-[0_16px_60px_rgba(0,0,0,0.4)]
+      className={`group relative rounded-xl overflow-hidden cursor-pointer transition-all duration-300
+        hover:-translate-y-1 hover:scale-[1.01] border border-white/10
+        ${style.glow} hover:shadow-[0_12px_40px_rgba(0,0,0,0.35)]
         ${className}`}
       onClick={onClick}
       data-testid={testId}
     >
       {/* Gradient background */}
-      <div className={`relative ${style.gradient} pt-5 pb-5 px-4`}>
+      <div className={`relative ${style.gradient} pt-3 pb-3 px-3`}>
         {/* Top shimmer */}
         <div className={`absolute inset-0 bg-gradient-to-b ${style.shimmer} pointer-events-none`} />
 
         {/* Network badge */}
-        <div className={`relative inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-extrabold tracking-widest border backdrop-blur-sm mb-5 ${style.badge}`}>
+        <div className={`relative inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-extrabold tracking-widest border backdrop-blur-sm mb-2 ${style.badge}`}>
           {label}
         </div>
 
         {/* Buy Now hover pill */}
         {showBuyHover && (
-          <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-all duration-200 translate-y-1 group-hover:translate-y-0">
-            <span className={`flex items-center gap-1 bg-black/30 backdrop-blur-md ${style.text} text-[10px] font-bold px-2.5 py-1 rounded-full border border-white/20`}>
+          <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-all duration-200 translate-y-1 group-hover:translate-y-0">
+            <span className={`flex items-center gap-1 bg-black/30 backdrop-blur-md ${style.text} text-[10px] font-bold px-2 py-0.5 rounded-full border border-white/20`}>
               <Zap className="w-2.5 h-2.5" /> Buy
             </span>
           </div>
         )}
 
         {/* Glass data amount panel */}
-        <div className="relative flex items-center justify-center py-1">
-          <div className="absolute inset-0 rounded-2xl bg-black/10 backdrop-blur-sm border border-white/15" />
-          <span className={`relative text-5xl font-black tracking-tight leading-none py-5 px-6 ${style.text}`} style={{ textShadow: "0 2px 8px rgba(0,0,0,0.15)" }}>
+        <div className="relative flex items-center justify-center py-0.5">
+          <div className="absolute inset-0 rounded-xl bg-black/10 backdrop-blur-sm border border-white/15" />
+          <span className={`relative text-3xl font-black tracking-tight leading-none py-3 px-4 ${style.text}`} style={{ textShadow: "0 2px 8px rgba(0,0,0,0.15)" }}>
             {dataAmount}
           </span>
         </div>
@@ -122,17 +122,17 @@ export function BundleCard({
 
       {/* Info bar */}
       <div className={`${style.ctaBg} backdrop-blur-sm grid grid-cols-3 divide-x divide-white/10`}>
-        <div className="py-3 px-2 text-center">
-          <div className={`text-sm font-bold ${insufficient ? "text-red-400" : style.ctaText}`}>GH₵{price.toFixed(2)}</div>
-          <div className="text-[10px] text-gray-500 mt-0.5 uppercase tracking-wide">Price</div>
+        <div className="py-2 px-2 text-center">
+          <div className={`text-xs font-bold ${insufficient ? "text-red-400" : style.ctaText}`}>GH₵{price.toFixed(2)}</div>
+          <div className="text-[9px] text-gray-500 mt-0.5 uppercase tracking-wide">Price</div>
         </div>
-        <div className="py-3 px-2 text-center">
-          <div className={`text-sm font-bold ${style.ctaText}`}>N/A</div>
-          <div className="text-[10px] text-gray-500 mt-0.5 uppercase tracking-wide">Rollover</div>
+        <div className="py-2 px-2 text-center">
+          <div className={`text-xs font-bold ${style.ctaText}`}>N/A</div>
+          <div className="text-[9px] text-gray-500 mt-0.5 uppercase tracking-wide">Rollover</div>
         </div>
-        <div className="py-3 px-2 text-center">
-          <div className={`text-sm font-bold ${style.ctaText}`}>{formatDuration(validityDays)}</div>
-          <div className="text-[10px] text-gray-500 mt-0.5 uppercase tracking-wide">Duration</div>
+        <div className="py-2 px-2 text-center">
+          <div className={`text-xs font-bold ${style.ctaText}`}>{formatDuration(validityDays)}</div>
+          <div className="text-[9px] text-gray-500 mt-0.5 uppercase tracking-wide">Duration</div>
         </div>
       </div>
 
