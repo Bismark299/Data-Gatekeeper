@@ -18,6 +18,7 @@ import {
   AdminUpdateOrderStatusBody,
 } from "@workspace/api-zod";
 import { requireAdmin } from "../middlewares/auth";
+import { z } from "zod";
 
 const router: IRouter = Router();
 
@@ -70,9 +71,7 @@ router.get("/admin/users", requireAdmin, async (req, res): Promise<void> => {
   }
 
   const { search, role } = params.data;
-  const { page, pageSize, offset } = parsePage(req.query as Record<string, unknown>);
-
-  const conditions: SQL[] = [isNull(usersTable.deletedAt)]; // exclude soft-deleted
+  const conditions: SQL[] = [isNull(usersTable.deletedAt)];
 
   if (search) conditions.push(ilike(usersTable.name, `%${search}%`));
   if (role)   conditions.push(eq(usersTable.role, role));
@@ -83,47 +82,23 @@ router.get("/admin/users", requireAdmin, async (req, res): Promise<void> => {
     .leftJoin(walletsTable, eq(walletsTable.userId, usersTable.id))
     .where(and(...conditions))
     .orderBy(desc(usersTable.createdAt))
-    .limit(pageSize)
-    .offset(offset);
+    .limit(500);
 
-  const [{ total }] = await db
-    .select({ total: count() })
-    .from(usersTable)
-    .where(and(...conditions));
-
-  res.json({
-    total,
-    page,
-    pageSize,
-    data: rows.map(r => ({ ...formatUser(r.user), walletBalance: Number(r.balance ?? 0) })),
-  });
+  res.json(rows.map(r => ({ ...formatUser(r.user), walletBalance: Number(r.balance ?? 0) })));
 });
 
 router.get("/admin/users/deleted", requireAdmin, async (req, res): Promise<void> => {
-  const { page, pageSize, offset } = parsePage(req.query as Record<string, unknown>);
-
   const rows = await db
     .select({ user: usersTable })
     .from(usersTable)
     .where(isNotNull(usersTable.deletedAt))
     .orderBy(desc(usersTable.updatedAt))
-    .limit(pageSize)
-    .offset(offset);
+    .limit(500);
 
-  const [{ total }] = await db
-    .select({ total: count() })
-    .from(usersTable)
-    .where(isNotNull(usersTable.deletedAt));
-
-  res.json({
-    total,
-    page,
-    pageSize,
-    data: rows.map(r => ({
-      ...formatUser(r.user),
-      deletedAt: r.user.deletedAt?.toISOString() ?? null,
-    })),
-  });
+  res.json(rows.map(r => ({
+    ...formatUser(r.user),
+    deletedAt: r.user.deletedAt?.toISOString() ?? null,
+  })));
 });
 
 router.patch("/admin/users/:id", requireAdmin, async (req, res): Promise<void> => {
@@ -204,6 +179,41 @@ router.post("/admin/users/:id/restore", requireAdmin, async (req, res): Promise<
   res.json(formatUser(restored));
 });
 
+// Create a new user account (admin, dealer, or regular user)
+router.post("/admin/users", requireAdmin, async (req, res): Promise<void> => {
+  const schema = z.object({
+    name:     z.string().min(2).max(80),
+    email:    z.string().email(),
+    phone:    z.string().min(7).max(20).optional(),
+    password: z.string().min(6),
+    role:     z.enum(["user", "dealer", "admin"]).default("user"),
+  });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid data", details: parsed.error.issues });
+    return;
+  }
+
+  const { name, email, phone, password, role } = parsed.data;
+
+  const [existing] = await db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.email, email));
+  if (existing) { res.status(409).json({ error: "Email already in use" }); return; }
+
+  const { default: bcrypt } = await import("bcryptjs");
+  const passwordHash = await bcrypt.hash(password, 12);
+
+  const depositCode = "DC" + Math.floor(100000 + Math.random() * 900000).toString();
+
+  const [user] = await db.insert(usersTable).values({
+    name, email, phone: phone ?? null, passwordHash, role,
+    depositCode, isActive: true,
+  }).returning();
+
+  await db.insert(walletsTable).values({ userId: user.id, balance: "0" });
+
+  res.status(201).json(formatUser(user));
+});
+
 // ── Orders ────────────────────────────────────────────────────────────────────
 
 router.get("/admin/orders", requireAdmin, async (req, res): Promise<void> => {
@@ -214,10 +224,8 @@ router.get("/admin/orders", requireAdmin, async (req, res): Promise<void> => {
   }
 
   const { status, userId } = params.data;
-  const { page, pageSize, offset } = parsePage(req.query as Record<string, unknown>);
-
   const conditions: SQL[] = [];
-  if (status)            conditions.push(eq(ordersTable.status, status));
+  if (status)               conditions.push(eq(ordersTable.status, status));
   if (userId !== undefined) conditions.push(eq(ordersTable.userId, userId));
 
   const baseQuery = db
@@ -226,20 +234,10 @@ router.get("/admin/orders", requireAdmin, async (req, res): Promise<void> => {
     .leftJoin(bundlesTable, eq(bundlesTable.id, ordersTable.bundleId));
 
   const rows = conditions.length > 0
-    ? await baseQuery.where(and(...conditions)).orderBy(desc(ordersTable.createdAt)).limit(pageSize).offset(offset)
-    : await baseQuery.orderBy(desc(ordersTable.createdAt)).limit(pageSize).offset(offset);
+    ? await baseQuery.where(and(...conditions)).orderBy(desc(ordersTable.createdAt)).limit(500)
+    : await baseQuery.orderBy(desc(ordersTable.createdAt)).limit(500);
 
-  const countQuery = db.select({ total: count() }).from(ordersTable);
-  const [{ total }] = conditions.length > 0
-    ? await countQuery.where(and(...conditions))
-    : await countQuery;
-
-  res.json({
-    total,
-    page,
-    pageSize,
-    data: rows.map(r => formatOrder(r.order, r.network)),
-  });
+  res.json(rows.map(r => formatOrder(r.order, r.network)));
 });
 
 router.patch("/admin/orders/:id/status", requireAdmin, async (req, res): Promise<void> => {
@@ -368,8 +366,6 @@ router.post("/admin/users/:id/reset-password", requireAdmin, async (req, res): P
 // ── Wallets ───────────────────────────────────────────────────────────────────
 
 router.get("/admin/wallets", requireAdmin, async (req, res): Promise<void> => {
-  const { page, pageSize, offset } = parsePage(req.query as Record<string, unknown>);
-
   const rows = await db
     .select({
       id: walletsTable.id,
@@ -385,10 +381,7 @@ router.get("/admin/wallets", requireAdmin, async (req, res): Promise<void> => {
     .from(walletsTable)
     .leftJoin(usersTable, eq(walletsTable.userId, usersTable.id))
     .orderBy(desc(walletsTable.balance))
-    .limit(pageSize)
-    .offset(offset);
-
-  const [{ total }] = await db.select({ total: count() }).from(walletsTable);
+    .limit(500);
 
   const depositTotals = await db
     .select({ userId: depositsTable.userId, total: sum(depositsTable.amount) })
@@ -404,24 +397,19 @@ router.get("/admin/wallets", requireAdmin, async (req, res): Promise<void> => {
   const depMap = new Map(depositTotals.map(d => [d.userId, Number(d.total ?? 0)]));
   const ordMap = new Map(orderTotals.map(o => [o.userId, Number(o.total ?? 0)]));
 
-  res.json({
-    total,
-    page,
-    pageSize,
-    data: rows.map(w => ({
-      id: w.id,
-      userId: w.userId,
-      balance: Number(w.balance),
-      updatedAt: w.updatedAt?.toISOString() ?? null,
-      userName: w.userName ?? "Unknown",
-      userEmail: w.userEmail ?? "Unknown",
-      userPhone: w.userPhone ?? null,
-      userRole: w.userRole ?? "user",
-      userDepositCode: w.userDepositCode ?? null,
-      totalLoaded: depMap.get(w.userId!) ?? 0,
-      totalOrders: ordMap.get(w.userId!) ?? 0,
-    })),
-  });
+  res.json(rows.map(w => ({
+    id: w.id,
+    userId: w.userId,
+    balance: Number(w.balance),
+    updatedAt: w.updatedAt?.toISOString() ?? null,
+    userName: w.userName ?? "Unknown",
+    userEmail: w.userEmail ?? "Unknown",
+    userPhone: w.userPhone ?? null,
+    userRole: w.userRole ?? "user",
+    userDepositCode: w.userDepositCode ?? null,
+    totalLoaded: depMap.get(w.userId!) ?? 0,
+    totalOrders: ordMap.get(w.userId!) ?? 0,
+  })));
 });
 
 router.post("/admin/wallets/:userId/topup", requireAdmin, async (req, res): Promise<void> => {
@@ -536,8 +524,6 @@ router.get("/admin/wallets/:userId/deposits", requireAdmin, async (req, res): Pr
 
 router.get("/admin/deposits", requireAdmin, async (req, res): Promise<void> => {
   const { status } = req.query as { status?: string };
-  const { page, pageSize, offset } = parsePage(req.query as Record<string, unknown>);
-
   const conditions: SQL[] = [];
   if (status) conditions.push(eq(depositsTable.status, status));
 
@@ -558,18 +544,10 @@ router.get("/admin/deposits", requireAdmin, async (req, res): Promise<void> => {
     .innerJoin(usersTable, eq(depositsTable.userId, usersTable.id));
 
   const rows = conditions.length > 0
-    ? await baseQuery.where(and(...conditions)).orderBy(desc(depositsTable.createdAt)).limit(pageSize).offset(offset)
-    : await baseQuery.orderBy(desc(depositsTable.createdAt)).limit(pageSize).offset(offset);
+    ? await baseQuery.where(and(...conditions)).orderBy(desc(depositsTable.createdAt)).limit(500)
+    : await baseQuery.orderBy(desc(depositsTable.createdAt)).limit(500);
 
-  const countQ = db.select({ total: count() }).from(depositsTable).innerJoin(usersTable, eq(depositsTable.userId, usersTable.id));
-  const [{ total }] = conditions.length > 0 ? await countQ.where(and(...conditions)) : await countQ;
-
-  res.json({
-    total,
-    page,
-    pageSize,
-    data: rows.map(d => ({ ...d, amount: parseFloat(d.amount) })),
-  });
+  res.json(rows.map(d => ({ ...d, amount: parseFloat(d.amount) })));
 });
 
 router.post("/admin/deposits/:id/approve", requireAdmin, async (req, res): Promise<void> => {

@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/select";
 import {
   Menu, Search, Users, Trash2, ShieldCheck, User, CheckCircle2, XCircle,
-  RefreshCw, Download, ChevronLeft, ChevronRight, X, Filter, KeyRound, Wallet,
+  RefreshCw, Download, ChevronLeft, ChevronRight, X, Filter, KeyRound, Wallet, UserPlus,
 } from "lucide-react";
 
 const PAGE_SIZES = [10, 25, 50];
@@ -41,6 +41,13 @@ function AdminUsersContent() {
   const [resetResult, setResetResult]  = useState<{ name: string; tempPassword: string } | null>(null);
   const [page, setPage]                = useState(1);
   const [pageSize, setPageSize]        = useState(25);
+  const [createOpen, setCreateOpen]    = useState(false);
+  const [newName, setNewName]          = useState("");
+  const [newEmail, setNewEmail]        = useState("");
+  const [newPhone, setNewPhone]        = useState("");
+  const [newPassword, setNewPassword]  = useState("");
+  const [newRole, setNewRole]          = useState<"user" | "dealer" | "admin">("user");
+  const [createError, setCreateError]  = useState("");
 
   const { toast }   = useToast();
   const queryClient = useQueryClient();
@@ -50,6 +57,29 @@ function AdminUsersContent() {
   const deleteUser = useAdminDeleteUser();
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: getAdminListUsersQueryKey({}) });
+
+  const createUser = async () => {
+    setCreateError("");
+    if (!newName.trim() || !newEmail.trim() || !newPassword.trim()) {
+      setCreateError("Name, email and password are required");
+      return;
+    }
+    try {
+      const res = await fetch("/api/admin/users", {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newName.trim(), email: newEmail.trim(), phone: newPhone.trim() || undefined, password: newPassword, role: newRole }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "Failed to create user");
+      toast({ title: `${newRole === "admin" ? "Admin" : newRole === "dealer" ? "Dealer" : "User"} account created for ${newName}` });
+      setCreateOpen(false);
+      setNewName(""); setNewEmail(""); setNewPhone(""); setNewPassword(""); setNewRole("user");
+      invalidate();
+    } catch (e: unknown) {
+      setCreateError((e as Error).message);
+    }
+  };
 
   const toggleActive = (u: { id: number; isActive: boolean; name: string }) => {
     updateUser.mutate({ id: u.id, data: { isActive: !u.isActive } }, {
@@ -142,6 +172,9 @@ function AdminUsersContent() {
             </Button>
             <Button variant="outline" size="sm" onClick={handleExport} disabled={!filtered.length} className="gap-1.5">
               <Download className="w-3.5 h-3.5" /> Export
+            </Button>
+            <Button size="sm" onClick={() => setCreateOpen(true)} className="gap-1.5">
+              <UserPlus className="w-3.5 h-3.5" /> Create User
             </Button>
           </div>
         </header>
@@ -367,6 +400,52 @@ function AdminUsersContent() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Create User Dialog */}
+      <Dialog open={createOpen} onOpenChange={v => { setCreateOpen(v); if (!v) { setCreateError(""); setNewName(""); setNewEmail(""); setNewPhone(""); setNewPassword(""); setNewRole("user"); } }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Create User Account</DialogTitle>
+            <DialogDescription>Create a new admin, dealer, or regular user account.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-foreground">Full Name *</label>
+              <Input value={newName} onChange={e => setNewName(e.target.value)} placeholder="Kwame Mensah" className="h-9" />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-foreground">Email Address *</label>
+              <Input type="email" value={newEmail} onChange={e => setNewEmail(e.target.value)} placeholder="kwame@example.com" className="h-9" />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-foreground">Phone Number</label>
+              <Input value={newPhone} onChange={e => setNewPhone(e.target.value)} placeholder="0244000000" className="h-9" />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-foreground">Password *</label>
+              <Input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="Min. 6 characters" className="h-9" />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-foreground">Role *</label>
+              <Select value={newRole} onValueChange={v => setNewRole(v as "user" | "dealer" | "admin")}>
+                <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="user">Agent (regular user)</SelectItem>
+                  <SelectItem value="dealer">Dealer</SelectItem>
+                  <SelectItem value="admin">Admin</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {createError && <p className="text-xs text-destructive">{createError}</p>}
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
+            <Button onClick={createUser} className="gap-1.5">
+              <UserPlus className="w-3.5 h-3.5" /> Create Account
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Password Reset Result Dialog */}
       <Dialog open={!!resetResult} onOpenChange={v => !v && setResetResult(null)}>

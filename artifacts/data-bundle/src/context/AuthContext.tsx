@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, type ReactNode } from "react";
+import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from "react";
 import { useGetMe, useLogout } from "@workspace/api-client-react";
 import { useLocation } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
@@ -38,6 +38,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       staleTime: 5 * 60 * 1000,
     },
   });
+
+  // When any authenticated API call (except /auth/me itself) returns 401 it
+  // means the session has expired. Clear the cache and send the user to login.
+  const setLocationRef = useRef(setLocation);
+  setLocationRef.current = setLocation;
+  const queryClientRef = useRef(queryClient);
+  queryClientRef.current = queryClient;
+
+  useEffect(() => {
+    const handler = () => {
+      queryClientRef.current.clear();
+      setLocationRef.current("/login");
+    };
+    window.addEventListener("auth:unauthorized", handler);
+    return () => window.removeEventListener("auth:unauthorized", handler);
+  }, []);
 
   const signOut = useCallback(() => {
     logoutMutation.mutate(undefined, {

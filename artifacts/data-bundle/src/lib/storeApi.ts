@@ -8,7 +8,10 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     body: body ? JSON.stringify(body) : undefined,
   });
   const json = await res.json();
-  if (!res.ok) throw Object.assign(new Error(json?.error ?? "Request failed"), { status: res.status, data: json });
+  if (!res.ok) {
+    if (res.status === 401) window.dispatchEvent(new Event("auth:unauthorized"));
+    throw Object.assign(new Error(json?.error ?? "Request failed"), { status: res.status, data: json });
+  }
   return json as T;
 }
 
