@@ -1,0 +1,133 @@
+That’s a serious logic leak — it means your pricing layer is either not being applied at all, or it’s being bypassed somewhere in your data flow. Let’s break this down like an audit.
+
+🔍 Likely Root Causes
+1. Backend is returning raw (cost) price
+
+If your API response includes something like:
+
+{
+  "product": "1GB",
+  "cost_price": 5,
+  "selling_price": 7
+}
+
+…and your frontend is picking cost_price instead of the role-adjusted price, users will see the wrong value.
+
+👉 Fix: Backend should never expose cost_price to frontend users.
+
+2. Role-based pricing logic not applied server-side
+
+If your pricing logic is only in frontend (JavaScript), it can fail or be bypassed.
+
+Example of wrong approach:
+
+if (user.role === "agent") {
+  price = product.agent_price;
+}
+
+👉 This is insecure.
+
+Correct approach (backend enforced):
+
+function getPriceByRole(product, userRole) {
+  switch (userRole) {
+    case "admin":
+      return product.cost_price;
+    case "agent":
+      return product.agent_price;
+    case "customer":
+      return product.customer_price;
+    default:
+      return product.default_price;
+  }
+}
+
+Then return ONLY:
+
+{
+  "product": "1GB",
+  "price": 7
+}
+3. Wrong field mapping in frontend
+
+Sometimes the backend is correct, but frontend is using the wrong key:
+
+// WRONG
+product.cost_price
+
+// CORRECT
+product.price
+4. Caching issue (very common)
+
+If you:
+
+Updated pricing logic
+But users still see old values
+
+Then:
+
+API response might be cached (CDN, browser, or server)
+
+👉 Fix:
+
+Add cache headers:
+Cache-Control: no-store
+Or version your API:
+/api/v2/products
+5. Database schema issue
+
+You might have:
+
+cost_price
+reseller_price
+agent_price
+
+But your query is returning the wrong column.
+
+Example problem:
+
+SELECT * FROM products;
+
+👉 Instead:
+
+SELECT 
+  name,
+  CASE 
+    WHEN role = 'agent' THEN agent_price
+    WHEN role = 'reseller' THEN reseller_price
+    ELSE customer_price
+  END AS price
+FROM products;
+6. User role not properly attached
+
+If your system cannot correctly detect the user's role:
+
+JWT missing role
+Session not loaded
+Default role fallback = admin or cost price
+
+👉 Check:
+
+console.log(req.user);
+🔒 Critical Security Note
+
+Showing cost price is dangerous because:
+
+Agents/customers now know your profit margin
+They can undercut you
+You lose pricing control
+
+This is not just a bug — it’s a business risk leak
+
+✅ What You Should Do Immediately
+Remove cost_price from all API responses
+Move ALL pricing logic to backend
+Return only one field: price
+Validate user role from authenticated session/token
+Log pricing decisions for debugging
+🧠 Debug Checklist (Run This Now)
+ Inspect API response in browser (Network tab)
+ Confirm if cost_price is being sent
+ Log user role on backend
+ Log computed price before sending response
+ Check frontend field mapping

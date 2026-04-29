@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { eq, and, gte, lte, type SQL } from "drizzle-orm";
-import { db, bundlesTable } from "@workspace/db";
+import { db, bundlesTable, usersTable } from "@workspace/db";
 import {
   ListBundlesQueryParams,
   CreateBundleBody,
@@ -13,16 +13,41 @@ import { requireAdmin } from "../middlewares/auth";
 
 const router: IRouter = Router();
 
-function formatBundle(b: typeof bundlesTable.$inferSelect) {
+// Resolve a bundle for admin: expose all pricing columns for management UI
+function formatBundleAdmin(b: typeof bundlesTable.$inferSelect) {
   return {
     id: b.id,
     name: b.name,
     description: b.description,
     dataAmount: b.dataAmount,
     validityDays: b.validityDays,
-    price: Number(b.price),
+    price: Number(b.price),                                               // buying cost (admin-only label)
     dealerPrice: b.dealerPrice != null ? Number(b.dealerPrice) : null,
-    agentPrice: b.agentPrice != null ? Number(b.agentPrice) : null,
+    agentPrice:  b.agentPrice  != null ? Number(b.agentPrice)  : null,
+    category: b.category,
+    network: b.network,
+    isActive: b.isActive,
+    createdAt: b.createdAt.toISOString(),
+  };
+}
+
+// Resolve a bundle for a regular user: return ONE price already resolved by role.
+// Never expose buying cost, agentPrice, or dealerPrice to non-admins.
+function formatBundleForRole(b: typeof bundlesTable.$inferSelect, role: string) {
+  const resolvedPrice =
+    role === "dealer" && b.dealerPrice != null ? Number(b.dealerPrice) :
+    role === "agent"  && b.agentPrice  != null ? Number(b.agentPrice)  :
+    Number(b.price);
+
+  return {
+    id: b.id,
+    name: b.name,
+    description: b.description,
+    dataAmount: b.dataAmount,
+    validityDays: b.validityDays,
+    price: resolvedPrice,   // role-resolved — the only price field sent
+    dealerPrice: null,      // hidden from non-admins
+    agentPrice:  null,      // hidden from non-admins
     category: b.category,
     network: b.network,
     isActive: b.isActive,
@@ -41,25 +66,29 @@ router.get("/bundles", async (req, res): Promise<void> => {
 
   const conditions: SQL[] = [eq(bundlesTable.isActive, true)];
 
-  if (category) {
-    conditions.push(eq(bundlesTable.category, category));
-  }
-  if (network) {
-    conditions.push(eq(bundlesTable.network, network));
-  }
-  if (minPrice !== undefined) {
-    conditions.push(gte(bundlesTable.price, String(minPrice)));
-  }
-  if (maxPrice !== undefined) {
-    conditions.push(lte(bundlesTable.price, String(maxPrice)));
-  }
+  if (category) conditions.push(eq(bundlesTable.category, category));
+  if (network)  conditions.push(eq(bundlesTable.network, network));
+  if (minPrice !== undefined) conditions.push(gte(bundlesTable.price, String(minPrice)));
+  if (maxPrice !== undefined) conditions.push(lte(bundlesTable.price, String(maxPrice)));
 
   const bundles = await db
     .select()
     .from(bundlesTable)
     .where(and(...conditions));
 
-  res.json(bundles.map(formatBundle));
+  // Determine caller's role from DB (not stale session)
+  const userId = req.session.userId;
+  let userRole = "guest";
+  if (userId) {
+    const [u] = await db.select({ role: usersTable.role }).from(usersTable).where(eq(usersTable.id, userId));
+    userRole = u?.role ?? "user";
+  }
+
+  if (userRole === "admin") {
+    res.json(bundles.map(formatBundleAdmin));
+  } else {
+    res.json(bundles.map(b => formatBundleForRole(b, userRole)));
+  }
 });
 
 router.post("/bundles", requireAdmin, async (req, res): Promise<void> => {
