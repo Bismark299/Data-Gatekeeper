@@ -1,0 +1,155 @@
+🧠 CORE AUDIT PROMPT
+
+Act as a senior cybersecurity analyst, fintech backend engineer, and fraud detection specialist.
+Perform a deep audit of my data bundle platform, focusing on financial integrity, system security, and abuse prevention.
+
+The system includes:
+
+Wallet system (user balances, deposits, deductions)
+Order system (data bundle purchases via API providers like MCBIS)
+Admin panel (manual credit/debit, user management)
+Payment integration (Paystack / Mobile Money)
+Auto-sync order status system
+
+Identify ALL possible vulnerabilities, bugs, or design flaws that could lead to:
+
+Loss of money
+Unauthorized balance changes
+Fake or duplicated transactions
+API abuse or manipulation
+Order status inconsistencies
+Exploitation by users or attackers
+
+For each issue found:
+
+Explain the vulnerability clearly
+Show how it could be exploited (real scenario)
+Estimate risk level (Low / Medium / High / Critical)
+Provide exact technical fix or mitigation
+
+Focus especially on:
+
+Wallet balance integrity (race conditions, double spending)
+Payment verification (webhooks, spoofing, replay attacks)
+Order lifecycle (pending → processing → completed sync issues)
+API security (rate limiting, authentication, validation)
+Admin abuse risks
+Database consistency
+Logging and monitoring gaps
+
+Also recommend:
+
+Best practices for financial systems
+Logging strategy for dispute resolution
+Fraud detection mechanisms
+Backup and recovery strategy
+
+Assume attackers are highly motivated and technically skilled.
+
+⚠️ WHAT THIS PROMPT WILL HELP YOU CATCH
+
+Let me break it down in practical terms so you understand what you're protecting against:
+
+1. 💸 Wallet Exploits (BIGGEST RISK)
+Double spending (user clicks buy multiple times before balance updates)
+Negative balances due to async issues
+Manual API calls to bypass frontend validation
+
+👉 Fix focus:
+
+Use atomic database transactions
+Always validate balance on backend (never trust frontend)
+2. 🔁 Payment Fraud (Paystack / MoMo)
+Fake webhook calls
+Replay attacks (same payment used twice)
+Marking failed payments as successful
+
+👉 Fix focus:
+
+Verify with Paystack API (not just webhook)
+Store and enforce unique transaction reference
+Validate signature headers
+3. 🔄 Order Sync Issues (YOU ALREADY HAVE THIS)
+
+You mentioned:
+
+orders stuck at processing when auto-sync is off
+
+This is a state consistency flaw.
+
+👉 Risk:
+
+Users claim “I didn’t get data” → you lose money
+Or system retries and duplicates order
+
+👉 Fix focus:
+
+Add forced resync endpoint
+Periodic cron job to recheck ALL “processing” orders
+Never rely only on real-time sync
+4. 🤖 API Abuse / Automation Attacks
+Bots spamming orders
+Brute force wallet endpoints
+Flooding your provider API
+
+👉 Fix focus:
+
+Rate limiting (per IP + per user)
+Require authentication tokens
+Add request validation layer
+5. 🧑‍💼 Admin Abuse / Mistakes
+Manual wallet credit/debit without logs
+No audit trail
+
+👉 Fix:
+
+Every admin action must be logged:
+who
+what
+when
+before/after balance
+6. 🗄️ Database Integrity Issues
+Wallet shows 0 randomly (you mentioned this already ⚠️)
+Likely causes:
+overwrite bug
+missing transaction logs
+bad query logic
+
+👉 Fix:
+
+Never store balance as truth alone
+
+Use ledger system (transactions table):
+
+balance = sum(credits - debits)
+7. 🔐 Authentication & Session Risks
+Token hijacking
+Weak passwords
+No session expiration
+
+👉 Fix:
+
+JWT expiry + refresh tokens
+Password hashing (bcrypt)
+Optional 2FA for admin
+8. 📉 Silent Money Leaks (VERY COMMON)
+API returns failed but you deducted wallet
+Timeout but order actually succeeded
+Duplicate retries
+
+👉 Fix:
+
+Use idempotency keys for orders
+Only deduct after confirmed request
+Reconcile daily with provider
+🧰 EXTRA: WHAT YOU SHOULD IMPLEMENT IMMEDIATELY
+
+Based on your current system, I’d prioritize:
+
+Transaction Ledger (non-negotiable)
+Webhook Verification (Paystack)
+Order Reconciliation Cron Job
+Rate Limiting
+Admin Audit Logs
+Idempotency for Orders
+Daily Financial Report Script

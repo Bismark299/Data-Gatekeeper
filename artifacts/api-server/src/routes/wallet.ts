@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db, walletsTable, depositsTable, usersTable } from "@workspace/db";
-import { requireAuth } from "../middlewares/auth";
+import { requireAuth, requireAdmin } from "../middlewares/auth";
 import { eq, desc, and } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import type { NodePgTransaction } from "drizzle-orm/node-postgres";
@@ -67,7 +67,7 @@ router.get("/balance", requireAuth, async (req, res) => {
   res.json({ balance: parseFloat(wallet.balance), updatedAt: wallet.updatedAt });
 });
 
-router.post("/deposit", requireAuth, async (req, res) => {
+router.post("/deposit", requireAdmin, async (req, res) => {
   const parsed = DepositToWalletBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Invalid deposit data" });
@@ -348,8 +348,19 @@ router.post("/momo/claim", requireAuth, async (req, res) => {
   });
 });
 
+const SMS_WEBHOOK_SECRET = process.env.SMS_WEBHOOK_SECRET ?? "";
+
 router.post("/sms-webhook", async (req, res) => {
-  const body = req.body as { from?: string; text?: string; sender?: string; message?: string };
+  // Require a shared secret header if one is configured
+  if (SMS_WEBHOOK_SECRET) {
+    const provided = (req.headers["x-sms-secret"] ?? req.query["secret"]) as string | undefined;
+    if (!provided || provided !== SMS_WEBHOOK_SECRET) {
+      res.status(401).send("Unauthorized");
+      return;
+    }
+  }
+
+  const body = req.body as { from?: string; text?: string; sender?: string; message?: string; id?: string };
   const smsText = body.text ?? body.message ?? "";
 
   const amountMatch = smsText.match(/GH[SC]?\s*([\d,]+\.?\d*)/i);
@@ -374,7 +385,24 @@ router.post("/sms-webhook", async (req, res) => {
     return;
   }
 
-  const reference = `MOMO-SMS-${user.id}-${Date.now()}`;
+  // Use an external SMS message ID if provided for deduplication, otherwise
+  // build a reference keyed on deposit code + amount (rounded to minute)
+  // to catch duplicate deliveries of the same SMS within the same minute.
+  const minuteKey = Math.floor(Date.now() / 60000);
+  const reference = body.id
+    ? `MOMO-SMS-EXT-${body.id}`
+    : `MOMO-SMS-${user.id}-${depositCode}-${amount.toFixed(2)}-${minuteKey}`;
+
+  // Deduplication: skip if a deposit with this reference was already processed
+  const [existing] = await db
+    .select()
+    .from(depositsTable)
+    .where(eq(depositsTable.reference, reference));
+
+  if (existing) {
+    res.sendStatus(200);
+    return;
+  }
 
   // Atomic: insert deposit record + credit wallet in one transaction
   await db.transaction(async (tx) => {

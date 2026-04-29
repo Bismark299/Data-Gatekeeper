@@ -750,22 +750,40 @@ router.patch("/admin/store-orders/:id/complete", requireAuth, async (req, res) =
   if (req.session.userRole !== "admin") { res.status(403).json({ error: "Forbidden" }); return; }
   const id = parseInt(req.params.id);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
-  const [order] = await db.select().from(storeOrdersTable).where(eq(storeOrdersTable.id, id));
-  if (!order) { res.status(404).json({ error: "Order not found" }); return; }
-  if (order.status === "completed") { res.json(formatStoreOrder(order)); return; }
 
-  await db.update(storeOrdersTable).set({ status: "completed" }).where(eq(storeOrdersTable.id, id));
+  try {
+    const updated = await db.transaction(async (tx) => {
+      // Lock the order row to prevent concurrent completions double-crediting profit
+      const [locked] = await tx
+        .select()
+        .from(storeOrdersTable)
+        .where(eq(storeOrdersTable.id, id))
+        .for("update");
 
-  // Credit profit to store owner
-  const profit = parseFloat(order.profit);
-  const [store] = await db.select().from(storesTable).where(eq(storesTable.id, order.storeId));
-  if (store) {
-    const newProfit = (parseFloat(store.profitBalance) + profit).toFixed(2);
-    await db.update(storesTable).set({ profitBalance: newProfit }).where(eq(storesTable.id, store.id));
+      if (!locked) throw Object.assign(new Error("Order not found"), { status: 404 });
+      if (locked.status === "completed") return locked;
+
+      const [completed] = await tx
+        .update(storeOrdersTable)
+        .set({ status: "completed" })
+        .where(eq(storeOrdersTable.id, id))
+        .returning();
+
+      // Atomically credit profit to store owner
+      const profit = parseFloat(locked.profit);
+      await tx
+        .update(storesTable)
+        .set({ profitBalance: sql`profit_balance + ${profit.toFixed(2)}::numeric` })
+        .where(eq(storesTable.id, locked.storeId));
+
+      return completed;
+    });
+
+    res.json(formatStoreOrder(updated));
+  } catch (err: unknown) {
+    const e = err as { message?: string; status?: number };
+    res.status(e.status ?? 500).json({ error: e.message ?? "Completion failed" });
   }
-
-  const [updated] = await db.select().from(storeOrdersTable).where(eq(storeOrdersTable.id, id));
-  res.json(formatStoreOrder(updated));
 });
 
 router.patch("/admin/store-orders/:id/cancel", requireAuth, async (req, res) => {

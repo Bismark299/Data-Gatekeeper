@@ -194,32 +194,49 @@ router.post("/admin/orders/:id/refund", requireAdmin, async (req, res): Promise<
   const id = Number(req.params.id);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid order ID" }); return; }
 
-  const [order] = await db.select().from(ordersTable).where(eq(ordersTable.id, id));
-  if (!order) { res.status(404).json({ error: "Order not found" }); return; }
+  try {
+    const refunded = await db.transaction(async (tx) => {
+      // Lock the order row to prevent concurrent refunds
+      const [locked] = await tx
+        .select()
+        .from(ordersTable)
+        .where(eq(ordersTable.id, id))
+        .for("update");
 
-  if (order.status === "completed") {
-    res.status(400).json({ error: "Cannot refund a completed order" });
-    return;
+      if (!locked) throw Object.assign(new Error("Order not found"), { status: 404 });
+      if (locked.status === "completed") throw Object.assign(new Error("Cannot refund a completed order"), { status: 400 });
+      if (locked.status === "failed") throw Object.assign(new Error("Order is already failed/refunded"), { status: 400 });
+
+      await tx.update(ordersTable).set({ status: "failed" }).where(eq(ordersTable.id, id));
+
+      // Atomically credit the refund amount back to the user's wallet
+      await tx
+        .insert(walletsTable)
+        .values({ userId: locked.userId, balance: locked.price })
+        .onConflictDoUpdate({
+          target: walletsTable.userId,
+          set: { balance: sql`wallets.balance + ${locked.price}::numeric` },
+        });
+
+      return Number(locked.price);
+    });
+
+    res.json({ success: true, refunded });
+  } catch (err: unknown) {
+    const e = err as { message?: string; status?: number };
+    res.status(e.status ?? 500).json({ error: e.message ?? "Refund failed" });
   }
-
-  await db.update(ordersTable).set({ status: "failed" }).where(eq(ordersTable.id, id));
-
-  const [wallet] = await db.select().from(walletsTable).where(eq(walletsTable.userId, order.userId));
-  if (wallet) {
-    await db.update(walletsTable)
-      .set({ balance: String(Number(wallet.balance) + Number(order.price)) })
-      .where(eq(walletsTable.userId, order.userId));
-  } else {
-    await db.insert(walletsTable).values({ userId: order.userId, balance: String(Number(order.price)) });
-  }
-
-  res.json({ success: true, refunded: Number(order.price) });
 });
 
 router.post("/admin/orders/bulk-status", requireAdmin, async (req, res): Promise<void> => {
   const { ids, status } = req.body as { ids?: unknown; status?: unknown };
   if (!Array.isArray(ids) || ids.length === 0 || typeof status !== "string") {
     res.status(400).json({ error: "ids (array) and status (string) are required" });
+    return;
+  }
+  const VALID_STATUSES = ["pending", "processing", "completed", "failed"] as const;
+  if (!VALID_STATUSES.includes(status as typeof VALID_STATUSES[number])) {
+    res.status(400).json({ error: `Invalid status. Must be one of: ${VALID_STATUSES.join(", ")}` });
     return;
   }
   const numIds = ids.map(Number).filter(n => !isNaN(n));
@@ -313,37 +330,78 @@ router.post("/admin/wallets/:userId/topup", requireAdmin, async (req, res): Prom
   const userId = Number(req.params.userId);
   const amount = Number(req.body.amount);
   const note   = String(req.body.note ?? "Admin top-up");
+  const adminId = req.session.userId!;
   if (isNaN(userId) || isNaN(amount) || amount <= 0) {
     res.status(400).json({ error: "Invalid user ID or amount" }); return;
   }
-  const updated = await creditWallet(userId, amount);
-  await db.insert(depositsTable).values({
-    userId,
-    amount: String(amount.toFixed(2)),
-    method: "admin",
-    reference: `admin-topup-${Date.now()}`,
-    status: "completed",
-    note,
+
+  // Atomic: insert the audit record first, then credit — if credit fails the record rolls back
+  const updated = await db.transaction(async (tx) => {
+    await tx.insert(depositsTable).values({
+      userId,
+      amount: amount.toFixed(2),
+      method: "admin",
+      reference: `admin-topup-${adminId}-${Date.now()}`,
+      status: "completed",
+      note: `${note} (by admin #${adminId})`,
+    });
+    return creditWallet(userId, amount, tx);
   });
+
   res.json({ balance: Number(updated.balance), message: `GH₵${amount.toFixed(2)} added to wallet` });
 });
 
 router.post("/admin/wallets/:userId/debit", requireAdmin, async (req, res): Promise<void> => {
   const userId = Number(req.params.userId);
   const amount = Number(req.body.amount);
+  const note   = String(req.body.note ?? "Admin debit");
+  const adminId = req.session.userId!;
   if (isNaN(userId) || isNaN(amount) || amount <= 0) {
     res.status(400).json({ error: "Invalid user ID or amount" }); return;
   }
-  const [wallet] = await db.select().from(walletsTable).where(eq(walletsTable.userId, userId));
-  if (!wallet) { res.status(404).json({ error: "Wallet not found" }); return; }
-  const currentBal = Number(wallet.balance);
-  if (currentBal < amount) { res.status(400).json({ error: `Insufficient balance. Current: GH₵${currentBal.toFixed(2)}` }); return; }
-  const [updated] = await db
-    .update(walletsTable)
-    .set({ balance: sql`${walletsTable.balance} - ${amount.toFixed(2)}`, updatedAt: new Date() })
-    .where(eq(walletsTable.userId, userId))
-    .returning();
-  res.json({ balance: Number(updated.balance), message: `GH₵${amount.toFixed(2)} debited from wallet` });
+
+  try {
+    const updated = await db.transaction(async (tx) => {
+      // Lock wallet row to prevent concurrent debits racing
+      const [wallet] = await tx
+        .select()
+        .from(walletsTable)
+        .where(eq(walletsTable.userId, userId))
+        .for("update");
+
+      if (!wallet) throw Object.assign(new Error("Wallet not found"), { status: 404 });
+      const currentBal = Number(wallet.balance);
+      if (currentBal < amount) {
+        throw Object.assign(
+          new Error(`Insufficient balance. Current: GH₵${currentBal.toFixed(2)}`),
+          { status: 400 }
+        );
+      }
+
+      const [debited] = await tx
+        .update(walletsTable)
+        .set({ balance: sql`${walletsTable.balance} - ${amount.toFixed(2)}::numeric`, updatedAt: new Date() })
+        .where(eq(walletsTable.userId, userId))
+        .returning();
+
+      // Audit record for the debit
+      await tx.insert(depositsTable).values({
+        userId,
+        amount: (-amount).toFixed(2),
+        method: "admin",
+        reference: `admin-debit-${adminId}-${Date.now()}`,
+        status: "completed",
+        note: `${note} (by admin #${adminId})`,
+      });
+
+      return debited;
+    });
+
+    res.json({ balance: Number(updated.balance), message: `GH₵${amount.toFixed(2)} debited from wallet` });
+  } catch (err: unknown) {
+    const e = err as { message?: string; status?: number };
+    res.status(e.status ?? 500).json({ error: e.message ?? "Debit failed" });
+  }
 });
 
 router.get("/admin/wallets/:userId/deposits", requireAdmin, async (req, res): Promise<void> => {
@@ -511,43 +569,42 @@ router.post("/admin/deposits/:id/approve", requireAdmin, async (req, res): Promi
     return;
   }
 
-  const [deposit] = await db.select().from(depositsTable).where(eq(depositsTable.id, id));
-  if (!deposit) {
-    res.status(404).json({ error: "Deposit not found" });
+  let updated: typeof depositsTable.$inferSelect;
+
+  try {
+    updated = await db.transaction(async (tx) => {
+      // Lock the deposit row — prevents two admins approving simultaneously (TOCTOU)
+      const [locked] = await tx
+        .select()
+        .from(depositsTable)
+        .where(eq(depositsTable.id, id))
+        .for("update");
+
+      if (!locked) throw Object.assign(new Error("Deposit not found"), { status: 404 });
+      if (locked.status !== "pending") {
+        throw Object.assign(
+          new Error(`Deposit is already ${locked.status}`),
+          { status: 400 }
+        );
+      }
+
+      const [dep] = await tx
+        .update(depositsTable)
+        .set({ status: "completed", note: `Approved by admin #${req.session.userId!}` })
+        .where(eq(depositsTable.id, id))
+        .returning();
+
+      await creditWallet(locked.userId, parseFloat(locked.amount), tx);
+
+      return dep;
+    });
+  } catch (err: unknown) {
+    const e = err as { message?: string; status?: number };
+    res.status(e.status ?? 500).json({ error: e.message ?? "Approval failed" });
     return;
   }
 
-  if (deposit.status === "completed") {
-    res.status(400).json({ error: "Deposit already approved" });
-    return;
-  }
-
-  const [updated] = await db
-    .update(depositsTable)
-    .set({ status: "completed", note: "Approved by admin" })
-    .where(eq(depositsTable.id, id))
-    .returning();
-
-  const wallet = await db
-    .select()
-    .from(walletsTable)
-    .where(eq(walletsTable.userId, deposit.userId));
-
-  const currentBalance = wallet.length > 0 ? parseFloat(wallet[0].balance) : 0;
-  const newBalance = (currentBalance + parseFloat(deposit.amount)).toFixed(2);
-
-  if (wallet.length > 0) {
-    await db
-      .update(walletsTable)
-      .set({ balance: newBalance })
-      .where(eq(walletsTable.userId, deposit.userId));
-  } else {
-    await db
-      .insert(walletsTable)
-      .values({ userId: deposit.userId, balance: newBalance });
-  }
-
-  const [user] = await db.select().from(usersTable).where(eq(usersTable.id, deposit.userId));
+  const [user] = await db.select().from(usersTable).where(eq(usersTable.id, updated.userId));
 
   res.json({
     ...updated,

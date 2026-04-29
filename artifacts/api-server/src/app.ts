@@ -3,12 +3,17 @@ import cors from "cors";
 import pinoHttp from "pino-http";
 import session from "express-session";
 import cookieParser from "cookie-parser";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
 import router from "./routes";
 import { logger } from "./lib/logger";
 
 const app: Express = express();
 
 app.set("trust proxy", 1);
+
+// Security headers
+app.use(helmet({ contentSecurityPolicy: false }));
 
 app.use(
   pinoHttp({
@@ -31,8 +36,8 @@ app.use(
 );
 
 app.use(cors({ origin: true, credentials: true }));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: "1mb" }));
+app.use(express.urlencoded({ extended: true, limit: "1mb" }));
 app.use(cookieParser());
 
 const sessionSecret = process.env.SESSION_SECRET;
@@ -53,6 +58,39 @@ app.use(
     },
   }),
 );
+
+// ── Rate limiters ─────────────────────────────────────────────────────────────
+
+// Strict limiter for auth endpoints — prevents brute-force attacks
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many requests. Please try again in 15 minutes." },
+});
+
+// Wallet/financial endpoints — tighter limit to prevent automated abuse
+const walletLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many wallet requests. Please slow down." },
+});
+
+// General API limiter
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many requests. Please slow down." },
+});
+
+app.use("/api/auth", authLimiter);
+app.use("/api/wallet", walletLimiter);
+app.use("/api", apiLimiter);
 
 app.use("/api", router);
 
