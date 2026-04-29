@@ -272,6 +272,7 @@ router.get("/admin/wallets", requireAdmin, async (req, res): Promise<void> => {
       userEmail: usersTable.email,
       userPhone: usersTable.phone,
       userRole: usersTable.role,
+      userDepositCode: usersTable.depositCode,
     })
     .from(walletsTable)
     .leftJoin(usersTable, eq(walletsTable.userId, usersTable.id))
@@ -302,6 +303,7 @@ router.get("/admin/wallets", requireAdmin, async (req, res): Promise<void> => {
     userEmail: w.userEmail ?? "Unknown",
     userPhone: w.userPhone ?? null,
     userRole: w.userRole ?? "user",
+    userDepositCode: w.userDepositCode ?? null,
     totalLoaded: depMap.get(w.userId!) ?? 0,
     totalOrders: ordMap.get(w.userId!) ?? 0,
   })));
@@ -681,15 +683,16 @@ router.get("/admin/wallet-transactions", requireAdmin, async (req, res) => {
   // Completed deposits → credits
   const deposits = await db
     .select({
-      id:        depositsTable.id,
-      userId:    depositsTable.userId,
-      amount:    depositsTable.amount,
-      status:    depositsTable.status,
-      method:    depositsTable.method,
-      reference: depositsTable.reference,
-      note:      depositsTable.note,
-      createdAt: depositsTable.createdAt,
-      userName:  usersTable.name,
+      id:          depositsTable.id,
+      userId:      depositsTable.userId,
+      amount:      depositsTable.amount,
+      status:      depositsTable.status,
+      method:      depositsTable.method,
+      reference:   depositsTable.reference,
+      note:        depositsTable.note,
+      createdAt:   depositsTable.createdAt,
+      userName:    usersTable.name,
+      depositCode: usersTable.depositCode,
     })
     .from(depositsTable)
     .leftJoin(usersTable, eq(depositsTable.userId, usersTable.id))
@@ -698,19 +701,20 @@ router.get("/admin/wallet-transactions", requireAdmin, async (req, res) => {
   // All orders → debits (wallet deducted at creation time)
   const orders = await db
     .select({
-      id:         ordersTable.id,
-      userId:     ordersTable.userId,
-      price:      ordersTable.price,
-      status:     ordersTable.status,
-      bundleName: ordersTable.bundleName,
-      createdAt:  ordersTable.createdAt,
-      userName:   usersTable.name,
+      id:          ordersTable.id,
+      userId:      ordersTable.userId,
+      price:       ordersTable.price,
+      status:      ordersTable.status,
+      bundleName:  ordersTable.bundleName,
+      createdAt:   ordersTable.createdAt,
+      userName:    usersTable.name,
+      depositCode: usersTable.depositCode,
     })
     .from(ordersTable)
     .leftJoin(usersTable, eq(ordersTable.userId, usersTable.id));
 
   interface TxItem {
-    key: string; userId: number; userName: string;
+    key: string; userId: number; userName: string; depositCode: string | null;
     amount: number; status: string;
     type: "credit" | "debit"; source: string;
     reference: string; note: string | null; date: Date;
@@ -721,6 +725,7 @@ router.get("/admin/wallet-transactions", requireAdmin, async (req, res) => {
       key: `DEP-${d.id}`,
       userId: d.userId,
       userName: d.userName ?? "Unknown",
+      depositCode: d.depositCode ?? null,
       amount: parseFloat(d.amount),
       status: d.status,
       type: "credit" as const,
@@ -733,6 +738,7 @@ router.get("/admin/wallet-transactions", requireAdmin, async (req, res) => {
       key: `ORD-${o.id}`,
       userId: o.userId,
       userName: o.userName ?? "Unknown",
+      depositCode: o.depositCode ?? null,
       amount: -parseFloat(o.price),
       status: o.status,
       type: "debit" as const,
@@ -771,7 +777,7 @@ router.get("/admin/wallet-transactions", requireAdmin, async (req, res) => {
     return {
       key: t.key, ref: t.reference,
       userId: t.userId, userName: t.userName,
-      agentCode: `BT-${String(t.userId).padStart(4, "0")}`,
+      agentCode: t.depositCode ?? `BT-${String(t.userId).padStart(4, "0")}`,
       date: t.date.toISOString(),
       amount: t.amount,
       prevBalance: Math.round(bal.prev * 100) / 100,

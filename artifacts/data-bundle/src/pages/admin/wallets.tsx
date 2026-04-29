@@ -15,6 +15,7 @@ interface WalletRow {
   updatedAt: string | null;
   userName: string; userEmail: string;
   userPhone: string | null; userRole: string;
+  userDepositCode: string | null;
   totalLoaded: number; totalOrders: number;
 }
 interface Deposit {
@@ -618,7 +619,8 @@ function AdminWalletsContent() {
         w.userName.toLowerCase().includes(q) ||
         w.userEmail.toLowerCase().includes(q) ||
         String(w.userId).includes(q) ||
-        (w.userPhone ?? "").includes(q)
+        (w.userPhone ?? "").includes(q) ||
+        (w.userDepositCode ?? "").toLowerCase().includes(q)
       );
     }
     return [...src].sort((a, b) => {
@@ -636,9 +638,9 @@ function AdminWalletsContent() {
   const paged      = useMemo(() => filtered.slice((page - 1) * pageSize, page * pageSize), [filtered, page, pageSize]);
 
   const handleExport = () => {
-    const header = ["User ID", "Name", "Email", "Phone", "Role", "Balance (GH₵)", "Total Loaded (GH₵)", "Total Orders (GH₵)", "Last Updated"];
+    const header = ["Ref Code", "Name", "Email", "Phone", "Role", "Balance (GH₵)", "Total Loaded (GH₵)", "Total Orders (GH₵)", "Last Updated"];
     const rows   = filtered.map(w => [
-      w.userId, `"${w.userName}"`, w.userEmail, w.userPhone ?? "", w.userRole,
+      w.userDepositCode ?? "", `"${w.userName}"`, w.userEmail, w.userPhone ?? "", w.userRole,
       w.balance.toFixed(2), w.totalLoaded.toFixed(2), w.totalOrders.toFixed(2),
       w.updatedAt ? fmtDate(w.updatedAt) : "",
     ]);
@@ -747,7 +749,7 @@ function AdminWalletsContent() {
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                     <input
                       className="w-full pl-9 pr-9 h-9 rounded-xl border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                      placeholder="Search by name, email, ID…"
+                      placeholder="Search by name, email, ref code…"
                       value={search}
                       onChange={e => { setSearch(e.target.value); setPage(1); }}
                       data-testid="input-wallet-search"
@@ -794,7 +796,7 @@ function AdminWalletsContent() {
                         <thead>
                           <tr className="bg-muted/30 border-b border-border">
                             {[
-                              { label: "User #", field: null, hint: "" },
+                              { label: "Ref Code", field: null, hint: "Unique MoMo deposit reference code" },
                               { label: "Name", field: "name" as SortField, hint: "" },
                               { label: "Total Loads", field: "totalLoaded" as SortField, hint: "Sum of all deposits via Paystack, MoMo, Admin & Manual" },
                               { label: "Total Orders (GH₵)", field: "totalOrders" as SortField, hint: "Total monetary value of all orders placed" },
@@ -822,9 +824,13 @@ function AdminWalletsContent() {
                                 data-testid={`row-wallet-${w.id}`}
                               >
                                 <td className="px-5 py-4">
-                                  <span className="text-xs font-mono text-muted-foreground bg-muted/50 px-2 py-1 rounded-lg">
-                                    #{w.userId}
-                                  </span>
+                                  {w.userDepositCode ? (
+                                    <span className="text-xs font-mono font-bold text-primary bg-primary/10 border border-primary/20 px-2 py-1 rounded-lg whitespace-nowrap">
+                                      {w.userDepositCode}
+                                    </span>
+                                  ) : (
+                                    <span className="text-xs font-mono text-muted-foreground bg-muted/50 px-2 py-1 rounded-lg">—</span>
+                                  )}
                                 </td>
                                 <td className="px-5 py-4">
                                   <button
