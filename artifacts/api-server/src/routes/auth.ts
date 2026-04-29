@@ -41,7 +41,7 @@ router.post("/auth/register", async (req, res): Promise<void> => {
 
   const [user] = await db
     .insert(usersTable)
-    .values({ name, email, passwordHash, phone: phone ?? null, role: "user", isActive: true, depositCode })
+    .values({ name, email, passwordHash, phone: phone ?? null, role: "agent", isActive: true, depositCode })
     .returning();
 
   req.session.userId = user.id;
