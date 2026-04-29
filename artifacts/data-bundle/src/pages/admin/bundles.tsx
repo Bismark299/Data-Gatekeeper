@@ -4,6 +4,7 @@ import { getListBundlesQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { AdminSidebar } from "@/components/AdminSidebar";
+import { AdminFinancialSummary } from "@/components/AdminFinancialSummary";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -198,6 +199,7 @@ function AdminBundlesContent() {
             <h1 className="text-xl font-bold text-foreground">Bundles</h1>
             <p className="text-xs text-muted-foreground">{filtered.length} of {bundles?.length ?? 0} bundles</p>
           </div>
+          <AdminFinancialSummary />
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={() => refetch()} className="gap-1.5">
               <RefreshCw className="w-3.5 h-3.5" />

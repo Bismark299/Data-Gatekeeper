@@ -7,6 +7,7 @@ import {
 } from "@workspace/api-client-react";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { AdminSidebar } from "@/components/AdminSidebar";
+import { AdminFinancialSummary } from "@/components/AdminFinancialSummary";
 import { Button } from "@/components/ui/button";
 import { Menu, RefreshCw, TrendingUp, BarChart3, PieChart, Wifi } from "lucide-react";
 import {
@@ -64,6 +65,7 @@ function AdminStatsContent() {
             <h1 className="text-xl font-bold text-foreground">Statistics</h1>
             <p className="text-xs text-muted-foreground">Platform analytics and revenue trends</p>
           </div>
+          <AdminFinancialSummary />
           <Button variant="outline" size="sm" onClick={handleRefresh} className="gap-1.5">
             <RefreshCw className="w-3.5 h-3.5" /> Refresh
           </Button>

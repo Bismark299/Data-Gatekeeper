@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { AdminSidebar } from "@/components/AdminSidebar";
+import { AdminFinancialSummary } from "@/components/AdminFinancialSummary";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -209,6 +210,7 @@ function AdminSettingsContent() {
             </h1>
             <p className="text-xs text-muted-foreground">Platform configuration and feature flags</p>
           </div>
+          <AdminFinancialSummary />
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={() => refetch()} className="gap-1.5">
               <RefreshCw className="w-3.5 h-3.5" /> Refresh

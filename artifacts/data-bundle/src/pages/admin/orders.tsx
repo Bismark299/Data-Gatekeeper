@@ -7,6 +7,7 @@ import {
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { AdminSidebar } from "@/components/AdminSidebar";
+import { AdminFinancialSummary } from "@/components/AdminFinancialSummary";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -318,6 +319,7 @@ function AdminOrdersContent() {
                 : `${storeOrders?.length ?? 0} store order${(storeOrders?.length ?? 0) !== 1 ? "s" : ""} total`}
             </p>
           </div>
+          <AdminFinancialSummary />
           {/* ── View toggle ── */}
           <div className="flex items-center rounded-xl border border-border bg-muted/40 p-1 gap-1">
             <button

@@ -2,6 +2,7 @@ import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { AdminSidebar } from "@/components/AdminSidebar";
+import { AdminFinancialSummary } from "@/components/AdminFinancialSummary";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
@@ -172,6 +173,7 @@ function AdminStoresContent() {
           ) : (
             <h1 className="font-bold text-lg flex items-center gap-2"><Store className="w-5 h-5" /> Stores</h1>
           )}
+          <AdminFinancialSummary />
           <div className="ml-auto flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={() => refetch()} className="gap-1.5">
               <RefreshCw className="w-3.5 h-3.5" /> Refresh

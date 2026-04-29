@@ -3,6 +3,7 @@ import { useLocation } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { AdminSidebar } from "@/components/AdminSidebar";
+import { AdminFinancialSummary } from "@/components/AdminFinancialSummary";
 import { useToast } from "@/hooks/use-toast";
 import {
   Menu, Wallet, Search, X, RefreshCw, Download, ChevronLeft, ChevronRight,
@@ -694,6 +695,7 @@ function AdminWalletsContent() {
             <Wallet className="w-5 h-5 text-primary" />
             <h1 className="font-bold text-lg">Wallets</h1>
           </div>
+          <AdminFinancialSummary />
           <div className="ml-auto flex items-center gap-2">
             <button onClick={() => refetch()} className="p-2 rounded-lg hover:bg-muted text-muted-foreground transition-colors" title="Refresh">
               <RefreshCw className="w-4 h-4" />

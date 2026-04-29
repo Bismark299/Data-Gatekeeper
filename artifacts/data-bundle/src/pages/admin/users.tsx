@@ -4,6 +4,7 @@ import { useAdminListUsers, useAdminUpdateUser, useAdminDeleteUser, getAdminList
 import { useQueryClient } from "@tanstack/react-query";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { AdminSidebar } from "@/components/AdminSidebar";
+import { AdminFinancialSummary } from "@/components/AdminFinancialSummary";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
@@ -166,6 +167,7 @@ function AdminUsersContent() {
             <h1 className="text-xl font-bold text-foreground">Users</h1>
             <p className="text-xs text-muted-foreground">{counts.total} total · {counts.admins} admin · {counts.active} active</p>
           </div>
+          <AdminFinancialSummary />
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={() => refetch()} className="gap-1.5">
               <RefreshCw className="w-3.5 h-3.5" />

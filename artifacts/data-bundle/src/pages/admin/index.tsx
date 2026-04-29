@@ -10,6 +10,7 @@ import {
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { AdminSidebar } from "@/components/AdminSidebar";
+import { AdminFinancialSummary } from "@/components/AdminFinancialSummary";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
@@ -232,7 +233,6 @@ function AdminDashboardContent() {
   const dayCompleted  = dayOrders.filter(o => o.status === "completed");
   const dayProcessing = dayOrders.filter(o => o.status === "processing");
   const dayFailed     = dayOrders.filter(o => o.status === "failed" || o.status === "cancelled");
-  const todayRevenue  = dayCompleted.reduce((s, o) => s + Number(o.price), 0);
 
   const statCards = useMemo(() => stats ? [
     { icon: Wallet,       label: "Wallet Balance",  value: `GH₵${((stats as { totalWalletBalance?: number }).totalWalletBalance ?? 0).toFixed(2)}`, sub: "Total user wallet funds",              colorClass: "text-emerald-600", bgClass: "bg-emerald-100 dark:bg-emerald-900/20", accent: true },
@@ -319,18 +319,7 @@ function AdminDashboardContent() {
             <h1 className="text-xl font-bold text-foreground">Admin Dashboard</h1>
             <p className="text-xs text-muted-foreground">{today}</p>
           </div>
-          {/* Revenue pill */}
-          <div className="hidden sm:flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800">
-            <TrendingUp className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-            <div className="leading-none">
-              <div className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold uppercase tracking-wide">
-                {dateFrom === dateTo && dateFrom === todayStr ? "Today's Revenue" : "Period Revenue"}
-              </div>
-              <div className="text-base font-extrabold text-emerald-700 dark:text-emerald-300">
-                GH₵{todayRevenue.toFixed(2)}
-              </div>
-            </div>
-          </div>
+          <AdminFinancialSummary />
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={handleRefresh} className="gap-1.5">
               <RefreshCw className="w-3.5 h-3.5" /> Refresh
