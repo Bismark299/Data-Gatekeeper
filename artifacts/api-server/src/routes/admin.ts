@@ -23,6 +23,7 @@ function formatUser(u: typeof usersTable.$inferSelect) {
     phone: u.phone,
     role: u.role,
     isActive: u.isActive,
+    depositCode: u.depositCode ?? null,
     createdAt: u.createdAt.toISOString(),
   };
 }
@@ -637,6 +638,7 @@ router.get("/admin/agents/:userId", requireAdmin, async (req, res): Promise<void
       phone: user.phone,
       role: user.role,
       isActive: user.isActive,
+      depositCode: user.depositCode ?? null,
       createdAt: user.createdAt.toISOString(),
     },
     wallet: {

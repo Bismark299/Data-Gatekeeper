@@ -10,6 +10,7 @@ export const usersTable = pgTable("users", {
   phone: text("phone"),
   role: text("role").notNull().default("user"),
   isActive: boolean("is_active").notNull().default(true),
+  depositCode: text("deposit_code").unique(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
 });

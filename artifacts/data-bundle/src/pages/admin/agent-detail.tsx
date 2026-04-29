@@ -15,7 +15,7 @@ import {
 interface AgentProfile {
   user: {
     id: number; name: string; email: string; phone: string | null;
-    role: string; isActive: boolean; createdAt: string;
+    role: string; isActive: boolean; createdAt: string; depositCode: string | null;
   };
   wallet: { balance: number; updatedAt: string | null };
   stats: {
@@ -238,7 +238,7 @@ function AdminAgentDetailContent() {
   }
 
   const { user, wallet, stats, store } = profile;
-  const agentCode = `BT-${String(user.id).padStart(4, "0")}`;
+  const agentCode = user.depositCode ?? `BT-${String(user.id).padStart(4, "0")}`;
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
@@ -281,7 +281,7 @@ function AdminAgentDetailContent() {
                 <div className="flex-1 min-w-0 space-y-2">
                   <div className="flex flex-wrap items-center gap-2">
                     <h1 className="text-xl font-extrabold text-foreground">{user.name}</h1>
-                    <span className="font-mono text-xs text-muted-foreground bg-muted/60 px-2 py-0.5 rounded-lg">{agentCode}</span>
+                    <span className="font-mono text-xs font-bold text-primary bg-primary/10 border border-primary/20 px-2 py-0.5 rounded-lg" title="MoMo deposit reference code">{agentCode}</span>
                     <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold capitalize ${ROLE_COLORS[user.role] ?? ""}`}>{user.role}</span>
                     <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${user.isActive ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400" : "bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400"}`}>
                       {user.isActive ? "Active" : "Inactive"}

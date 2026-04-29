@@ -292,7 +292,7 @@ router.post("/sms-webhook", async (req, res) => {
   const smsText = body.text ?? body.message ?? "";
 
   const amountMatch = smsText.match(/GH[SC]?\s*([\d,]+\.?\d*)/i);
-  const refMatch = smsText.match(/\bDB(\d+)\b/i);
+  const refMatch = smsText.match(/\b(BT-[A-Z0-9]{6})\b/i);
 
   if (!amountMatch || !refMatch) {
     res.sendStatus(200);
@@ -300,36 +300,38 @@ router.post("/sms-webhook", async (req, res) => {
   }
 
   const amount = parseFloat(amountMatch[1].replace(/,/g, ""));
-  const userId = parseInt(refMatch[1], 10);
+  const depositCode = refMatch[1].toUpperCase();
 
-  if (!amount || !userId) {
+  if (!amount || !depositCode) {
     res.sendStatus(200);
     return;
   }
 
-  const [user] = await db.select().from(usersTable).where(eq(usersTable.id, userId));
+  const [user] = await db.select().from(usersTable).where(eq(usersTable.depositCode, depositCode));
   if (!user) {
     res.sendStatus(200);
     return;
   }
 
-  const reference = `MOMO-SMS-${userId}-${Date.now()}`;
+  const reference = `MOMO-SMS-${user.id}-${Date.now()}`;
   await db.insert(depositsTable).values({
-    userId,
+    userId: user.id,
     amount: amount.toFixed(2),
     status: "completed",
     method: "momo",
     reference,
-    note: "Auto-credited from MoMo SMS",
+    note: `Auto-credited from MoMo SMS (ref: ${depositCode})`,
   });
 
-  await creditWallet(userId, amount);
+  await creditWallet(user.id, amount);
   res.sendStatus(200);
 });
 
 router.get("/momo-info", requireAuth, async (req, res) => {
   const userId = req.session.userId!;
-  res.json({ momoNumber: MOMO_NUMBER, referenceCode: `DB${userId}` });
+  const [user] = await db.select().from(usersTable).where(eq(usersTable.id, userId));
+  const referenceCode = user?.depositCode ?? `BT-${String(userId).padStart(6, "0")}`;
+  res.json({ momoNumber: MOMO_NUMBER, referenceCode });
 });
 
 export { router as walletRouter, getOrCreateWallet, creditWallet };

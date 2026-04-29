@@ -5,6 +5,20 @@ import { db, usersTable } from "@workspace/db";
 import { RegisterBody, LoginBody } from "@workspace/api-zod";
 import { requireAuth } from "../middlewares/auth";
 
+const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+async function generateDepositCode(): Promise<string> {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const rand = Array.from({ length: 6 }, () =>
+      CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)]
+    ).join("");
+    const code = `BT-${rand}`;
+    const [existing] = await db.select().from(usersTable).where(eq(usersTable.depositCode, code));
+    if (!existing) return code;
+  }
+  throw new Error("Could not generate unique deposit code");
+}
+
 const router: IRouter = Router();
 
 router.post("/auth/register", async (req, res): Promise<void> => {
@@ -23,10 +37,11 @@ router.post("/auth/register", async (req, res): Promise<void> => {
   }
 
   const passwordHash = await bcrypt.hash(password, 12);
+  const depositCode = await generateDepositCode();
 
   const [user] = await db
     .insert(usersTable)
-    .values({ name, email, passwordHash, phone: phone ?? null, role: "user", isActive: true })
+    .values({ name, email, passwordHash, phone: phone ?? null, role: "user", isActive: true, depositCode })
     .returning();
 
   req.session.userId = user.id;

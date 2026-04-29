@@ -224,7 +224,7 @@ function AdminUsersContent() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-border bg-muted/20">
-                      {["ID", "Joined", "Name", "Email", "Phone", "Balance", "Role", "Status", "Actions"].map(h => (
+                      {["#", "Ref Code", "Joined", "Name", "Email", "Phone", "Balance", "Role", "Status", "Actions"].map(h => (
                         <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
                       ))}
                     </tr>
@@ -236,6 +236,15 @@ function AdminUsersContent() {
                         <tr key={u.id} className="hover:bg-muted/20 transition-colors" data-testid={`row-user-${u.id}`}>
                           <td className="px-5 py-3.5">
                             <span className="text-xs font-mono bg-muted/60 text-muted-foreground px-2 py-0.5 rounded-md">#{u.id}</span>
+                          </td>
+                          <td className="px-5 py-3.5">
+                            {(u as { depositCode?: string | null }).depositCode ? (
+                              <span className="text-xs font-mono font-bold text-primary bg-primary/10 border border-primary/20 px-2 py-0.5 rounded-md whitespace-nowrap">
+                                {(u as { depositCode?: string | null }).depositCode}
+                              </span>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">—</span>
+                            )}
                           </td>
                           <td className="px-5 py-3.5 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(u.createdAt)}</td>
                           <td className="px-5 py-3.5">
