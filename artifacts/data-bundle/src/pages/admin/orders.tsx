@@ -18,6 +18,7 @@ import {
   Menu, ShoppingCart, Search, X, Download, ChevronLeft, ChevronRight,
   ArrowUpDown, ArrowUp, ArrowDown, RefreshCw, Filter, Copy,
   CheckCircle2, XCircle, Banknote, Zap, AlertCircle, Store, Clock,
+  DollarSign, TrendingUp,
 } from "lucide-react";
 
 // ─── constants ────────────────────────────────────────────────────────────────
@@ -70,13 +71,14 @@ export default function AdminOrders() {
 }
 
 function AdminOrdersContent() {
+  const todayStr = new Date().toISOString().slice(0, 10);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [pageView, setPageView]       = useState<"platform" | "store">("platform");
   const [statusTab, setStatusTab]     = useState<typeof ORDER_STATUSES[number]>("all");
   const [phoneSearch, setPhoneSearch] = useState("");
   const [orderIdSearch, setOrderIdSearch] = useState("");
-  const [dateFrom, setDateFrom]       = useState("");
-  const [dateTo, setDateTo]           = useState("");
+  const [dateFrom, setDateFrom]       = useState(todayStr);
+  const [dateTo, setDateTo]           = useState(todayStr);
   const [page, setPage]               = useState(1);
   const [pageSize, setPageSize]       = useState(25);
   const [sortField, setSortField]     = useState<SortField>("date");
@@ -178,8 +180,8 @@ function AdminOrdersContent() {
     setPage(1);
   };
 
-  const clearFilters = () => { setPhoneSearch(""); setOrderIdSearch(""); setDateFrom(""); setDateTo(""); setStatusTab("all"); setPage(1); };
-  const hasFilters = phoneSearch || orderIdSearch || dateFrom || dateTo || statusTab !== "all";
+  const clearFilters = () => { setPhoneSearch(""); setOrderIdSearch(""); setDateFrom(todayStr); setDateTo(todayStr); setStatusTab("all"); setPage(1); };
+  const hasFilters = phoneSearch || orderIdSearch || dateFrom !== todayStr || dateTo !== todayStr || statusTab !== "all";
 
   // ── network pending counts ──
   const networkPendingCounts = useMemo(() => {
@@ -210,6 +212,24 @@ function AdminOrdersContent() {
       toast({ title: "Copy failed", variant: "destructive" });
     }
   };
+
+  // ── day-filtered orders for stat cards (date only, not status/phone) ──
+  const dayOrders = useMemo(() => {
+    let src = allOrders ?? [];
+    if (dateFrom) src = src.filter(o => new Date(o.createdAt) >= new Date(dateFrom));
+    if (dateTo) { const to = new Date(dateTo); to.setHours(23, 59, 59, 999); src = src.filter(o => new Date(o.createdAt) <= to); }
+    return src;
+  }, [allOrders, dateFrom, dateTo]);
+
+  // ── stat cards ──
+  const statCards = useMemo(() => [
+    { icon: ShoppingCart, label: "Total Orders",   value: dayOrders.length,                                        sub: dateFrom === dateTo ? `For ${dateFrom}` : `${dateFrom} → ${dateTo}`, colorClass: "text-violet-600",  bgClass: "bg-violet-100 dark:bg-violet-900/20" },
+    { icon: Clock,        label: "Pending",         value: dayOrders.filter(o => o.status === "pending").length,    sub: "Awaiting processing",    colorClass: "text-amber-600",   bgClass: "bg-amber-100 dark:bg-amber-900/20",   pulse: dayOrders.filter(o => o.status === "pending").length > 0 },
+    { icon: Zap,          label: "Processing",      value: dayOrders.filter(o => o.status === "processing").length, sub: "Being processed",        colorClass: "text-sky-600",     bgClass: "bg-sky-100 dark:bg-sky-900/20",       pulse: dayOrders.filter(o => o.status === "processing").length > 0 },
+    { icon: CheckCircle2, label: "Completed",       value: dayOrders.filter(o => o.status === "completed").length,  sub: "Successfully fulfilled", colorClass: "text-emerald-600", bgClass: "bg-emerald-100 dark:bg-emerald-900/20" },
+    { icon: AlertCircle,  label: "Failed/Cancelled",value: dayOrders.filter(o => o.status === "failed" || o.status === "cancelled").length, sub: "Failed or cancelled", colorClass: "text-red-600", bgClass: "bg-red-100 dark:bg-red-900/20" },
+    { icon: DollarSign,   label: "Revenue",         value: `GH₵${dayOrders.filter(o => o.status === "completed").reduce((s, o) => s + Number(o.price), 0).toFixed(2)}`, sub: "Completed orders value", colorClass: "text-teal-600", bgClass: "bg-teal-100 dark:bg-teal-900/20", accent: true },
+  ], [dayOrders, dateFrom, dateTo]);
 
   // ── status counts ──
   const statusCounts = useMemo(() => {
@@ -258,23 +278,26 @@ function AdminOrdersContent() {
 
   // ── CSV export ──
   const handleExport = () => {
-    const headers = ["ID", "Date", "Phone", "Network", "Data", "Amount", "Status"];
+    const headers = ["Order ID", "Date", "User ID", "Phone Number", "Network", "Bundle Name", "Data", "Amount (GHS)", "Status"];
+    const esc = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`;
     const rows = processedOrders.map(o => [
       `#${o.id}`,
       fmtDate(o.createdAt),
+      o.userId ?? "",
       o.phoneNumber,
-      `"${(o as { network?: string }).network ?? ""}"`,
-      `"${o.bundleData}"`,
+      esc((o as { network?: string }).network ?? ""),
+      esc(o.bundleName ?? ""),
+      esc(o.bundleData ?? ""),
       Number(o.price).toFixed(2),
       o.status,
     ]);
     const csv = [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement("a");
-    a.href = url; a.download = `orders-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.href = url; a.download = `orders-${dateFrom || new Date().toISOString().slice(0, 10)}.csv`;
     a.click(); URL.revokeObjectURL(url);
-    toast({ title: `Exported ${processedOrders.length} orders as CSV` });
+    toast({ title: `Exported ${processedOrders.length} orders` });
   };
 
   return (
@@ -431,6 +454,57 @@ function AdminOrdersContent() {
           {/* ─── PLATFORM ORDERS VIEW ─── */}
           {pageView === "platform" && (
           <>
+
+          {/* ─── Date picker row + Stat cards ─── */}
+          <div className="space-y-3">
+            {/* Date controls */}
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="flex items-center gap-2 bg-card border border-border rounded-xl px-3 py-2">
+                <Label className="text-xs text-muted-foreground whitespace-nowrap">From</Label>
+                <Input type="date" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setPage(1); }} className="h-7 text-xs w-36 border-0 p-0 focus-visible:ring-0" />
+                <span className="text-muted-foreground text-xs">→</span>
+                <Label className="text-xs text-muted-foreground whitespace-nowrap">To</Label>
+                <Input type="date" value={dateTo} onChange={e => { setDateTo(e.target.value); setPage(1); }} className="h-7 text-xs w-36 border-0 p-0 focus-visible:ring-0" />
+              </div>
+              <button
+                onClick={() => { setDateFrom(todayStr); setDateTo(todayStr); setPage(1); }}
+                className="text-xs text-primary font-semibold hover:underline"
+              >Today</button>
+              <button
+                onClick={() => { const d = new Date(); d.setDate(d.getDate() - 6); setDateFrom(d.toISOString().slice(0, 10)); setDateTo(todayStr); setPage(1); }}
+                className="text-xs text-muted-foreground font-semibold hover:text-foreground"
+              >Last 7 days</button>
+              <button
+                onClick={() => { setDateFrom(""); setDateTo(""); setPage(1); }}
+                className="text-xs text-muted-foreground hover:text-foreground"
+              >All time</button>
+            </div>
+            {/* Stat cards */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+              {statCards.map(({ icon: Icon, label, value, sub, colorClass, bgClass, accent, pulse }) => (
+                <div key={label} className={`relative rounded-2xl border p-4 flex flex-col gap-2 ${accent ? "bg-primary text-primary-foreground border-primary/50" : "bg-card border-border"}`}>
+                  <div className="flex items-center justify-between">
+                    <span className={`text-[10px] font-semibold uppercase tracking-wider ${accent ? "text-primary-foreground/70" : "text-muted-foreground"}`}>{label}</span>
+                    <div className={`w-6 h-6 rounded-lg flex items-center justify-center ${accent ? "bg-white/15" : bgClass}`}>
+                      <Icon className={`w-3 h-3 ${accent ? "text-primary-foreground" : colorClass}`} />
+                    </div>
+                  </div>
+                  <div>
+                    <div className={`text-xl font-extrabold tracking-tight ${accent ? "text-primary-foreground" : "text-foreground"}`}>{value}</div>
+                    <div className={`text-[10px] mt-0.5 flex items-center gap-1 ${accent ? "text-primary-foreground/60" : "text-muted-foreground"}`}>
+                      {pulse && (
+                        <span className="relative flex h-1.5 w-1.5 shrink-0">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
+                          <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-amber-500" />
+                        </span>
+                      )}
+                      {sub}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
 
           {/* ─── Network pending buttons ─── */}
           <div className="flex flex-wrap gap-2 items-center bg-card border border-border rounded-xl px-4 py-3">

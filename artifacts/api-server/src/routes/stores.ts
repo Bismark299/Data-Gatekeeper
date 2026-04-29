@@ -661,4 +661,45 @@ router.patch("/admin/store-orders/:id/cancel", requireAuth, async (req, res) => 
   res.json(formatStoreOrder(updated));
 });
 
+// ─── ADMIN: WITHDRAWAL APPROVE / REJECT ──────────────────────────────────────
+
+router.patch("/admin/stores/withdrawals/:id/approve", requireAuth, async (req, res) => {
+  if (req.session.userRole !== "admin") { res.status(403).json({ error: "Forbidden" }); return; }
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+
+  const [w] = await db.select().from(storeWithdrawalsTable).where(eq(storeWithdrawalsTable.id, id));
+  if (!w) { res.status(404).json({ error: "Withdrawal not found" }); return; }
+  if (w.status === "completed") { res.json({ ...w, amount: parseFloat(w.amount as any) }); return; }
+
+  await db.update(storeWithdrawalsTable).set({ status: "completed" }).where(eq(storeWithdrawalsTable.id, id));
+  const [updated] = await db.select().from(storeWithdrawalsTable).where(eq(storeWithdrawalsTable.id, id));
+  res.json({ ...updated, amount: parseFloat(updated.amount as any) });
+});
+
+router.patch("/admin/stores/withdrawals/:id/reject", requireAuth, async (req, res) => {
+  if (req.session.userRole !== "admin") { res.status(403).json({ error: "Forbidden" }); return; }
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+
+  const [w] = await db.select().from(storeWithdrawalsTable).where(eq(storeWithdrawalsTable.id, id));
+  if (!w) { res.status(404).json({ error: "Withdrawal not found" }); return; }
+  if (w.status === "cancelled" || w.status === "completed") {
+    res.status(400).json({ error: "Cannot reject a withdrawal that is already " + w.status });
+    return;
+  }
+
+  // Mark as cancelled and refund the amount back to the store's profit balance
+  await db.update(storeWithdrawalsTable).set({ status: "cancelled" }).where(eq(storeWithdrawalsTable.id, id));
+
+  const [store] = await db.select().from(storesTable).where(eq(storesTable.id, w.storeId));
+  if (store) {
+    const refunded = (parseFloat(store.profitBalance) + parseFloat(w.amount as any)).toFixed(2);
+    await db.update(storesTable).set({ profitBalance: refunded }).where(eq(storesTable.id, store.id));
+  }
+
+  const [updated] = await db.select().from(storeWithdrawalsTable).where(eq(storeWithdrawalsTable.id, id));
+  res.json({ ...updated, amount: parseFloat(updated.amount as any) });
+});
+
 export { router as storesRouter };

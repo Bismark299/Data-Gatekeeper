@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { eq, count, sum, desc, gte, and, ilike, inArray, type SQL, sql } from "drizzle-orm";
-import { db, usersTable, bundlesTable, ordersTable, walletsTable, depositsTable, storesTable } from "@workspace/db";
+import { db, usersTable, bundlesTable, ordersTable, walletsTable, depositsTable, storesTable, settingsTable } from "@workspace/db";
 import { creditWallet } from "./wallet";
 import {
   AdminListUsersQueryParams,
@@ -803,6 +803,33 @@ router.get("/admin/wallet-transactions", requireAdmin, async (req, res) => {
   const pg = Math.max(1, parseInt(page));
   const ps = Math.min(500, Math.max(1, parseInt(pageSize)));
   res.json({ total, page: pg, pageSize: ps, data: result.slice((pg - 1) * ps, pg * ps) });
+});
+
+// ── GET /admin/settings ─────────────────────────────────────────────────────
+router.get("/admin/settings", requireAdmin, async (_req, res): Promise<void> => {
+  const rows = await db.select().from(settingsTable);
+  const settings: Record<string, string> = {};
+  for (const r of rows) settings[r.key] = r.value;
+  res.json(settings);
+});
+
+// ── PUT /admin/settings ─────────────────────────────────────────────────────
+router.put("/admin/settings", requireAdmin, async (req, res): Promise<void> => {
+  const body = req.body as Record<string, string>;
+  if (typeof body !== "object" || Array.isArray(body)) {
+    res.status(400).json({ error: "Body must be a key-value object" });
+    return;
+  }
+  for (const [key, value] of Object.entries(body)) {
+    if (typeof key !== "string" || typeof value !== "string") continue;
+    await db.insert(settingsTable)
+      .values({ key, value, updatedAt: new Date() })
+      .onConflictDoUpdate({ target: settingsTable.key, set: { value, updatedAt: new Date() } });
+  }
+  const rows = await db.select().from(settingsTable);
+  const settings: Record<string, string> = {};
+  for (const r of rows) settings[r.key] = r.value;
+  res.json(settings);
 });
 
 export default router;

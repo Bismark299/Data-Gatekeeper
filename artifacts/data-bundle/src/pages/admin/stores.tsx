@@ -8,7 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   Menu, Store, ChevronLeft, ExternalLink, ArrowDownCircle,
   ShoppingCart, TrendingUp, Wallet, Search, X, RefreshCw,
-  CheckCircle2, XCircle,
+  CheckCircle2, XCircle, ThumbsUp, ThumbsDown,
 } from "lucide-react";
 
 const NETWORK_BADGE: Record<string, string> = {
@@ -60,11 +60,39 @@ function AdminStoresContent() {
     enabled: selectedStoreId !== null && detailTab === "orders",
   });
 
-  const { data: storeWithdrawals } = useQuery<any[]>({
+  const { data: storeWithdrawals, refetch: refetchWithdrawals } = useQuery<any[]>({
     queryKey: ["adminStoreWithdrawals", selectedStoreId],
     queryFn: () => fetch(`/api/admin/stores/${selectedStoreId}/withdrawals`, { credentials: "include" }).then(r => r.json()),
     enabled: selectedStoreId !== null && detailTab === "withdrawals",
   });
+
+  const [withdrawalActionId, setWithdrawalActionId] = useState<number | null>(null);
+
+  const handleWithdrawalApprove = async (wId: number) => {
+    setWithdrawalActionId(wId);
+    try {
+      const res = await fetch(`/api/admin/stores/withdrawals/${wId}/approve`, { method: "PATCH", credentials: "include" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error);
+      toast({ title: `Withdrawal #${wId} approved` });
+      refetchWithdrawals(); refetch();
+    } catch (e: unknown) {
+      toast({ title: (e as Error).message || "Error approving withdrawal", variant: "destructive" });
+    } finally { setWithdrawalActionId(null); }
+  };
+
+  const handleWithdrawalReject = async (wId: number) => {
+    setWithdrawalActionId(wId);
+    try {
+      const res = await fetch(`/api/admin/stores/withdrawals/${wId}/reject`, { method: "PATCH", credentials: "include" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error);
+      toast({ title: `Withdrawal #${wId} rejected — amount refunded to store balance` });
+      refetchWithdrawals(); refetch();
+    } catch (e: unknown) {
+      toast({ title: (e as Error).message || "Error rejecting withdrawal", variant: "destructive" });
+    } finally { setWithdrawalActionId(null); }
+  };
 
   const filteredStores = useMemo(() => {
     let src = stores ?? [];
@@ -261,32 +289,62 @@ function AdminStoresContent() {
                       <table className="w-full text-sm">
                         <thead>
                           <tr className="border-b border-border bg-muted/20">
-                            {["#", "Amount", "Network", "Account", "Account Name", "Status", "Ref", "Date"].map(h => (
+                            {["#", "Amount", "Method", "Account", "Account Name", "Status", "Ref", "Date", "Actions"].map(h => (
                               <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
                             ))}
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-border">
-                          {storeWithdrawals.map((w: any) => (
+                          {storeWithdrawals.map((w: any) => {
+                            const isPending = w.status === "pending" || w.status === "processing";
+                            const isActioning = withdrawalActionId === w.id;
+                            return (
                             <tr key={w.id} className="hover:bg-muted/20 transition-colors">
                               <td className="px-4 py-3 font-mono text-xs text-muted-foreground">#{w.id}</td>
                               <td className="px-4 py-3 font-bold text-foreground">GH₵{w.amount.toFixed(2)}</td>
                               <td className="px-4 py-3">
                                 <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${NETWORK_BADGE[w.momoNetwork] ?? "bg-gray-100 text-gray-700"}`}>
-                                  {NETWORK_LABEL[w.momoNetwork] ?? w.momoNetwork}
+                                  {NETWORK_LABEL[w.momoNetwork] ?? w.method ?? w.momoNetwork ?? "—"}
                                 </span>
                               </td>
-                              <td className="px-4 py-3 font-mono text-xs">{w.momoNumber}</td>
+                              <td className="px-4 py-3 font-mono text-xs">{w.momoNumber ?? w.accountNumber ?? "—"}</td>
                               <td className="px-4 py-3 text-xs">{w.accountName ?? "—"}</td>
                               <td className="px-4 py-3">
                                 <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${STATUS_COLORS[w.status] ?? "bg-gray-100 text-gray-700"}`}>
                                   {w.status}
                                 </span>
                               </td>
-                              <td className="px-4 py-3 font-mono text-[10px] text-muted-foreground max-w-[120px] truncate">{w.paystackReference ?? "—"}</td>
+                              <td className="px-4 py-3 font-mono text-[10px] text-muted-foreground max-w-[120px] truncate">{w.paystackReference ?? w.note ?? "—"}</td>
                               <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(w.createdAt)}</td>
+                              <td className="px-4 py-3">
+                                {isPending ? (
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      onClick={() => handleWithdrawalApprove(w.id)}
+                                      disabled={isActioning}
+                                      className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold bg-emerald-100 text-emerald-700 hover:bg-emerald-200 disabled:opacity-50 transition-colors whitespace-nowrap"
+                                      title="Approve withdrawal"
+                                    >
+                                      <ThumbsUp className="w-3 h-3" />
+                                      {isActioning ? "…" : "Approve"}
+                                    </button>
+                                    <button
+                                      onClick={() => handleWithdrawalReject(w.id)}
+                                      disabled={isActioning}
+                                      className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold bg-red-100 text-red-700 hover:bg-red-200 disabled:opacity-50 transition-colors whitespace-nowrap"
+                                      title="Reject and refund to store balance"
+                                    >
+                                      <ThumbsDown className="w-3 h-3" />
+                                      {isActioning ? "…" : "Reject"}
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <span className="text-xs text-muted-foreground/40 italic">—</span>
+                                )}
+                              </td>
                             </tr>
-                          ))}
+                            );
+                          })}
                         </tbody>
                       </table>
                     )}
