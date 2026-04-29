@@ -42,7 +42,7 @@ export function Navbar() {
             )}
             <Link href="/bundles">
               <Button variant={location === "/bundles" ? "secondary" : "ghost"} size="sm">
-                Browse Plans
+                Packages
               </Button>
             </Link>
             {isAuthenticated && !isAdmin && (
@@ -169,7 +169,7 @@ export function Navbar() {
               </Link>
             )}
             <Link href="/bundles" onClick={() => setMenuOpen(false)}>
-              <Button variant="ghost" className="w-full justify-start">Browse Plans</Button>
+              <Button variant="ghost" className="w-full justify-start">Packages</Button>
             </Link>
             {isAuthenticated && !isAdmin && (
               <>

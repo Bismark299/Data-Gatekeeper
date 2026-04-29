@@ -49,13 +49,16 @@ function DashboardContent() {
   const { data: orders, isLoading } = useListMyOrders();
   const { data: wallet } = useGetWalletBalance();
 
-  const totalOrders    = orders?.length ?? 0;
-  const completed      = orders?.filter(o => o.status === "completed") ?? [];
-  const pending        = orders?.filter(o => o.status === "pending" || o.status === "processing") ?? [];
-  const failed         = orders?.filter(o => o.status === "failed") ?? [];
-  const totalSpent     = completed.reduce((s, o) => s + o.price, 0);
-  const lastOrder      = orders?.[0];
-  const recentOrders   = orders?.slice(0, 5) ?? [];
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+
+  const todayOrders   = orders?.filter(o => new Date(o.createdAt) >= todayStart) ?? [];
+  const completed     = todayOrders.filter(o => o.status === "completed");
+  const pending       = todayOrders.filter(o => o.status === "pending" || o.status === "processing");
+  const failed        = todayOrders.filter(o => o.status === "failed");
+  const totalSpent    = completed.reduce((s, o) => s + o.price, 0);
+  const lastOrder     = orders?.[0];
+  const recentOrders  = orders?.slice(0, 5) ?? [];
 
   const initials = user?.name
     ? user.name.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2)
@@ -71,11 +74,11 @@ function DashboardContent() {
       href: "/wallet",
     },
     {
-      label: "Total Orders",
-      value: totalOrders,
+      label: "Today's Orders",
+      value: todayOrders.length,
       icon: ShoppingCart,
       color: "bg-blue-500/10 text-blue-600",
-      sub: "All time",
+      sub: "Placed today",
       href: "/orders",
     },
     {
@@ -83,7 +86,7 @@ function DashboardContent() {
       value: completed.length,
       icon: CheckCircle2,
       color: "bg-green-500/10 text-green-600",
-      sub: "Successfully fulfilled",
+      sub: "Today",
       href: "/orders",
     },
     {
@@ -91,11 +94,11 @@ function DashboardContent() {
       value: pending.length,
       icon: Clock,
       color: "bg-yellow-500/10 text-yellow-600",
-      sub: "In progress",
+      sub: "In progress today",
       href: "/orders",
     },
     {
-      label: "Total Spent",
+      label: "Spent Today",
       value: `GH₵${totalSpent.toFixed(2)}`,
       icon: TrendingUp,
       color: "bg-purple-500/10 text-purple-600",
@@ -103,7 +106,7 @@ function DashboardContent() {
       href: "/orders",
     },
     {
-      label: "Failed Orders",
+      label: "Failed Today",
       value: failed.length,
       icon: AlertCircle,
       color: "bg-red-500/10 text-red-500",
@@ -215,7 +218,7 @@ function DashboardContent() {
               <ShoppingCart className="w-10 h-10 mb-3 opacity-20" />
               <p className="text-sm mb-4">No orders yet</p>
               <Link href="/bundles">
-                <Button size="sm" data-testid="button-browse-empty">Browse Plans</Button>
+                <Button size="sm" data-testid="button-browse-empty">Packages</Button>
               </Link>
             </div>
           ) : (

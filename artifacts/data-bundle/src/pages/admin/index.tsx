@@ -20,7 +20,7 @@ import {
   Menu, Users, ShoppingCart, DollarSign, Package, Clock,
   CheckCircle2, AlertTriangle, ChevronLeft, ChevronRight,
   Search, X, RefreshCw, ArrowUpRight, BarChart3, Wallet,
-  XCircle, Copy, Zap, AlertCircle, Trash2, Store,
+  XCircle, Copy, Zap, AlertCircle, Trash2, Store, TrendingUp,
 } from "lucide-react";
 
 const PAGE_SIZE = 10;
@@ -50,10 +50,10 @@ const fmtDate = (iso: string) =>
   new Date(iso).toLocaleString("en-GH", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true });
 
 function StatCard({
-  icon: Icon, label, value, sub, colorClass, bgClass, accent, pulse,
+  icon: Icon, label, value, moneyValue, sub, colorClass, bgClass, accent, pulse,
 }: {
   icon: React.ElementType; label: string; value: string | number;
-  sub: string; colorClass: string; bgClass: string; accent?: boolean; pulse?: boolean;
+  moneyValue?: string; sub: string; colorClass: string; bgClass: string; accent?: boolean; pulse?: boolean;
 }) {
   return (
     <div
@@ -73,6 +73,11 @@ function StatCard({
         <div className={`text-3xl font-extrabold tracking-tight ${accent ? "text-primary-foreground" : "text-foreground"}`}>
           {value}
         </div>
+        {moneyValue && (
+          <div className={`text-sm font-bold mt-0.5 ${accent ? "text-primary-foreground/80" : "text-emerald-600 dark:text-emerald-400"}`}>
+            {moneyValue}
+          </div>
+        )}
         <div className={`text-xs mt-1 flex items-center gap-1.5 ${accent ? "text-primary-foreground/60" : "text-muted-foreground"}`}>
           {pulse && (
             <span className="relative flex h-2 w-2 shrink-0">
@@ -220,14 +225,23 @@ function AdminDashboardContent() {
     return src;
   }, [allOrders, dateFrom, dateTo]);
 
+  const sumPrice = (orders: typeof dayOrders) =>
+    `GH₵${orders.reduce((s, o) => s + Number(o.price), 0).toFixed(2)}`;
+
+  const dayPending    = dayOrders.filter(o => o.status === "pending");
+  const dayCompleted  = dayOrders.filter(o => o.status === "completed");
+  const dayProcessing = dayOrders.filter(o => o.status === "processing");
+  const dayFailed     = dayOrders.filter(o => o.status === "failed" || o.status === "cancelled");
+  const todayRevenue  = dayCompleted.reduce((s, o) => s + Number(o.price), 0);
+
   const statCards = useMemo(() => stats ? [
     { icon: Wallet,       label: "Wallet Balance",  value: `GH₵${((stats as { totalWalletBalance?: number }).totalWalletBalance ?? 0).toFixed(2)}`, sub: "Total user wallet funds",              colorClass: "text-emerald-600", bgClass: "bg-emerald-100 dark:bg-emerald-900/20", accent: true },
-    { icon: ShoppingCart, label: "Total Orders",    value: dayOrders.length,    sub: dateFrom === dateTo ? `For ${dateFrom}` : `${dateFrom} → ${dateTo}`,         colorClass: "text-violet-600",  bgClass: "bg-violet-100 dark:bg-violet-900/20" },
-    { icon: Clock,        label: "Pending Orders",  value: dayOrders.filter(o => o.status === "pending").length,  sub: "Awaiting processing",                       colorClass: "text-amber-600",   bgClass: "bg-amber-100 dark:bg-amber-900/20",   pulse: dayOrders.filter(o => o.status === "pending").length > 0 },
-    { icon: CheckCircle2, label: "Completed",       value: dayOrders.filter(o => o.status === "completed").length, sub: "Successfully fulfilled",                   colorClass: "text-teal-600",    bgClass: "bg-teal-100 dark:bg-teal-900/20" },
-    { icon: Zap,          label: "Processing",      value: dayOrders.filter(o => o.status === "processing").length, sub: "Currently being processed",     colorClass: "text-sky-600",     bgClass: "bg-sky-100 dark:bg-sky-900/20",       pulse: dayOrders.filter(o => o.status === "processing").length > 0 },
-    { icon: AlertCircle,  label: "Failed",          value: dayOrders.filter(o => o.status === "failed" || o.status === "cancelled").length, sub: "Failed or cancelled",                  colorClass: "text-red-600",     bgClass: "bg-red-100 dark:bg-red-900/20" },
-  ] : [], [stats, dayOrders, dateFrom, dateTo]);
+    { icon: ShoppingCart, label: "Total Orders",    value: dayOrders.length,    moneyValue: sumPrice(dayOrders),    sub: dateFrom === dateTo ? `For ${dateFrom}` : `${dateFrom} → ${dateTo}`,  colorClass: "text-violet-600",  bgClass: "bg-violet-100 dark:bg-violet-900/20" },
+    { icon: Clock,        label: "Pending Orders",  value: dayPending.length,   moneyValue: sumPrice(dayPending),   sub: "Awaiting processing",   colorClass: "text-amber-600",   bgClass: "bg-amber-100 dark:bg-amber-900/20",   pulse: dayPending.length > 0 },
+    { icon: CheckCircle2, label: "Completed",       value: dayCompleted.length, moneyValue: sumPrice(dayCompleted), sub: "Successfully fulfilled", colorClass: "text-teal-600",    bgClass: "bg-teal-100 dark:bg-teal-900/20" },
+    { icon: Zap,          label: "Processing",      value: dayProcessing.length, moneyValue: sumPrice(dayProcessing), sub: "Currently being processed", colorClass: "text-sky-600", bgClass: "bg-sky-100 dark:bg-sky-900/20", pulse: dayProcessing.length > 0 },
+    { icon: AlertCircle,  label: "Failed",          value: dayFailed.length,    moneyValue: sumPrice(dayFailed),    sub: "Failed or cancelled",   colorClass: "text-red-600",     bgClass: "bg-red-100 dark:bg-red-900/20" },
+  ] : [], [stats, dayOrders, dayPending, dayCompleted, dayProcessing, dayFailed, dateFrom, dateTo]);
 
   const pendingDeposits = useMemo(() => (deposits ?? []).filter(d => d.status === "pending"), [deposits]);
 
@@ -304,6 +318,18 @@ function AdminDashboardContent() {
           <div className="flex-1">
             <h1 className="text-xl font-bold text-foreground">Admin Dashboard</h1>
             <p className="text-xs text-muted-foreground">{today}</p>
+          </div>
+          {/* Revenue pill */}
+          <div className="hidden sm:flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800">
+            <TrendingUp className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+            <div className="leading-none">
+              <div className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold uppercase tracking-wide">
+                {dateFrom === dateTo && dateFrom === todayStr ? "Today's Revenue" : "Period Revenue"}
+              </div>
+              <div className="text-base font-extrabold text-emerald-700 dark:text-emerald-300">
+                GH₵{todayRevenue.toFixed(2)}
+              </div>
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={handleRefresh} className="gap-1.5">

@@ -49,6 +49,8 @@ const NETWORK_COLORS: Record<string, string> = {
   "at-bigtime": "bg-green-700 text-white",
 };
 
+const todayStr = new Date().toISOString().slice(0, 10);
+
 export default function Orders() {
   return (
     <ProtectedRoute>
@@ -62,8 +64,8 @@ function OrdersContent() {
 
   const [activeStatus, setActiveStatus] = useState<StatusKey>("all");
   const [phoneSearch, setPhoneSearch] = useState("");
-  const [dateFrom, setDateFrom]       = useState("");
-  const [dateTo, setDateTo]           = useState("");
+  const [dateFrom, setDateFrom]       = useState(todayStr);
+  const [dateTo, setDateTo]           = useState(todayStr);
 
   const counts = useMemo(() => {
     const all = orders ?? [];
@@ -104,18 +106,20 @@ function OrdersContent() {
   }, [orders, activeStatus, phoneSearch, dateFrom, dateTo]);
 
   const totalSpent = useMemo(
-    () => (orders ?? []).filter(o => o.status === "completed").reduce((s, o) => s + o.price, 0),
-    [orders]
+    () => filtered.filter(o => o.status === "completed").reduce((s, o) => s + o.price, 0),
+    [filtered]
   );
 
   const clearFilters = () => {
     setActiveStatus("all");
     setPhoneSearch("");
-    setDateFrom("");
-    setDateTo("");
+    setDateFrom(todayStr);
+    setDateTo(todayStr);
   };
 
-  const hasActiveFilters = activeStatus !== "all" || phoneSearch || dateFrom || dateTo;
+  const hasActiveFilters =
+    activeStatus !== "all" || phoneSearch.trim() !== "" ||
+    dateFrom !== todayStr || dateTo !== todayStr;
 
   return (
     <div className="min-h-screen bg-background">
@@ -128,7 +132,7 @@ function OrdersContent() {
           <div>
             <h1 className="text-2xl font-bold text-foreground">My Orders</h1>
             <p className="text-muted-foreground text-sm mt-0.5">
-              {(orders?.length ?? 0)} total orders · GH₵{totalSpent.toFixed(2)} spent
+              {filtered.length} order{filtered.length !== 1 ? "s" : ""} · GH₵{totalSpent.toFixed(2)} spent
             </p>
           </div>
           <Link href="/bundles">
@@ -205,19 +209,21 @@ function OrdersContent() {
             </div>
           </div>
 
-          {hasActiveFilters && (
-            <div className="flex items-center justify-between pt-1">
-              <span className="text-xs text-muted-foreground">
-                Showing {filtered.length} of {orders?.length ?? 0} orders
-              </span>
+          <div className="flex items-center justify-between pt-1">
+            <span className="text-xs text-muted-foreground">
+              {dateFrom === dateTo
+                ? `Showing ${filtered.length} order${filtered.length !== 1 ? "s" : ""} for ${dateFrom === todayStr ? "today" : dateFrom}`
+                : `Showing ${filtered.length} order${filtered.length !== 1 ? "s" : ""} — ${dateFrom} to ${dateTo}`}
+            </span>
+            {hasActiveFilters && (
               <button
                 className="text-xs text-primary font-semibold hover:underline"
                 onClick={clearFilters}
               >
-                Clear all filters
+                Reset to today
               </button>
-            </div>
-          )}
+            )}
+          </div>
         </div>
 
         {/* Table */}
@@ -234,14 +240,14 @@ function OrdersContent() {
                   <p className="text-sm font-medium mb-1">No orders yet</p>
                   <p className="text-xs mb-4">Purchase your first data bundle to get started</p>
                   <Link href="/bundles">
-                    <Button size="sm" data-testid="button-shop-now">Browse Plans</Button>
+                    <Button size="sm" data-testid="button-shop-now">Packages</Button>
                   </Link>
                 </>
               ) : (
                 <>
-                  <p className="text-sm font-medium mb-1">No orders match your filters</p>
+                  <p className="text-sm font-medium mb-1">No orders for this period</p>
                   <button className="text-xs text-primary mt-1 font-semibold" onClick={clearFilters}>
-                    Clear filters
+                    Reset filters
                   </button>
                 </>
               )}
@@ -254,6 +260,7 @@ function OrdersContent() {
                     <th className="text-left px-5 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wide">Date</th>
                     <th className="text-left px-5 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wide">Order ID</th>
                     <th className="text-left px-5 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wide">Phone</th>
+                    <th className="text-left px-5 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wide">Data</th>
                     <th className="text-left px-5 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wide">Network</th>
                     <th className="text-left px-5 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wide">Amount</th>
                     <th className="text-left px-5 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wide">Status</th>
@@ -276,6 +283,7 @@ function OrdersContent() {
                         </td>
                         <td className="px-5 py-3.5 text-muted-foreground text-xs font-mono">#{order.id}</td>
                         <td className="px-5 py-3.5 text-foreground font-mono text-xs">{order.phoneNumber}</td>
+                        <td className="px-5 py-3.5 font-semibold text-foreground text-xs">{(order as { bundleData?: string }).bundleData ?? "—"}</td>
                         <td className="px-5 py-3.5">
                           <span className={`inline-block px-2 py-0.5 rounded-md text-xs font-extrabold ${netColor}`}>
                             {netLabel}
