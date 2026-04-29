@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { eq, and, desc } from "drizzle-orm";
-import { db, ordersTable, bundlesTable, walletsTable, walletLedgerTable } from "@workspace/db";
+import { db, ordersTable, bundlesTable, walletsTable, walletLedgerTable, usersTable } from "@workspace/db";
 import {
   CreateOrderBody,
   GetOrderParams,
@@ -62,7 +62,8 @@ router.post("/orders", requireAuth, async (req, res): Promise<void> => {
     return;
   }
 
-  const userRole = req.session.userRole;
+  const [currentUser] = await db.select({ role: usersTable.role }).from(usersTable).where(eq(usersTable.id, userId));
+  const userRole = currentUser?.role ?? "user";
   const effectivePrice =
     userRole === "dealer" && bundle.dealerPrice != null ? bundle.dealerPrice :
     userRole === "agent"  && bundle.agentPrice  != null ? bundle.agentPrice  :
@@ -111,7 +112,8 @@ router.post("/orders/purchase", requireAuth, async (req, res): Promise<void> => 
     return;
   }
 
-  const userRole = req.session.userRole;
+  const [currentUser2] = await db.select({ role: usersTable.role }).from(usersTable).where(eq(usersTable.id, userId));
+  const userRole = currentUser2?.role ?? "user";
   const rawPrice =
     userRole === "dealer" && bundle.dealerPrice != null ? bundle.dealerPrice :
     userRole === "agent"  && bundle.agentPrice  != null ? bundle.agentPrice  :

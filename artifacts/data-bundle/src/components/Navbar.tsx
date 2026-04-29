@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/tooltip";
 
 export function Navbar() {
-  const { isAuthenticated, isAdmin, signOut } = useAuth();
+  const { isAuthenticated, isAdmin, user, signOut } = useAuth();
   const { cartCount, setOpen: setCartOpen } = useCart();
   const { data: wallet } = useGetWalletBalance({ query: { enabled: isAuthenticated } });
   const [location] = useLocation();
@@ -70,6 +70,17 @@ export function Navbar() {
 
           {/* Right side icons */}
           <div className="flex items-center gap-1.5">
+            {/* Role badge */}
+            {isAuthenticated && user?.role && !isAdmin && (
+              <span className={`hidden sm:inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold uppercase tracking-wider ${
+                user.role === "dealer" ? "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400" :
+                user.role === "agent"  ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400" :
+                "bg-muted text-muted-foreground"
+              }`}>
+                {user.role}
+              </span>
+            )}
+
             {/* Wallet balance pill */}
             {isAuthenticated && wallet !== undefined && (
               <Link href="/wallet">

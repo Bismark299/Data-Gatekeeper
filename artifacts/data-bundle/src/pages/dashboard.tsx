@@ -128,9 +128,21 @@ function DashboardContent() {
               {initials}
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-foreground">
-                Welcome back, {user?.name?.split(" ")[0] ?? "there"}
-              </h1>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h1 className="text-2xl font-bold text-foreground">
+                  Welcome back, {user?.name?.split(" ")[0] ?? "there"}
+                </h1>
+                {user?.role && user.role !== "user" && (
+                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold uppercase tracking-wide ${
+                    user.role === "admin"  ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400" :
+                    user.role === "dealer" ? "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400" :
+                    user.role === "agent"  ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400" :
+                    "bg-muted text-muted-foreground"
+                  }`}>
+                    {user.role}
+                  </span>
+                )}
+              </div>
               <p className="text-muted-foreground text-sm mt-0.5">{user?.email}</p>
             </div>
           </div>
