@@ -12,12 +12,16 @@ import {
 } from "lucide-react";
 
 const NETWORK_BADGE: Record<string, string> = {
-  mtn:       "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400",
-  telecel:   "bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400",
+  MTN:  "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400",
+  VDF:  "bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400",
+  ATL:  "bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400",
+  mtn:  "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400",
+  telecel: "bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400",
   "at-ishare":  "bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400",
   "at-bigtime": "bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400",
 };
 const NETWORK_LABEL: Record<string, string> = {
+  MTN: "MTN MoMo", VDF: "Telecel Cash", ATL: "AirtelTigo",
   mtn: "MTN", telecel: "Telecel", "at-ishare": "AT iShare", "at-bigtime": "AT Big-Time",
 };
 
@@ -27,6 +31,13 @@ const STATUS_COLORS: Record<string, string> = {
   completed:  "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400",
   failed:     "bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400",
   cancelled:  "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400",
+};
+const STATUS_LABEL: Record<string, string> = {
+  pending:    "Awaiting Admin",
+  processing: "Sent via Paystack",
+  completed:  "Paid",
+  failed:     "Failed",
+  cancelled:  "Refunded",
 };
 
 const fmtDate = (iso: string) =>
@@ -296,37 +307,38 @@ function AdminStoresContent() {
                         </thead>
                         <tbody className="divide-y divide-border">
                           {storeWithdrawals.map((w: any) => {
-                            const isPending = w.status === "pending" || w.status === "processing";
+                            const needsAction = w.status === "pending";
                             const isActioning = withdrawalActionId === w.id;
+                            const networkKey = w.bankCode ?? w.momoNetwork;
                             return (
-                            <tr key={w.id} className="hover:bg-muted/20 transition-colors">
+                            <tr key={w.id} className={`hover:bg-muted/20 transition-colors ${needsAction ? "bg-amber-50/40 dark:bg-amber-900/5" : ""}`}>
                               <td className="px-4 py-3 font-mono text-xs text-muted-foreground">#{w.id}</td>
                               <td className="px-4 py-3 font-bold text-foreground">GH₵{w.amount.toFixed(2)}</td>
                               <td className="px-4 py-3">
-                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${NETWORK_BADGE[w.momoNetwork] ?? "bg-gray-100 text-gray-700"}`}>
-                                  {NETWORK_LABEL[w.momoNetwork] ?? w.method ?? w.momoNetwork ?? "—"}
+                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${NETWORK_BADGE[networkKey] ?? "bg-gray-100 text-gray-700"}`}>
+                                  {NETWORK_LABEL[networkKey] ?? w.method ?? networkKey ?? "—"}
                                 </span>
                               </td>
-                              <td className="px-4 py-3 font-mono text-xs">{w.momoNumber ?? w.accountNumber ?? "—"}</td>
-                              <td className="px-4 py-3 text-xs">{w.accountName ?? "—"}</td>
+                              <td className="px-4 py-3 font-mono text-xs">{w.accountNumber || "—"}</td>
+                              <td className="px-4 py-3 text-xs font-medium">{w.accountName || "—"}</td>
                               <td className="px-4 py-3">
                                 <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${STATUS_COLORS[w.status] ?? "bg-gray-100 text-gray-700"}`}>
-                                  {w.status}
+                                  {STATUS_LABEL[w.status] ?? w.status}
                                 </span>
                               </td>
-                              <td className="px-4 py-3 font-mono text-[10px] text-muted-foreground max-w-[120px] truncate">{w.paystackReference ?? w.note ?? "—"}</td>
+                              <td className="px-4 py-3 font-mono text-[10px] text-muted-foreground max-w-[120px] truncate" title={w.note}>{w.note || "—"}</td>
                               <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(w.createdAt)}</td>
                               <td className="px-4 py-3">
-                                {isPending ? (
+                                {needsAction ? (
                                   <div className="flex items-center gap-1">
                                     <button
                                       onClick={() => handleWithdrawalApprove(w.id)}
                                       disabled={isActioning}
                                       className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold bg-emerald-100 text-emerald-700 hover:bg-emerald-200 disabled:opacity-50 transition-colors whitespace-nowrap"
-                                      title="Approve withdrawal"
+                                      title="Send via Paystack"
                                     >
                                       <ThumbsUp className="w-3 h-3" />
-                                      {isActioning ? "…" : "Approve"}
+                                      {isActioning ? "Sending…" : "Send"}
                                     </button>
                                     <button
                                       onClick={() => handleWithdrawalReject(w.id)}
@@ -335,7 +347,7 @@ function AdminStoresContent() {
                                       title="Reject and refund to store balance"
                                     >
                                       <ThumbsDown className="w-3 h-3" />
-                                      {isActioning ? "…" : "Reject"}
+                                      {isActioning ? "…" : "Refund"}
                                     </button>
                                   </div>
                                 ) : (

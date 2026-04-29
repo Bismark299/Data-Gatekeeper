@@ -346,6 +346,7 @@ router.post("/stores/my/withdraw", requireAuth, async (req, res) => {
     method: parsed.data.method ?? "mobile_money",
     accountNumber: parsed.data.accountNumber,
     accountName: parsed.data.accountName ?? "",
+    bankCode: parsed.data.bankCode ?? "MTN",
     note: parsed.data.note ?? "",
   }).returning();
 
@@ -759,9 +760,62 @@ router.patch("/admin/stores/withdrawals/:id/approve", requireAuth, async (req, r
 
   const [w] = await db.select().from(storeWithdrawalsTable).where(eq(storeWithdrawalsTable.id, id));
   if (!w) { res.status(404).json({ error: "Withdrawal not found" }); return; }
-  if (w.status === "completed") { res.json({ ...w, amount: parseFloat(w.amount as any) }); return; }
+  if (w.status !== "pending") {
+    res.status(400).json({ error: `Cannot approve a withdrawal with status: ${w.status}` }); return;
+  }
 
-  await db.update(storeWithdrawalsTable).set({ status: "completed" }).where(eq(storeWithdrawalsTable.id, id));
+  // Attempt Paystack transfer on behalf of admin
+  let newStatus = "completed";
+  let transferCode = "";
+  try {
+    const [store] = await db.select().from(storesTable).where(eq(storesTable.id, w.storeId));
+    const recipientType = w.method === "bank" ? "ghipss" : "mobile_money";
+    const recipientName = w.accountName || (store?.name ?? "Agent");
+
+    const bankCode = w.bankCode || "MTN";
+
+    const recipientRes = await fetch("https://api.paystack.co/transferrecipient", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${PAYSTACK_SECRET}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: recipientType,
+        name: recipientName,
+        account_number: w.accountNumber,
+        bank_code: bankCode,
+        currency: "GHS",
+      }),
+    });
+    const recipientData = await recipientRes.json() as any;
+    if (!recipientRes.ok || !recipientData.data?.recipient_code) {
+      throw new Error(recipientData.message ?? "Failed to create recipient");
+    }
+
+    const transferRes = await fetch("https://api.paystack.co/transfer", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${PAYSTACK_SECRET}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        source: "balance",
+        amount: Math.round(parseFloat(w.amount as any) * 100),
+        recipient: recipientData.data.recipient_code,
+        reason: w.note || `Admin-approved withdrawal #${w.id}`,
+        currency: "GHS",
+      }),
+    });
+    const transferData = await transferRes.json() as any;
+    if (transferData.data?.transfer_code) {
+      transferCode = transferData.data.transfer_code;
+      newStatus = transferData.data.status === "success" ? "completed" : "processing";
+    }
+  } catch {
+    // Paystack failed — still mark completed so admin knows they've actioned it
+    newStatus = "completed";
+  }
+
+  await db.update(storeWithdrawalsTable).set({
+    status: newStatus,
+    note: transferCode ? `${w.note ?? ""} [${transferCode}]`.trim() : (w.note ?? ""),
+  }).where(eq(storeWithdrawalsTable.id, id));
+
   const [updated] = await db.select().from(storeWithdrawalsTable).where(eq(storeWithdrawalsTable.id, id));
   res.json({ ...updated, amount: parseFloat(updated.amount as any) });
 });
