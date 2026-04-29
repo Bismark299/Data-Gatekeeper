@@ -36,7 +36,7 @@ function AdminUsersContent() {
   const [, navigate] = useLocation();
   const [sidebarOpen, setSidebarOpen]  = useState(false);
   const [search, setSearch]            = useState("");
-  const [roleFilter, setRoleFilter]    = useState<"all" | "user" | "dealer" | "admin">("all");
+  const [roleFilter, setRoleFilter]    = useState<"all" | "user" | "agent" | "dealer" | "admin">("all");
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("all");
   const [deleting, setDeleting]        = useState<{ id: number; name: string } | null>(null);
   const [resetResult, setResetResult]  = useState<{ name: string; tempPassword: string } | null>(null);
@@ -47,7 +47,7 @@ function AdminUsersContent() {
   const [newEmail, setNewEmail]        = useState("");
   const [newPhone, setNewPhone]        = useState("");
   const [newPassword, setNewPassword]  = useState("");
-  const [newRole, setNewRole]          = useState<"user" | "dealer" | "admin">("user");
+  const [newRole, setNewRole]          = useState<"user" | "agent" | "dealer" | "admin">("user");
   const [createError, setCreateError]  = useState("");
 
   const { toast }   = useToast();
@@ -73,7 +73,7 @@ function AdminUsersContent() {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "Failed to create user");
-      toast({ title: `${newRole === "admin" ? "Admin" : newRole === "dealer" ? "Dealer" : "User"} account created for ${newName}` });
+      toast({ title: `${newRole === "admin" ? "Admin" : newRole === "dealer" ? "Dealer" : newRole === "agent" ? "Agent" : "User"} account created for ${newName}` });
       setCreateOpen(false);
       setNewName(""); setNewEmail(""); setNewPhone(""); setNewPassword(""); setNewRole("user");
       invalidate();
@@ -122,6 +122,7 @@ function AdminUsersContent() {
     return {
       total: src.length,
       admins: src.filter(u => u.role === "admin").length,
+      agents: src.filter(u => u.role === "agent").length,
       dealers: src.filter(u => u.role === "dealer").length,
       active: src.filter(u => u.isActive).length,
     };
@@ -188,8 +189,8 @@ function AdminUsersContent() {
             {[
               { label: "Total Users", value: counts.total, color: "text-sky-600", bg: "bg-sky-100 dark:bg-sky-900/20", icon: Users },
               { label: "Active",      value: counts.active, color: "text-emerald-600", bg: "bg-emerald-100 dark:bg-emerald-900/20", icon: CheckCircle2 },
+              { label: "Agents",      value: counts.agents, color: "text-green-600", bg: "bg-green-100 dark:bg-green-900/20", icon: ShieldCheck },
               { label: "Dealers",     value: counts.dealers, color: "text-amber-600", bg: "bg-amber-100 dark:bg-amber-900/20", icon: ShieldCheck },
-              { label: "Admins",      value: counts.admins, color: "text-violet-600", bg: "bg-violet-100 dark:bg-violet-900/20", icon: ShieldCheck },
             ].map(c => (
               <div key={c.label} className="bg-card border border-border rounded-2xl p-4 flex items-center gap-3">
                 <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${c.bg}`}>
@@ -223,7 +224,8 @@ function AdminUsersContent() {
               <div className="flex items-center gap-1">
                 {([
                   { v: "all",    label: "All Roles" },
-                  { v: "user",   label: "Agents" },
+                  { v: "user",   label: "Users" },
+                  { v: "agent",  label: "Agents" },
                   { v: "dealer", label: "Dealers" },
                   { v: "admin",  label: "Admins" },
                 ] as const).map(r => (
@@ -316,6 +318,7 @@ function AdminUsersContent() {
                                 className={`h-7 px-2.5 text-xs font-semibold border-0 w-auto gap-1 ${
                                   u.role === "admin"  ? "bg-violet-100 text-violet-700 dark:bg-violet-900/20 dark:text-violet-400" :
                                   u.role === "dealer" ? "bg-amber-100 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400" :
+                                  u.role === "agent"  ? "bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-400" :
                                   "bg-sky-100 text-sky-700 dark:bg-sky-900/20 dark:text-sky-400"
                                 }`}
                                 data-testid={`badge-role-${u.id}`}
@@ -323,7 +326,8 @@ function AdminUsersContent() {
                                 <SelectValue />
                               </SelectTrigger>
                               <SelectContent>
-                                <SelectItem value="user">Agent</SelectItem>
+                                <SelectItem value="user">User</SelectItem>
+                                <SelectItem value="agent">Agent</SelectItem>
                                 <SelectItem value="dealer">Dealer</SelectItem>
                                 <SelectItem value="admin">Admin</SelectItem>
                               </SelectContent>
@@ -429,10 +433,11 @@ function AdminUsersContent() {
             </div>
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-foreground">Role *</label>
-              <Select value={newRole} onValueChange={v => setNewRole(v as "user" | "dealer" | "admin")}>
+              <Select value={newRole} onValueChange={v => setNewRole(v as "user" | "agent" | "dealer" | "admin")}>
                 <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="user">Agent (regular user)</SelectItem>
+                  <SelectItem value="user">User</SelectItem>
+                  <SelectItem value="agent">Agent</SelectItem>
                   <SelectItem value="dealer">Dealer</SelectItem>
                   <SelectItem value="admin">Admin</SelectItem>
                 </SelectContent>

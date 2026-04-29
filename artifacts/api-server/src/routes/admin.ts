@@ -186,7 +186,7 @@ router.post("/admin/users", requireAdmin, async (req, res): Promise<void> => {
     email:    z.string().email(),
     phone:    z.string().min(7).max(20).optional(),
     password: z.string().min(6),
-    role:     z.enum(["user", "dealer", "admin"]).default("user"),
+    role:     z.enum(["user", "agent", "dealer", "admin"]).default("user"),
   });
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) {
