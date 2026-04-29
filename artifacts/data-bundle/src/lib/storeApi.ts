@@ -38,6 +38,7 @@ export interface StoreStats {
 export interface StoreWithdrawal {
   id: number; storeId: number; amount: number; status: string;
   method: string; accountNumber: string; accountName: string; note: string; createdAt: string;
+  autoMessage?: "sent" | "processing" | "awaiting_admin";
 }
 export interface PublicStore {
   store: { id: number; name: string; slug: string; description: string; colorTheme: string; };

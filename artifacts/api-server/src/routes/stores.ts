@@ -349,50 +349,79 @@ router.post("/stores/my/withdraw", requireAuth, async (req, res) => {
     note: parsed.data.note ?? "",
   }).returning();
 
-  // Initiate Paystack transfer
+  // ── Step 1: Check Paystack balance before attempting transfer ────────────────
+  let paystackBalanceGHS = 0;
+  try {
+    const balRes = await fetch("https://api.paystack.co/balance", {
+      headers: { Authorization: `Bearer ${PAYSTACK_SECRET}` },
+    });
+    const balData = await balRes.json() as { status: boolean; data?: { currency: string; balance: number }[] };
+    if (balData.status && balData.data) {
+      const ghsEntry = balData.data.find(b => b.currency === "GHS");
+      paystackBalanceGHS = ghsEntry ? ghsEntry.balance / 100 : 0;
+    }
+  } catch {
+    // Balance check failed — fall through to pending queue
+  }
+
+  // ── Step 2: Auto-process if Paystack has sufficient funds ─────────────────
   let transferStatus = "pending";
   let transferCode = "";
-  try {
-    // Step 1: Create transfer recipient
-    const recipientType = parsed.data.method === "bank" ? "ghipss" : "mobile_money";
-    const bankCode = parsed.data.bankCode ?? "MTN";
-    const recipientName = parsed.data.accountName || store.name;
-    const recipientRes = await fetch("https://api.paystack.co/transferrecipient", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${PAYSTACK_SECRET}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        type: recipientType,
-        name: recipientName,
-        account_number: parsed.data.accountNumber,
-        bank_code: bankCode,
-        currency: "GHS",
-      }),
-    });
-    const recipientData = await recipientRes.json() as any;
-    if (!recipientRes.ok || !recipientData.data?.recipient_code) {
-      throw new Error(recipientData.message ?? "Failed to create recipient");
-    }
-    const recipientCode: string = recipientData.data.recipient_code;
+  let autoMessage = "awaiting_admin";
 
-    // Step 2: Initiate transfer (amount in pesewas = GHS * 100)
-    const transferRes = await fetch("https://api.paystack.co/transfer", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${PAYSTACK_SECRET}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        source: "balance",
-        amount: Math.round(parsed.data.amount * 100),
-        recipient: recipientCode,
-        reason: parsed.data.note || `Profit withdrawal - ${store.name}`,
-        currency: "GHS",
-      }),
-    });
-    const transferData = await transferRes.json() as any;
-    if (transferRes.ok && transferData.data?.transfer_code) {
-      transferCode = transferData.data.transfer_code;
-      transferStatus = transferData.data.status === "success" ? "completed" : "processing";
+  if (paystackBalanceGHS >= parsed.data.amount) {
+    try {
+      // Create transfer recipient
+      const recipientType = parsed.data.method === "bank" ? "ghipss" : "mobile_money";
+      const bankCode = parsed.data.bankCode ?? "MTN";
+      const recipientName = parsed.data.accountName || store.name;
+      const recipientRes = await fetch("https://api.paystack.co/transferrecipient", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${PAYSTACK_SECRET}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: recipientType,
+          name: recipientName,
+          account_number: parsed.data.accountNumber,
+          bank_code: bankCode,
+          currency: "GHS",
+        }),
+      });
+      const recipientData = await recipientRes.json() as any;
+      if (!recipientRes.ok || !recipientData.data?.recipient_code) {
+        throw new Error(recipientData.message ?? "Failed to create recipient");
+      }
+      const recipientCode: string = recipientData.data.recipient_code;
+
+      // Initiate transfer (amount in pesewas)
+      const transferRes = await fetch("https://api.paystack.co/transfer", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${PAYSTACK_SECRET}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source: "balance",
+          amount: Math.round(parsed.data.amount * 100),
+          recipient: recipientCode,
+          reason: parsed.data.note || `Profit withdrawal - ${store.name}`,
+          currency: "GHS",
+        }),
+      });
+      const transferData = await transferRes.json() as any;
+
+      if (transferData.data?.transfer_code) {
+        transferCode = transferData.data.transfer_code;
+        // Paystack requires OTP for this transfer — leave as pending for admin
+        if (transferData.data.status === "otp") {
+          transferStatus = "pending";
+          autoMessage = "awaiting_admin";
+        } else {
+          transferStatus = transferData.data.status === "success" ? "completed" : "processing";
+          autoMessage = transferStatus === "completed" ? "sent" : "processing";
+        }
+      }
+    } catch {
+      // Auto-process failed — silently fall back to pending admin queue
+      transferStatus = "pending";
+      autoMessage = "awaiting_admin";
     }
-  } catch (_err) {
-    // Transfer failed — keep as pending for manual processing
   }
 
   if (transferStatus !== "pending") {
@@ -403,7 +432,7 @@ router.post("/stores/my/withdraw", requireAuth, async (req, res) => {
   }
 
   const [updated] = await db.select().from(storeWithdrawalsTable).where(eq(storeWithdrawalsTable.id, w.id));
-  res.status(201).json({ ...updated, amount: parseFloat(updated.amount) });
+  res.status(201).json({ ...updated, amount: parseFloat(updated.amount), autoMessage });
 });
 
 // ─── PUBLIC STORE ROUTES ──────────────────────────────────────────────────────

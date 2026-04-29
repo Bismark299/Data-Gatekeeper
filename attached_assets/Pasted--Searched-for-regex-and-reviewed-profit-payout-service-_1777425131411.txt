@@ -1,0 +1,32 @@
+
+Searched for regex and reviewed profit-payout.service.js
+No, I missed it — sorry. That's an important piece. Here's the correction:
+
+The Part I Left Out — Instant Auto-Processing
+Right after the withdrawal request is successfully created (still inside requestWithdrawal()), before returning to the agent, the system does one extra step:
+
+The system checks the Paystack account balance immediately.
+
+
+New withdrawal request created (PENDING)        ↓checkPaystackBalance() → calls Paystack's /balance API        ↓        ┌─────────────────────────────────────────────────────┐        │   Paystack balance >= net withdrawal amount?        │        └─────────────────────────────────────────────────────┘              YES ↓                            NO ↓    processSinglePayout() fires         Left as PENDING    immediately (SYSTEM_AUTO)           Message: "Awaiting           ↓                            admin approval"    Transfer goes to Paystack           ↓    PROCESSING → webhook → COMPLETED    Agent gets SMS instantly
+If the Paystack balance is sufficient:
+
+The payout is processed immediately — no admin needed, no waiting for Friday
+Status goes PENDING → PROCESSING → COMPLETED all within the same request
+The agent sees a message like: "Withdrawal of GH₵X.XX sent successfully!" or "...is being processed, you'll receive it shortly"
+If the Paystack balance is insufficient:
+
+The request stays PENDING
+Falls into the normal Friday batch queue for the admin to process
+Agent sees: "Awaiting admin approval"
+If Paystack requires an OTP (can happen for large amounts):
+
+Auto-processing is skipped
+Left as PENDING for the admin to handle manually with the OTP
+If the auto-process itself errors (network issue, Paystack down):
+
+The error is caught silently
+Request stays PENDING — it doesn't fail the withdrawal, it just falls back to the admin queue
+So the updated summary is:
+
+The weekly Friday batch is actually the fallback. The system always tries to pay immediately first. The admin queue only comes into play when the Paystack balance isn't topped up enough to cover the request at that moment.

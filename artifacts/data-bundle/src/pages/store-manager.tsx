@@ -602,6 +602,7 @@ function WithdrawalsTab({ stats, withdrawals, store }: { stats?: StoreStats; wit
   const [bankCode, setBankCode] = useState(store.momoNetwork ?? "MTN");
   const [note, setNote] = useState("");
   const [error, setError] = useState("");
+  const [successMsg, setSuccessMsg] = useState("");
 
   useEffect(() => {
     if (editing) {
@@ -651,10 +652,18 @@ function WithdrawalsTab({ stats, withdrawals, store }: { stats?: StoreStats; wit
 
   const withdraw = useMutation({
     mutationFn: () => storeApi.withdraw({ amount: parseFloat(amount), method, bankCode, accountNumber, accountName, note }),
-    onSuccess: () => {
+    onSuccess: (result) => {
       qc.invalidateQueries({ queryKey: ["myStoreStats"] });
       qc.invalidateQueries({ queryKey: ["myStoreWithdrawals"] });
       qc.invalidateQueries({ queryKey: ["myStore"] });
+      const amt = parseFloat(amount).toFixed(2);
+      if (result.autoMessage === "sent") {
+        setSuccessMsg(`GH₵${amt} sent successfully! It's on its way to your MoMo.`);
+      } else if (result.autoMessage === "processing") {
+        setSuccessMsg(`GH₵${amt} is being processed — you'll receive it shortly.`);
+      } else {
+        setSuccessMsg(`GH₵${amt} withdrawal request queued — awaiting admin approval.`);
+      }
       setAmount(""); setNote(""); setError("");
     },
     onError: (e) => setError((e as Error).message),
@@ -804,9 +813,15 @@ function WithdrawalsTab({ stats, withdrawals, store }: { stats?: StoreStats; wit
           <Input placeholder="e.g. Weekly profits" value={note} onChange={e => setNote(e.target.value)} className="h-10" />
         </div>
 
+        {successMsg && (
+          <div className="flex items-start gap-2.5 rounded-xl border border-emerald-300 bg-emerald-50 dark:bg-emerald-900/10 px-4 py-3">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+            <p className="text-sm font-medium text-emerald-700 dark:text-emerald-400">{successMsg}</p>
+          </div>
+        )}
         {error && <p className="text-sm text-red-600">{error}</p>}
 
-        <Button className="w-full gap-2" onClick={() => withdraw.mutate()} disabled={!canWithdraw}>
+        <Button className="w-full gap-2" onClick={() => { setSuccessMsg(""); withdraw.mutate(); }} disabled={!canWithdraw}>
           {withdraw.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowDownToLine className="w-4 h-4" />}
           Withdraw via Paystack
         </Button>
