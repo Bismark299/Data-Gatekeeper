@@ -672,20 +672,20 @@ router.get("/admin/financial-summary", requireAdmin, async (req, res): Promise<v
   todayStart.setHours(0, 0, 0, 0);
 
   const [completedToday, allCompleted] = await Promise.all([
-    db.select({ price: ordersTable.price, agentPrice: bundlesTable.agentPrice })
+    db.select({ price: ordersTable.price, buyingCost: bundlesTable.price })
       .from(ordersTable)
       .leftJoin(bundlesTable, eq(ordersTable.bundleId, bundlesTable.id))
       .where(and(eq(ordersTable.status, "completed"), gte(ordersTable.createdAt, todayStart))),
-    db.select({ price: ordersTable.price, agentPrice: bundlesTable.agentPrice })
+    db.select({ price: ordersTable.price, buyingCost: bundlesTable.price })
       .from(ordersTable)
       .leftJoin(bundlesTable, eq(ordersTable.bundleId, bundlesTable.id))
       .where(eq(ordersTable.status, "completed")),
   ]);
 
   const todayRevenue   = completedToday.reduce((s, o) => s + Number(o.price), 0);
-  const todayProfit    = completedToday.reduce((s, o) => s + (Number(o.price) - Number(o.agentPrice ?? 0)), 0);
+  const todayProfit    = completedToday.reduce((s, o) => s + (Number(o.price) - Number(o.buyingCost ?? 0)), 0);
   const allTimeRevenue = allCompleted.reduce((s, o) => s + Number(o.price), 0);
-  const allTimeProfit  = allCompleted.reduce((s, o) => s + (Number(o.price) - Number(o.agentPrice ?? 0)), 0);
+  const allTimeProfit  = allCompleted.reduce((s, o) => s + (Number(o.price) - Number(o.buyingCost ?? 0)), 0);
 
   let paystackBalance: number | null = null;
   const paystackSecret = process.env.PAYSTACK_SECRET_KEY;

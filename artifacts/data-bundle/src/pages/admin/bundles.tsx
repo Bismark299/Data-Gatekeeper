@@ -24,7 +24,7 @@ import {
 } from "@/components/ui/select";
 import {
   Plus, Pencil, Trash2, Menu, Package, Search, X, RefreshCw,
-  CheckCircle2, XCircle, Filter, Download,
+  CheckCircle2, XCircle, Filter, Download, AlertTriangle,
 } from "lucide-react";
 
 const NETWORKS = [
@@ -292,7 +292,7 @@ function AdminBundlesContent() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-border bg-muted/20">
-                      {["Network", "Data", "Cost Price", "Dealer Price", "Agent Price", "Status", "Actions"].map(h => (
+                      {["Network", "Data", "Buying Cost", "Dealer Price", "Agent Price", "Status", "Actions"].map(h => (
                         <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
                       ))}
                     </tr>
@@ -318,7 +318,7 @@ function AdminBundlesContent() {
                           <td className="px-5 py-3.5">
                             {(bundle as Bundle).agentPrice != null
                               ? <span className="font-semibold text-foreground">GH₵{Number((bundle as Bundle).agentPrice).toFixed(2)}</span>
-                              : <span className="text-muted-foreground/40 italic text-xs">—</span>}
+                              : <span className="inline-flex items-center gap-1 text-amber-500 text-xs font-medium"><AlertTriangle className="w-3 h-3" />Not set</span>}
                           </td>
                           <td className="px-5 py-3.5">
                             <button
@@ -404,25 +404,29 @@ function AdminBundlesContent() {
               </div>
               <div className="space-y-1.5">
                 <Label className="flex items-center gap-1">
-                  Cost Price <span className="text-[10px] text-muted-foreground font-normal">(admin only)</span>
+                  Buying Cost <span className="text-[10px] text-muted-foreground font-normal">(what you pay the network — internal only)</span>
                 </Label>
                 <Input type="number" step="0.01" {...register("price")} placeholder="9.99" data-testid="input-price" />
                 {errors.price && <p className="text-xs text-destructive">{errors.price.message}</p>}
               </div>
             </div>
+            <div className="rounded-md border border-amber-200 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-800 px-3 py-2 text-xs text-amber-700 dark:text-amber-400 flex items-start gap-2">
+              <AlertTriangle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+              <span>Set the <strong>Agent Price</strong> and <strong>Dealer Price</strong> so each role sees the correct price in the shop. If left empty, they will see the Buying Cost instead.</span>
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label className="flex items-center gap-1">
-                  Dealer Price <span className="text-[10px] text-muted-foreground font-normal">(dealers see this)</span>
+                  Dealer Price <span className="text-[10px] text-muted-foreground font-normal">(dealers see this in shop)</span>
                 </Label>
-                <Input type="number" step="0.01" {...register("dealerPrice")} placeholder="optional" />
+                <Input type="number" step="0.01" {...register("dealerPrice")} placeholder="e.g. 11.99" />
                 {errors.dealerPrice && <p className="text-xs text-destructive">{errors.dealerPrice.message}</p>}
               </div>
               <div className="space-y-1.5">
-                <Label className="flex items-center gap-1">
-                  Agent Price <span className="text-[10px] text-muted-foreground font-normal">(agents see this)</span>
+                <Label className="flex items-center gap-1 text-amber-600 dark:text-amber-400">
+                  Agent Price <span className="text-[10px] font-normal">(agents see this in shop)</span>
                 </Label>
-                <Input type="number" step="0.01" {...register("agentPrice")} placeholder="optional" />
+                <Input type="number" step="0.01" {...register("agentPrice")} placeholder="e.g. 12.99" className="border-amber-300 focus-visible:ring-amber-400" />
                 {errors.agentPrice && <p className="text-xs text-destructive">{errors.agentPrice.message}</p>}
               </div>
             </div>
