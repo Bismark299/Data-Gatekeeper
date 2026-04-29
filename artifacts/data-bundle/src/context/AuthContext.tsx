@@ -20,6 +20,7 @@ interface AuthContextType {
   isAuthenticated: boolean;
   isAdmin: boolean;
   isDealer: boolean;
+  isAgent: boolean;
   signOut: () => void;
   refetchUser: () => void;
 }
@@ -76,6 +77,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         isAuthenticated: !!user,
         isAdmin: (user as User | undefined)?.role === "admin",
         isDealer: (user as User | undefined)?.role === "dealer",
+        isAgent: (user as User | undefined)?.role === "agent",
         signOut,
         refetchUser,
       }}

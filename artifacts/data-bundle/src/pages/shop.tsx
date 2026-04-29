@@ -20,7 +20,14 @@ type Network = NetworkKey;
 
 interface Bundle {
   id: number; name: string; description: string; dataAmount: string;
-  validityDays: number; price: number; category: string; network: string; isActive: boolean;
+  validityDays: number; price: number; dealerPrice: number | null; agentPrice: number | null;
+  category: string; network: string; isActive: boolean;
+}
+
+function getEffectivePrice(bundle: Bundle, role?: string | null): number {
+  if (role === "dealer" && bundle.dealerPrice != null) return bundle.dealerPrice;
+  if (role === "agent"  && bundle.agentPrice  != null) return bundle.agentPrice;
+  return bundle.price;
 }
 
 const NETWORK_TABS: { key: Network; dot: string }[] = [
@@ -59,6 +66,7 @@ function OrderStatusCard({
 }: { orderId: number; bundle: Bundle; network: Network; phone: string; onBuyAnother: () => void }) {
   const [enabled, setEnabled] = useState(true);
   const qc = useQueryClient();
+  const { user } = useAuth();
 
   const { data: order, refetch } = useGetOrder({ id: orderId }, {
     query: {
@@ -86,7 +94,7 @@ function OrderStatusCard({
       <BundleCardMini
         dataAmount={bundle.dataAmount}
         network={network}
-        price={bundle.price}
+        price={order?.price ?? getEffectivePrice(bundle, user?.role)}
         validityDays={bundle.validityDays}
         phone={phone}
       />
@@ -160,7 +168,8 @@ function PurchaseDialog({
 }) {
   const [phone, setPhone] = useState("");
   const purchase = usePurchaseBundle();
-  const price = bundle?.price ?? 0;
+  const { user } = useAuth();
+  const price = bundle ? getEffectivePrice(bundle, user?.role) : 0;
   const insufficient = walletBalance < price;
 
   const handlePurchase = () => {
@@ -189,7 +198,7 @@ function PurchaseDialog({
             <BundleCardMini
               dataAmount={bundle.dataAmount}
               network={network}
-              price={bundle.price}
+              price={price}
               validityDays={bundle.validityDays}
             />
 
@@ -234,7 +243,7 @@ function PurchaseDialog({
             disabled={!phone.trim() || phone.trim().length < 7 || insufficient || purchase.isPending}
             className="gap-2" data-testid="button-confirm-purchase"
           >
-            {purchase.isPending ? <><Loader2 className="w-4 h-4 animate-spin" /> Processing…</> : <><Zap className="w-4 h-4" /> Pay GH₵{bundle?.price}</>}
+            {purchase.isPending ? <><Loader2 className="w-4 h-4 animate-spin" /> Processing…</> : <><Zap className="w-4 h-4" /> Pay GH₵{price.toFixed(2)}</>}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -244,7 +253,7 @@ function PurchaseDialog({
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 export default function Shop() {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user } = useAuth();
   const [, setLocation] = useLocation();
   const [activeNetwork, setActiveNetwork] = useState<Network>("mtn");
   const [selected, setSelected] = useState<Bundle | null>(null);
@@ -385,9 +394,9 @@ export default function Shop() {
                     key={bundle.id}
                     dataAmount={bundle.dataAmount}
                     network={activeNetwork}
-                    price={parseFloat(String(bundle.price))}
+                    price={getEffectivePrice(bundle as unknown as Bundle, user?.role)}
                     validityDays={bundle.validityDays}
-                    insufficient={isAuthenticated && walletBalance < parseFloat(String(bundle.price))}
+                    insufficient={isAuthenticated && walletBalance < getEffectivePrice(bundle as unknown as Bundle, user?.role)}
                     showBuyHover
                     onClick={() => handleSelect(bundle as unknown as Bundle)}
                     data-testid={`card-bundle-${bundle.id}`}

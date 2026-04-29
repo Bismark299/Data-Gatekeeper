@@ -62,6 +62,12 @@ router.post("/orders", requireAuth, async (req, res): Promise<void> => {
     return;
   }
 
+  const userRole = req.session.userRole;
+  const effectivePrice =
+    userRole === "dealer" && bundle.dealerPrice != null ? bundle.dealerPrice :
+    userRole === "agent"  && bundle.agentPrice  != null ? bundle.agentPrice  :
+    bundle.price;
+
   const [order] = await db
     .insert(ordersTable)
     .values({
@@ -69,7 +75,7 @@ router.post("/orders", requireAuth, async (req, res): Promise<void> => {
       bundleId: bundle.id,
       bundleName: bundle.name,
       bundleData: bundle.dataAmount,
-      price: bundle.price,
+      price: effectivePrice,
       status: "pending",
       phoneNumber: phoneNumber.trim(),
     })
@@ -105,7 +111,12 @@ router.post("/orders/purchase", requireAuth, async (req, res): Promise<void> => 
     return;
   }
 
-  const price = parseFloat(bundle.price);
+  const userRole = req.session.userRole;
+  const rawPrice =
+    userRole === "dealer" && bundle.dealerPrice != null ? bundle.dealerPrice :
+    userRole === "agent"  && bundle.agentPrice  != null ? bundle.agentPrice  :
+    bundle.price;
+  const price = parseFloat(rawPrice);
 
   await getOrCreateWallet(userId);
 
@@ -142,7 +153,7 @@ router.post("/orders/purchase", requireAuth, async (req, res): Promise<void> => 
           bundleId: bundle.id,
           bundleName: bundle.name,
           bundleData: bundle.dataAmount,
-          price: bundle.price,
+          price: rawPrice,
           status: "pending",
           phoneNumber: phoneNumber.trim(),
         })
