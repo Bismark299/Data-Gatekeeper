@@ -1,0 +1,44 @@
+How Typing a MoMo Number Auto-Fetches the Name
+It is not fully automatic on typing — it requires the user to click a "Verify" button. Here's the exact flow:
+
+Step 1 — User Fills the Form
+The withdrawal form has three fields:
+
+Network dropdown (MTN / Vodafone / AirtelTigo)
+MoMo Number input (10-digit phone)
+Account Name (read-only, auto-filled after verification)
+If the user changes the number or network after verifying, the name is cleared automatically and accountVerified is reset to false — so they can't proceed with stale data.
+
+Step 2 — User Clicks "Verify"
+The verifyMomoAccount() function runs:
+
+Validates the number is exactly 10 digits.
+Maps the network name to a Paystack bank code:
+MTN → "MTN"
+Vodafone/Telecel → "VOD"
+AirtelTigo → "ATL"
+Sends a POST request to the backend:
+
+POST /api/profit-payouts/resolve-accountBody: { accountNumber: "0241234567", bankCode: "MTN" }
+Step 3 — Backend Calls Paystack
+The backend route calls profitPayoutService.resolveAccount(), which calls:
+
+
+GET https://api.paystack.co/bank/resolve?account_number=0241234567&bank_code=MTN
+Paystack looks up the MoMo account on their network and returns the registered account holder name.
+
+Step 4 — Name Fills In
+If verified, the response comes back as:
+
+
+{ "verified": true, "accountName": "JOHN DOE", "accountNumber": "0241234567" }
+The frontend puts "JOHN DOE" directly into the Account Name field:
+
+
+document.getElementById('withdrawAccountName').value = result.accountName;
+The Withdraw button only becomes enabled after accountVerified = true — so the agent cannot submit a withdrawal without going through this step.
+
+Summary Flow
+
+User types number + selects network        ↓Clicks "Verify" button        ↓Frontend → POST /api/profit-payouts/resolve-account        ↓Backend → Paystack /bank/resolve API        ↓Paystack → Returns account holder name        ↓Name auto-fills into form fieldWithdraw button unlocks
+The key dependency is Paystack — they are the ones who actually know the name registered to a MoMo number. Your backend just proxies that call.

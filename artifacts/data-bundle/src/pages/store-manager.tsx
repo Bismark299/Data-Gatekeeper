@@ -587,23 +587,61 @@ function WithdrawalsTab({ stats, withdrawals, store }: { stats?: StoreStats; wit
   const qc = useQueryClient();
   const [amount, setAmount] = useState("");
   const [accountNumber, setAccountNumber] = useState("");
+  const [accountName, setAccountName] = useState("");
+  const [accountVerified, setAccountVerified] = useState(false);
+  const [verifying, setVerifying] = useState(false);
+  const [verifyError, setVerifyError] = useState("");
   const [method, setMethod] = useState("mobile_money");
   const [bankCode, setBankCode] = useState("MTN");
   const [note, setNote] = useState("");
   const [error, setError] = useState("");
 
+  useEffect(() => {
+    setAccountName("");
+    setAccountVerified(false);
+    setVerifyError("");
+  }, [accountNumber, bankCode, method]);
+
+  const verifyMomoAccount = async () => {
+    if (!/^\d{10}$/.test(accountNumber)) {
+      setVerifyError("Enter a valid 10-digit number"); return;
+    }
+    setVerifying(true);
+    setVerifyError("");
+    try {
+      const res = await fetch("/api/stores/resolve-momo", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountNumber, bankCode }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Verification failed");
+      setAccountName(data.accountName);
+      setAccountVerified(true);
+    } catch (e: unknown) {
+      setVerifyError((e as Error).message);
+      setAccountName("");
+      setAccountVerified(false);
+    } finally {
+      setVerifying(false);
+    }
+  };
+
   const withdraw = useMutation({
-    mutationFn: () => storeApi.withdraw({ amount: parseFloat(amount), method, bankCode, accountNumber, note }),
+    mutationFn: () => storeApi.withdraw({ amount: parseFloat(amount), method, bankCode, accountNumber, accountName, note }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["myStoreStats"] });
       qc.invalidateQueries({ queryKey: ["myStoreWithdrawals"] });
       qc.invalidateQueries({ queryKey: ["myStore"] });
-      setAmount(""); setAccountNumber(""); setNote(""); setError("");
+      setAmount(""); setAccountNumber(""); setAccountName(""); setAccountVerified(false); setNote(""); setError("");
     },
     onError: (e) => setError((e as Error).message),
   });
 
   const profitBalance = stats?.profitBalance ?? store.profitBalance;
+  const canWithdraw = !!amount && parseFloat(amount) >= 1 && parseFloat(amount) <= profitBalance &&
+    !!accountNumber && !!bankCode && (method === "mobile_money" ? accountVerified : true) && !withdraw.isPending;
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -625,6 +663,7 @@ function WithdrawalsTab({ stats, withdrawals, store }: { stats?: StoreStats; wit
             value={amount} onChange={e => setAmount(e.target.value)} className="h-10 font-mono" />
           <p className="text-xs text-muted-foreground mt-1">Minimum: GH₵1.00</p>
         </div>
+
         <div>
           <Label className="text-sm font-semibold mb-1.5 block">Payment Method</Label>
           <select value={method} onChange={e => { setMethod(e.target.value); setBankCode(e.target.value === "mobile_money" ? "MTN" : ""); }}
@@ -633,6 +672,7 @@ function WithdrawalsTab({ stats, withdrawals, store }: { stats?: StoreStats; wit
             <option value="bank">Bank Transfer</option>
           </select>
         </div>
+
         {method === "mobile_money" && (
           <div>
             <Label className="text-sm font-semibold mb-1.5 block">Mobile Network</Label>
@@ -646,23 +686,72 @@ function WithdrawalsTab({ stats, withdrawals, store }: { stats?: StoreStats; wit
             </div>
           </div>
         )}
+
         {method === "bank" && (
           <div>
             <Label className="text-sm font-semibold mb-1.5 block">Bank Code <span className="font-normal text-muted-foreground text-xs">(Paystack bank code)</span></Label>
             <Input placeholder="e.g. GCB, ADB, EBG…" value={bankCode} onChange={e => setBankCode(e.target.value)} className="h-10 font-mono" />
           </div>
         )}
+
         <div>
-          <Label className="text-sm font-semibold mb-1.5 block">Account Number {method === "mobile_money" ? "/ Phone" : ""}</Label>
-          <Input placeholder={method === "mobile_money" ? "0244xxxxxx" : "Account number"} value={accountNumber} onChange={e => setAccountNumber(e.target.value)} className="h-10" />
+          <Label className="text-sm font-semibold mb-1.5 block">
+            {method === "mobile_money" ? "MoMo Number" : "Account Number"}
+          </Label>
+          <div className="flex gap-2">
+            <Input
+              placeholder={method === "mobile_money" ? "0244xxxxxx" : "Account number"}
+              value={accountNumber}
+              onChange={e => setAccountNumber(e.target.value)}
+              className={`h-10 flex-1 ${accountVerified ? "border-emerald-400 focus-visible:ring-emerald-400" : ""}`}
+              maxLength={method === "mobile_money" ? 10 : undefined}
+            />
+            {method === "mobile_money" && (
+              <Button
+                type="button"
+                variant={accountVerified ? "outline" : "secondary"}
+                className={`h-10 px-4 shrink-0 gap-1.5 text-xs font-semibold ${accountVerified ? "border-emerald-400 text-emerald-600" : ""}`}
+                onClick={verifyMomoAccount}
+                disabled={verifying || accountNumber.length !== 10}
+              >
+                {verifying ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : accountVerified ? (
+                  <><CheckCircle2 className="w-3.5 h-3.5" /> Verified</>
+                ) : (
+                  "Verify"
+                )}
+              </Button>
+            )}
+          </div>
+          {verifyError && <p className="text-xs text-red-600 mt-1">{verifyError}</p>}
         </div>
+
+        {accountVerified && accountName && (
+          <div>
+            <Label className="text-sm font-semibold mb-1.5 block">Account Name</Label>
+            <div className="flex items-center gap-2 h-10 px-3 rounded-lg border border-emerald-300 bg-emerald-50 dark:bg-emerald-900/10">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span className="text-sm font-semibold text-emerald-700 dark:text-emerald-400 tracking-wide">{accountName}</span>
+            </div>
+          </div>
+        )}
+
+        {method === "mobile_money" && !accountVerified && accountNumber.length > 0 && (
+          <p className="text-xs text-amber-600 flex items-center gap-1.5">
+            <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+            Verify the account name before withdrawing.
+          </p>
+        )}
+
         <div>
           <Label className="text-sm font-semibold mb-1.5 block">Note <span className="font-normal text-muted-foreground">(optional)</span></Label>
           <Input placeholder="e.g. Weekly profits" value={note} onChange={e => setNote(e.target.value)} className="h-10" />
         </div>
+
         {error && <p className="text-sm text-red-600">{error}</p>}
-        <Button className="w-full gap-2" onClick={() => withdraw.mutate()}
-          disabled={!amount || !accountNumber || !bankCode || parseFloat(amount) < 1 || parseFloat(amount) > profitBalance || withdraw.isPending}>
+
+        <Button className="w-full gap-2" onClick={() => withdraw.mutate()} disabled={!canWithdraw}>
           {withdraw.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowDownToLine className="w-4 h-4" />}
           Withdraw via Paystack
         </Button>
@@ -684,8 +773,8 @@ function WithdrawalsTab({ stats, withdrawals, store }: { stats?: StoreStats; wit
                   {w.status === "completed" ? <CheckCircle2 className="w-4 h-4" /> : w.status === "pending" ? <Clock className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm font-semibold text-foreground">{w.accountNumber}</div>
-                  <div className="text-xs text-muted-foreground">{new Date(w.createdAt).toLocaleString()} · {w.method.replace("_", " ")}</div>
+                  <div className="text-sm font-semibold text-foreground truncate">{w.accountName || w.accountNumber}</div>
+                  <div className="text-xs text-muted-foreground truncate">{w.accountName ? w.accountNumber + " · " : ""}{new Date(w.createdAt).toLocaleString()} · {w.method.replace("_", " ")}</div>
                 </div>
                 <div className="text-right">
                   <div className="font-bold text-foreground">GH₵{w.amount.toFixed(2)}</div>

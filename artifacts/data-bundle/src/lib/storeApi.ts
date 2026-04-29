@@ -35,7 +35,7 @@ export interface StoreStats {
 }
 export interface StoreWithdrawal {
   id: number; storeId: number; amount: number; status: string;
-  method: string; accountNumber: string; note: string; createdAt: string;
+  method: string; accountNumber: string; accountName: string; note: string; createdAt: string;
 }
 export interface PublicStore {
   store: { id: number; name: string; slug: string; description: string; colorTheme: string; };
@@ -57,7 +57,7 @@ export const storeApi = {
   getOrders: () => request<StoreOrder[]>("GET", "/stores/my/orders"),
   getStats: () => request<StoreStats>("GET", "/stores/my/stats"),
   getWithdrawals: () => request<StoreWithdrawal[]>("GET", "/stores/my/withdrawals"),
-  withdraw: (data: { amount: number; method?: string; bankCode?: string; accountNumber: string; note?: string }) =>
+  withdraw: (data: { amount: number; method?: string; bankCode?: string; accountNumber: string; accountName?: string; note?: string }) =>
     request<StoreWithdrawal>("POST", "/stores/my/withdraw", data),
   // Public
   getPublicStore: (slug: string) => request<PublicStore>("GET", `/s/${slug}`),

@@ -243,6 +243,34 @@ router.get("/stores/my/stats", requireAuth, async (req, res) => {
   });
 });
 
+// ─── RESOLVE MOMO ACCOUNT ────────────────────────────────────────────────────
+
+router.post("/stores/resolve-momo", requireAuth, async (req, res) => {
+  if (!PAYSTACK_SECRET) {
+    res.status(503).json({ error: "Payment service not configured" }); return;
+  }
+  const { accountNumber, bankCode } = req.body as { accountNumber?: string; bankCode?: string };
+  if (!accountNumber || !bankCode) {
+    res.status(400).json({ error: "Account number and bank code are required" }); return;
+  }
+  if (!/^\d{10}$/.test(accountNumber)) {
+    res.status(400).json({ error: "Account number must be exactly 10 digits" }); return;
+  }
+  try {
+    const paystackRes = await fetch(
+      `https://api.paystack.co/bank/resolve?account_number=${encodeURIComponent(accountNumber)}&bank_code=${encodeURIComponent(bankCode)}`,
+      { headers: { Authorization: `Bearer ${PAYSTACK_SECRET}` } },
+    );
+    const data = await paystackRes.json() as { status: boolean; data?: { account_name: string; account_number: string }; message?: string };
+    if (!data.status || !data.data) {
+      res.status(400).json({ error: data.message ?? "Could not verify account. Check the number and network." }); return;
+    }
+    res.json({ verified: true, accountName: data.data.account_name, accountNumber: data.data.account_number });
+  } catch {
+    res.status(500).json({ error: "Verification service unavailable. Try again." });
+  }
+});
+
 // ─── WITHDRAWALS ─────────────────────────────────────────────────────────────
 
 router.get("/stores/my/withdrawals", requireAuth, async (req, res) => {
@@ -258,6 +286,7 @@ const WithdrawBody = z.object({
   method: z.string().optional(),
   bankCode: z.string().optional(),
   accountNumber: z.string().min(3),
+  accountName: z.string().optional(),
   note: z.string().optional(),
 });
 
@@ -287,6 +316,7 @@ router.post("/stores/my/withdraw", requireAuth, async (req, res) => {
     status: "pending",
     method: parsed.data.method ?? "mobile_money",
     accountNumber: parsed.data.accountNumber,
+    accountName: parsed.data.accountName ?? "",
     note: parsed.data.note ?? "",
   }).returning();
 
@@ -297,12 +327,13 @@ router.post("/stores/my/withdraw", requireAuth, async (req, res) => {
     // Step 1: Create transfer recipient
     const recipientType = parsed.data.method === "bank" ? "ghipss" : "mobile_money";
     const bankCode = parsed.data.bankCode ?? "MTN";
+    const recipientName = parsed.data.accountName || store.name;
     const recipientRes = await fetch("https://api.paystack.co/transferrecipient", {
       method: "POST",
       headers: { Authorization: `Bearer ${PAYSTACK_SECRET}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         type: recipientType,
-        name: store.name,
+        name: recipientName,
         account_number: parsed.data.accountNumber,
         bank_code: bankCode,
         currency: "GHS",

@@ -52,6 +52,7 @@ export const storeWithdrawalsTable = pgTable("store_withdrawals", {
   status: text("status").notNull().default("pending"),
   method: text("method").notNull().default("mobile_money"),
   accountNumber: text("account_number").notNull().default(""),
+  accountName: text("account_name").notNull().default(""),
   note: text("note").notNull().default(""),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
