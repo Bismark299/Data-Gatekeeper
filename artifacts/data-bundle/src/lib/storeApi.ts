@@ -15,7 +15,9 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 export interface Store {
   id: number; userId: number; name: string; slug: string;
   description: string; colorTheme: string; isActive: boolean;
-  profitBalance: number; createdAt: string; updatedAt: string;
+  profitBalance: number;
+  momoNetwork: string | null; momoNumber: string | null; momoName: string | null;
+  createdAt: string; updatedAt: string;
 }
 export interface StoreBundle {
   id: number; storeId: number; bundleId: number; sellingPrice: number;
@@ -59,6 +61,10 @@ export const storeApi = {
   getWithdrawals: () => request<StoreWithdrawal[]>("GET", "/stores/my/withdrawals"),
   withdraw: (data: { amount: number; method?: string; bankCode?: string; accountNumber: string; accountName?: string; note?: string }) =>
     request<StoreWithdrawal>("POST", "/stores/my/withdraw", data),
+  saveMomoDetails: (data: { momoNetwork: string; momoNumber: string; momoName: string }) =>
+    request<{ ok: boolean }>("POST", "/stores/my/momo-details", data),
+  deleteMomoDetails: () =>
+    request<{ ok: boolean }>("DELETE", "/stores/my/momo-details"),
   // Public
   getPublicStore: (slug: string) => request<PublicStore>("GET", `/s/${slug}`),
   checkout: (slug: string, data: { storeBundleId: number; customerPhone: string; customerEmail: string }) =>

@@ -271,6 +271,31 @@ router.post("/stores/resolve-momo", requireAuth, async (req, res) => {
   }
 });
 
+// ─── SAVE / DELETE MOMO DETAILS ──────────────────────────────────────────────
+
+const MomoDetailsBody = z.object({
+  momoNetwork: z.string().min(1),
+  momoNumber: z.string().regex(/^\d{10}$/, "Must be 10 digits"),
+  momoName: z.string().min(1),
+});
+
+router.post("/stores/my/momo-details", requireAuth, async (req, res) => {
+  const parsed = MomoDetailsBody.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "Invalid MoMo details" }); return; }
+  await db.update(storesTable).set({
+    momoNetwork: parsed.data.momoNetwork,
+    momoNumber: parsed.data.momoNumber,
+    momoName: parsed.data.momoName,
+  }).where(eq(storesTable.userId, req.session.userId!));
+  res.json({ ok: true });
+});
+
+router.delete("/stores/my/momo-details", requireAuth, async (req, res) => {
+  await db.update(storesTable).set({ momoNetwork: null, momoNumber: null, momoName: null })
+    .where(eq(storesTable.userId, req.session.userId!));
+  res.json({ ok: true });
+});
+
 // ─── WITHDRAWALS ─────────────────────────────────────────────────────────────
 
 router.get("/stores/my/withdrawals", requireAuth, async (req, res) => {
@@ -297,17 +322,21 @@ router.post("/stores/my/withdraw", requireAuth, async (req, res) => {
   const [store] = await db.select().from(storesTable).where(eq(storesTable.userId, req.session.userId!));
   if (!store) { res.status(404).json({ error: "No store found" }); return; }
 
+  const WITHDRAWAL_FEE = 1;
+  const MIN_WITHDRAWAL = 10;
   const profit = parseFloat(store.profitBalance);
-  if (parsed.data.amount > profit) {
-    res.status(400).json({ error: `Insufficient profit balance. Available: GH₵${profit.toFixed(2)}` });
+
+  if (parsed.data.amount < MIN_WITHDRAWAL) {
+    res.status(400).json({ error: `Minimum withdrawal is GH₵${MIN_WITHDRAWAL}.00` }); return;
+  }
+  const totalDeduction = parsed.data.amount + WITHDRAWAL_FEE;
+  if (totalDeduction > profit) {
+    res.status(400).json({ error: `Insufficient balance. Need GH₵${totalDeduction.toFixed(2)} (amount + GH₵${WITHDRAWAL_FEE} fee). Available: GH₵${profit.toFixed(2)}` });
     return;
   }
-  if (parsed.data.amount < 1) {
-    res.status(400).json({ error: "Minimum withdrawal is GH₵1.00" }); return;
-  }
 
-  // Deduct from profit balance + create withdrawal record
-  const newBalance = (profit - parsed.data.amount).toFixed(2);
+  // Deduct amount + fee from profit balance
+  const newBalance = (profit - totalDeduction).toFixed(2);
   await db.update(storesTable).set({ profitBalance: newBalance }).where(eq(storesTable.id, store.id));
 
   const [w] = await db.insert(storeWithdrawalsTable).values({

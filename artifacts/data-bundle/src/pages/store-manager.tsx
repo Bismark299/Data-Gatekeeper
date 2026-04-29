@@ -582,25 +582,34 @@ const MOMO_NETWORKS = [
   { value: "ATL", label: "AirtelTigo Money" },
 ];
 
+const WITHDRAWAL_FEE = 1;
+const MIN_WITHDRAWAL = 10;
+
 // ─── Withdrawals Tab ──────────────────────────────────────────────────────────
 function WithdrawalsTab({ stats, withdrawals, store }: { stats?: StoreStats; withdrawals: any[]; store: Store }) {
   const qc = useQueryClient();
+
+  const hasSavedMomo = !!(store.momoNumber && store.momoName && store.momoNetwork);
+  const [editing, setEditing] = useState(!hasSavedMomo);
+
   const [amount, setAmount] = useState("");
-  const [accountNumber, setAccountNumber] = useState("");
-  const [accountName, setAccountName] = useState("");
-  const [accountVerified, setAccountVerified] = useState(false);
+  const [accountNumber, setAccountNumber] = useState(store.momoNumber ?? "");
+  const [accountName, setAccountName] = useState(store.momoName ?? "");
+  const [accountVerified, setAccountVerified] = useState(hasSavedMomo);
   const [verifying, setVerifying] = useState(false);
   const [verifyError, setVerifyError] = useState("");
   const [method, setMethod] = useState("mobile_money");
-  const [bankCode, setBankCode] = useState("MTN");
+  const [bankCode, setBankCode] = useState(store.momoNetwork ?? "MTN");
   const [note, setNote] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => {
-    setAccountName("");
-    setAccountVerified(false);
-    setVerifyError("");
-  }, [accountNumber, bankCode, method]);
+    if (editing) {
+      setAccountName("");
+      setAccountVerified(false);
+      setVerifyError("");
+    }
+  }, [accountNumber, bankCode, editing]);
 
   const verifyMomoAccount = async () => {
     if (!/^\d{10}$/.test(accountNumber)) {
@@ -619,6 +628,9 @@ function WithdrawalsTab({ stats, withdrawals, store }: { stats?: StoreStats; wit
       if (!res.ok) throw new Error(data.error ?? "Verification failed");
       setAccountName(data.accountName);
       setAccountVerified(true);
+      await storeApi.saveMomoDetails({ momoNetwork: bankCode, momoNumber: accountNumber, momoName: data.accountName });
+      qc.invalidateQueries({ queryKey: ["myStore"] });
+      setEditing(false);
     } catch (e: unknown) {
       setVerifyError((e as Error).message);
       setAccountName("");
@@ -628,20 +640,33 @@ function WithdrawalsTab({ stats, withdrawals, store }: { stats?: StoreStats; wit
     }
   };
 
+  const removeMomo = useMutation({
+    mutationFn: storeApi.deleteMomoDetails,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["myStore"] });
+      setAccountNumber(""); setAccountName(""); setBankCode("MTN");
+      setAccountVerified(false); setEditing(true);
+    },
+  });
+
   const withdraw = useMutation({
     mutationFn: () => storeApi.withdraw({ amount: parseFloat(amount), method, bankCode, accountNumber, accountName, note }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["myStoreStats"] });
       qc.invalidateQueries({ queryKey: ["myStoreWithdrawals"] });
       qc.invalidateQueries({ queryKey: ["myStore"] });
-      setAmount(""); setAccountNumber(""); setAccountName(""); setAccountVerified(false); setNote(""); setError("");
+      setAmount(""); setNote(""); setError("");
     },
     onError: (e) => setError((e as Error).message),
   });
 
   const profitBalance = stats?.profitBalance ?? store.profitBalance;
-  const canWithdraw = !!amount && parseFloat(amount) >= 1 && parseFloat(amount) <= profitBalance &&
-    !!accountNumber && !!bankCode && (method === "mobile_money" ? accountVerified : true) && !withdraw.isPending;
+  const parsedAmount = parseFloat(amount) || 0;
+  const totalDeduction = parsedAmount + WITHDRAWAL_FEE;
+  const canWithdraw = parsedAmount >= MIN_WITHDRAWAL && totalDeduction <= profitBalance &&
+    !!accountNumber && !!bankCode && accountVerified && !withdraw.isPending;
+
+  const networkLabel = MOMO_NETWORKS.find(n => n.value === bankCode)?.label ?? bankCode;
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -657,92 +682,122 @@ function WithdrawalsTab({ stats, withdrawals, store }: { stats?: StoreStats; wit
           </div>
         </div>
 
+        {/* ── Saved MoMo account ── */}
+        {!editing && accountVerified && accountName ? (
+          <div className="rounded-xl border border-emerald-300 bg-emerald-50 dark:bg-emerald-900/10 p-4 space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wide">Saved MoMo Account</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <button onClick={() => setEditing(true)}
+                  className="text-xs text-primary font-semibold hover:underline">Edit</button>
+                <span className="text-muted-foreground text-xs">·</span>
+                <button onClick={() => removeMomo.mutate()}
+                  className="text-xs text-red-500 font-semibold hover:underline" disabled={removeMomo.isPending}>
+                  {removeMomo.isPending ? "Removing…" : "Remove"}
+                </button>
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <div>
+                <div className="font-bold text-foreground text-sm">{accountName}</div>
+                <div className="text-xs text-muted-foreground">{accountNumber} · {networkLabel}</div>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div>
+              <Label className="text-sm font-semibold mb-1.5 block">Payment Method</Label>
+              <select value={method} onChange={e => { setMethod(e.target.value); setBankCode(e.target.value === "mobile_money" ? "MTN" : ""); }}
+                className="w-full h-10 rounded-lg border border-border bg-background px-3 text-sm">
+                <option value="mobile_money">Mobile Money</option>
+                <option value="bank">Bank Transfer</option>
+              </select>
+            </div>
+
+            {method === "mobile_money" && (
+              <div>
+                <Label className="text-sm font-semibold mb-1.5 block">Mobile Network</Label>
+                <div className="flex gap-2">
+                  {MOMO_NETWORKS.map(n => (
+                    <button key={n.value} onClick={() => setBankCode(n.value)}
+                      className={`flex-1 py-2 rounded-lg text-xs font-semibold border transition-all ${bankCode === n.value ? "bg-primary text-primary-foreground border-primary" : "border-border text-muted-foreground hover:border-primary/40"}`}>
+                      {n.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {method === "bank" && (
+              <div>
+                <Label className="text-sm font-semibold mb-1.5 block">Bank Code <span className="font-normal text-muted-foreground text-xs">(Paystack code)</span></Label>
+                <Input placeholder="e.g. GCB, ADB…" value={bankCode} onChange={e => setBankCode(e.target.value)} className="h-10 font-mono" />
+              </div>
+            )}
+
+            <div>
+              <Label className="text-sm font-semibold mb-1.5 block">
+                {method === "mobile_money" ? "MoMo Number" : "Account Number"}
+              </Label>
+              <div className="flex gap-2">
+                <Input
+                  placeholder={method === "mobile_money" ? "0244xxxxxx" : "Account number"}
+                  value={accountNumber}
+                  onChange={e => setAccountNumber(e.target.value)}
+                  className="h-10 flex-1"
+                  maxLength={method === "mobile_money" ? 10 : undefined}
+                />
+                {method === "mobile_money" && (
+                  <Button type="button" variant="secondary"
+                    className="h-10 px-4 shrink-0 text-xs font-semibold"
+                    onClick={verifyMomoAccount}
+                    disabled={verifying || accountNumber.length !== 10}>
+                    {verifying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Verify"}
+                  </Button>
+                )}
+              </div>
+              {verifyError && <p className="text-xs text-red-600 mt-1">{verifyError}</p>}
+              {method === "mobile_money" && !accountVerified && accountNumber.length > 0 && (
+                <p className="text-xs text-amber-600 flex items-center gap-1.5 mt-1">
+                  <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                  Tap Verify to confirm the account name.
+                </p>
+              )}
+            </div>
+
+            {editing && hasSavedMomo && (
+              <button onClick={() => { setAccountNumber(store.momoNumber!); setBankCode(store.momoNetwork!); setAccountName(store.momoName!); setAccountVerified(true); setEditing(false); }}
+                className="text-xs text-primary font-semibold hover:underline">
+                ← Use saved account
+              </button>
+            )}
+          </>
+        )}
+
+        {/* ── Amount ── */}
         <div>
           <Label className="text-sm font-semibold mb-1.5 block">Amount (GH₵)</Label>
-          <Input type="number" min="1" max={profitBalance} step="0.01" placeholder="0.00"
+          <Input type="number" min={MIN_WITHDRAWAL} step="0.01" placeholder="0.00"
             value={amount} onChange={e => setAmount(e.target.value)} className="h-10 font-mono" />
-          <p className="text-xs text-muted-foreground mt-1">Minimum: GH₵1.00</p>
-        </div>
-
-        <div>
-          <Label className="text-sm font-semibold mb-1.5 block">Payment Method</Label>
-          <select value={method} onChange={e => { setMethod(e.target.value); setBankCode(e.target.value === "mobile_money" ? "MTN" : ""); }}
-            className="w-full h-10 rounded-lg border border-border bg-background px-3 text-sm">
-            <option value="mobile_money">Mobile Money</option>
-            <option value="bank">Bank Transfer</option>
-          </select>
-        </div>
-
-        {method === "mobile_money" && (
-          <div>
-            <Label className="text-sm font-semibold mb-1.5 block">Mobile Network</Label>
-            <div className="flex gap-2">
-              {MOMO_NETWORKS.map(n => (
-                <button key={n.value} onClick={() => setBankCode(n.value)}
-                  className={`flex-1 py-2 rounded-lg text-xs font-semibold border transition-all ${bankCode === n.value ? "bg-primary text-primary-foreground border-primary" : "border-border text-muted-foreground hover:border-primary/40"}`}>
-                  {n.label}
-                </button>
-              ))}
+          <div className="mt-1.5 space-y-0.5">
+            <div className="flex justify-between text-xs text-muted-foreground">
+              <span>Transaction fee</span><span className="font-medium">GH₵{WITHDRAWAL_FEE}.00</span>
             </div>
-          </div>
-        )}
-
-        {method === "bank" && (
-          <div>
-            <Label className="text-sm font-semibold mb-1.5 block">Bank Code <span className="font-normal text-muted-foreground text-xs">(Paystack bank code)</span></Label>
-            <Input placeholder="e.g. GCB, ADB, EBG…" value={bankCode} onChange={e => setBankCode(e.target.value)} className="h-10 font-mono" />
-          </div>
-        )}
-
-        <div>
-          <Label className="text-sm font-semibold mb-1.5 block">
-            {method === "mobile_money" ? "MoMo Number" : "Account Number"}
-          </Label>
-          <div className="flex gap-2">
-            <Input
-              placeholder={method === "mobile_money" ? "0244xxxxxx" : "Account number"}
-              value={accountNumber}
-              onChange={e => setAccountNumber(e.target.value)}
-              className={`h-10 flex-1 ${accountVerified ? "border-emerald-400 focus-visible:ring-emerald-400" : ""}`}
-              maxLength={method === "mobile_money" ? 10 : undefined}
-            />
-            {method === "mobile_money" && (
-              <Button
-                type="button"
-                variant={accountVerified ? "outline" : "secondary"}
-                className={`h-10 px-4 shrink-0 gap-1.5 text-xs font-semibold ${accountVerified ? "border-emerald-400 text-emerald-600" : ""}`}
-                onClick={verifyMomoAccount}
-                disabled={verifying || accountNumber.length !== 10}
-              >
-                {verifying ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                ) : accountVerified ? (
-                  <><CheckCircle2 className="w-3.5 h-3.5" /> Verified</>
-                ) : (
-                  "Verify"
-                )}
-              </Button>
+            {parsedAmount >= MIN_WITHDRAWAL && (
+              <div className="flex justify-between text-xs font-semibold text-foreground border-t border-border pt-1 mt-1">
+                <span>Total deducted from balance</span>
+                <span>GH₵{totalDeduction.toFixed(2)}</span>
+              </div>
+            )}
+            {parsedAmount > 0 && parsedAmount < MIN_WITHDRAWAL && (
+              <p className="text-xs text-red-500">Minimum withdrawal is GH₵{MIN_WITHDRAWAL}.00</p>
             )}
           </div>
-          {verifyError && <p className="text-xs text-red-600 mt-1">{verifyError}</p>}
         </div>
-
-        {accountVerified && accountName && (
-          <div>
-            <Label className="text-sm font-semibold mb-1.5 block">Account Name</Label>
-            <div className="flex items-center gap-2 h-10 px-3 rounded-lg border border-emerald-300 bg-emerald-50 dark:bg-emerald-900/10">
-              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-              <span className="text-sm font-semibold text-emerald-700 dark:text-emerald-400 tracking-wide">{accountName}</span>
-            </div>
-          </div>
-        )}
-
-        {method === "mobile_money" && !accountVerified && accountNumber.length > 0 && (
-          <p className="text-xs text-amber-600 flex items-center gap-1.5">
-            <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-            Verify the account name before withdrawing.
-          </p>
-        )}
 
         <div>
           <Label className="text-sm font-semibold mb-1.5 block">Note <span className="font-normal text-muted-foreground">(optional)</span></Label>
@@ -755,7 +810,7 @@ function WithdrawalsTab({ stats, withdrawals, store }: { stats?: StoreStats; wit
           {withdraw.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowDownToLine className="w-4 h-4" />}
           Withdraw via Paystack
         </Button>
-        <p className="text-xs text-muted-foreground text-center">Funds are transferred via Paystack to your mobile money or bank account.</p>
+        <p className="text-xs text-muted-foreground text-center">Funds sent to your MoMo or bank via Paystack. GH₵{WITHDRAWAL_FEE} fee applies per withdrawal.</p>
       </div>
 
       {/* History */}

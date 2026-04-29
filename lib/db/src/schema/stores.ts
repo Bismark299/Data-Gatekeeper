@@ -11,6 +11,9 @@ export const storesTable = pgTable("stores", {
   colorTheme: text("color_theme").notNull().default("blue"),
   isActive: boolean("is_active").notNull().default(true),
   profitBalance: numeric("profit_balance", { precision: 12, scale: 2 }).notNull().default("0.00"),
+  momoNetwork: text("momo_network"),
+  momoNumber: text("momo_number"),
+  momoName: text("momo_name"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
 });
