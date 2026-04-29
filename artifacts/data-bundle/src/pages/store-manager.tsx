@@ -452,55 +452,50 @@ function BundlesTab({ storeBundles, store, userRole }: { storeBundles: StoreBund
                   </span>
                   <span className="text-xs text-muted-foreground">{networkBundles.length} bundle{networkBundles.length !== 1 ? "s" : ""}</span>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
                   {networkBundles.map(sb => (
                     <div key={sb.id} className="bg-card border border-border rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-shadow">
-                      <div className={`relative ${ns?.gradient ?? "bg-gradient-to-br from-gray-600 to-gray-800"} flex items-center justify-center`} style={{ height: 80 }}>
-                        <div className={`absolute inset-0 bg-gradient-to-b ${ns?.shimmer ?? "from-white/20 to-transparent"} pointer-events-none`} />
-                        <span className={`relative text-2xl font-black ${ns?.text ?? "text-white"}`} style={{ textShadow: "0 2px 8px rgba(0,0,0,0.2)" }}>{sb.dataAmount}</span>
-                        <span className="absolute top-1.5 right-1.5 text-[9px] font-bold rounded-full px-1.5 py-0.5 bg-black/20 text-emerald-300 border border-emerald-500/30 backdrop-blur-sm">
-                          +GH₵{(sb.sellingPrice - sb.basePrice).toFixed(2)}
+                      {/* Compact coloured header */}
+                      <div className={`relative ${ns?.gradient ?? "bg-gradient-to-br from-gray-600 to-gray-800"} flex items-center justify-between px-2.5`} style={{ height: 44 }}>
+                        <span className={`relative text-base font-black ${ns?.text ?? "text-white"}`}>{sb.dataAmount}</span>
+                        <span className="text-[9px] font-bold rounded-full px-1.5 py-0.5 bg-black/20 text-emerald-300 border border-emerald-500/30 backdrop-blur-sm whitespace-nowrap">
+                          +{(sb.sellingPrice - sb.basePrice).toFixed(2)}
                         </span>
                       </div>
-                      <div className="p-3 space-y-2.5">
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="text-muted-foreground">Base</span>
-                          <span className="font-semibold text-foreground">GH₵{sb.basePrice.toFixed(2)}</span>
-                        </div>
+                      {/* Body */}
+                      <div className="p-2 space-y-1.5">
                         {editingId === sb.id ? (
-                          <div className="space-y-2">
-                            <Input type="number" value={editPrice} onChange={e => setEditPrice(e.target.value)} className="h-8 text-sm font-mono" />
-                            <div className="flex gap-1.5">
-                              <Button size="sm" className="flex-1 h-7 text-xs" onClick={() => updateBundle.mutate({ id: sb.id, price: parseFloat(editPrice) })}
+                          <div className="space-y-1.5">
+                            <Input type="number" value={editPrice} onChange={e => setEditPrice(e.target.value)} className="h-7 text-xs font-mono" />
+                            <div className="flex gap-1">
+                              <Button size="sm" className="flex-1 h-6 text-[11px]" onClick={() => updateBundle.mutate({ id: sb.id, price: parseFloat(editPrice) })}
                                 disabled={!editPrice || parseFloat(editPrice) < sb.basePrice || updateBundle.isPending}>
                                 {updateBundle.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : "Save"}
                               </Button>
-                              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setEditingId(null)}>Cancel</Button>
+                              <Button size="sm" variant="outline" className="h-6 text-[11px] px-2" onClick={() => setEditingId(null)}>✕</Button>
                             </div>
                           </div>
                         ) : (
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <div className="text-[10px] text-muted-foreground">Your price</div>
-                              <div className="text-base font-bold text-foreground">GH₵{sb.sellingPrice.toFixed(2)}</div>
+                          <>
+                            <div className="flex items-center justify-between text-[11px]">
+                              <span className="text-muted-foreground">Price</span>
+                              <span className="font-bold text-foreground">GH₵{sb.sellingPrice.toFixed(2)}</span>
                             </div>
-                            <div className="text-right">
-                              <div className="text-[10px] text-muted-foreground">Profit</div>
-                              <div className="text-sm font-bold text-emerald-600">+GH₵{(sb.sellingPrice - sb.basePrice).toFixed(2)}</div>
+                            <div className="flex items-center justify-between text-[11px]">
+                              <span className="text-muted-foreground">Profit</span>
+                              <span className="font-bold text-emerald-600">+{(sb.sellingPrice - sb.basePrice).toFixed(2)}</span>
                             </div>
-                          </div>
-                        )}
-                        {editingId !== sb.id && (
-                          <div className="flex gap-1.5">
-                            <Button size="sm" variant="outline" className="flex-1 gap-1 h-7 text-xs"
-                              onClick={() => { setEditingId(sb.id); setEditPrice(sb.sellingPrice.toFixed(2)); }}>
-                              <Edit2 className="w-3 h-3" /> Edit
-                            </Button>
-                            <Button size="sm" variant="ghost" className="text-red-500 hover:text-red-600 hover:bg-red-50 h-7"
-                              onClick={() => removeBundle.mutate(sb.id)} disabled={removeBundle.isPending}>
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </Button>
-                          </div>
+                            <div className="flex gap-1">
+                              <Button size="sm" variant="outline" className="flex-1 gap-1 h-6 text-[11px]"
+                                onClick={() => { setEditingId(sb.id); setEditPrice(sb.sellingPrice.toFixed(2)); }}>
+                                <Edit2 className="w-2.5 h-2.5" /> Edit
+                              </Button>
+                              <Button size="sm" variant="ghost" className="text-red-500 hover:text-red-600 hover:bg-red-50 h-6 w-6 p-0"
+                                onClick={() => removeBundle.mutate(sb.id)} disabled={removeBundle.isPending}>
+                                <Trash2 className="w-3 h-3" />
+                              </Button>
+                            </div>
+                          </>
                         )}
                       </div>
                     </div>
