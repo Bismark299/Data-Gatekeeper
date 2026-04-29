@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { db, walletsTable, depositsTable, usersTable } from "@workspace/db";
+import { db, walletsTable, depositsTable, usersTable, walletLedgerTable } from "@workspace/db";
 import { requireAuth, requireAdmin } from "../middlewares/auth";
 import { eq, desc, and } from "drizzle-orm";
 import { sql } from "drizzle-orm";
@@ -26,12 +26,42 @@ async function getOrCreateWallet(userId: number) {
 }
 
 /**
- * Atomically increment a wallet balance using a SQL expression.
- * Accepts an optional Drizzle transaction context (tx) so callers
- * can use this inside their own transaction.
+ * Write a single entry to the wallet ledger.
+ * Positive amount = credit, negative = debit.
+ * Must be called inside the same transaction as the balance update.
  */
-async function creditWallet(userId: number, amount: number, tx?: DbOrTx) {
+async function insertLedgerEntry(
+  client: DbOrTx,
+  userId: number,
+  amount: number,
+  type: "credit" | "debit",
+  source: string,
+  reference?: string,
+  note?: string,
+) {
+  await client.insert(walletLedgerTable).values({
+    userId,
+    amount: amount.toFixed(2),
+    type,
+    source,
+    reference: reference ?? null,
+    note: note ?? null,
+  });
+}
+
+/**
+ * Atomically increment a wallet balance using a SQL expression.
+ * Also writes a ledger entry for every credit.
+ * Accepts an optional Drizzle transaction context (tx).
+ */
+async function creditWallet(
+  userId: number,
+  amount: number,
+  tx?: DbOrTx,
+  ledger?: { source: string; reference?: string; note?: string },
+) {
   const client = tx ?? db;
+
   // Upsert wallet row if it doesn't exist yet
   await client
     .insert(walletsTable)
@@ -44,6 +74,8 @@ async function creditWallet(userId: number, amount: number, tx?: DbOrTx) {
     .where(eq(walletsTable.userId, userId))
     .returning();
 
+  let result = updated;
+
   if (!updated) {
     // Row didn't exist yet (race on insert above) — retry credit
     const [created] = await client
@@ -54,10 +86,14 @@ async function creditWallet(userId: number, amount: number, tx?: DbOrTx) {
         set: { balance: sql`wallets.balance + ${amount.toFixed(2)}::numeric` },
       })
       .returning();
-    return created;
+    result = created;
   }
 
-  return updated;
+  if (ledger) {
+    await insertLedgerEntry(client, userId, amount, "credit", ledger.source, ledger.reference, ledger.note);
+  }
+
+  return result;
 }
 
 // ── Routes ────────────────────────────────────────────────────────────────────
@@ -82,17 +118,18 @@ router.post("/deposit", requireAdmin, async (req, res) => {
 
   const userId = req.session.userId!;
 
-  // Atomic: insert deposit record + credit wallet in one transaction
+  // Atomic: insert deposit record + credit wallet + ledger entry in one transaction
   const updated = await db.transaction(async (tx) => {
+    const ref = reference ?? `admin-direct-${userId}-${Date.now()}`;
     await tx.insert(depositsTable).values({
       userId,
       amount: amount.toFixed(2),
       status: "completed",
       method: method ?? "mobile_money",
-      reference: reference ?? null,
+      reference: ref,
       note: note ?? null,
     });
-    return creditWallet(userId, amount, tx);
+    return creditWallet(userId, amount, tx, { source: method ?? "mobile_money", reference: ref, note: note ?? undefined });
   });
 
   res.json({ balance: parseFloat(updated.balance), updatedAt: updated.updatedAt });
@@ -117,6 +154,25 @@ router.get("/deposits", requireAuth, async (req, res) => {
       createdAt: d.createdAt,
     }))
   );
+});
+
+router.get("/ledger", requireAuth, async (req, res) => {
+  const entries = await db
+    .select()
+    .from(walletLedgerTable)
+    .where(eq(walletLedgerTable.userId, req.session.userId!))
+    .orderBy(desc(walletLedgerTable.createdAt))
+    .limit(100);
+
+  res.json(entries.map(e => ({
+    id: e.id,
+    amount: parseFloat(e.amount),
+    type: e.type,
+    source: e.source,
+    reference: e.reference,
+    note: e.note,
+    createdAt: e.createdAt,
+  })));
 });
 
 const PaystackInitBodySchema = z.object({ amount: z.number().positive() });
@@ -204,7 +260,6 @@ router.post("/paystack/verify", requireAuth, async (req, res) => {
   const userId = req.session.userId!;
   const { reference } = parsed.data;
 
-  // Fetch the deposit first (outside the transaction) to check ownership
   const [deposit] = await db
     .select()
     .from(depositsTable)
@@ -220,14 +275,12 @@ router.post("/paystack/verify", requireAuth, async (req, res) => {
     return;
   }
 
-  // Already completed — idempotent return
   if (deposit.status === "completed") {
     const wallet = await getOrCreateWallet(userId);
     res.json({ balance: parseFloat(wallet.balance), updatedAt: wallet.updatedAt });
     return;
   }
 
-  // Verify with Paystack
   const verifyRes = await fetch(`https://api.paystack.co/transaction/verify/${reference}`, {
     headers: { Authorization: `Bearer ${PAYSTACK_SECRET}` },
   });
@@ -243,8 +296,6 @@ router.post("/paystack/verify", requireAuth, async (req, res) => {
     return;
   }
 
-  // Atomic: flip deposit to completed + credit wallet.
-  // SELECT FOR UPDATE prevents concurrent requests from double-crediting.
   const wallet = await db.transaction(async (tx) => {
     const [locked] = await tx
       .select()
@@ -253,7 +304,6 @@ router.post("/paystack/verify", requireAuth, async (req, res) => {
       .for("update");
 
     if (!locked) {
-      // Another concurrent request already processed this — return current balance
       const [w] = await tx.select().from(walletsTable).where(eq(walletsTable.userId, userId));
       return w;
     }
@@ -263,7 +313,11 @@ router.post("/paystack/verify", requireAuth, async (req, res) => {
       .set({ status: "completed", note: "Paystack payment verified" })
       .where(eq(depositsTable.id, deposit.id));
 
-    return creditWallet(userId, parseFloat(locked.amount), tx);
+    return creditWallet(userId, parseFloat(locked.amount), tx, {
+      source: "paystack",
+      reference: locked.reference ?? undefined,
+      note: `Paystack deposit of GH₵${locked.amount}`,
+    });
   });
 
   res.json({ balance: parseFloat(wallet!.balance), updatedAt: wallet!.updatedAt });
@@ -287,7 +341,6 @@ router.post("/paystack/webhook", async (req, res) => {
   if (event.event === "charge.success" && event.data?.status === "success") {
     const { reference } = event.data;
 
-    // Atomic: only credit if status is still pending (FOR UPDATE prevents race)
     await db.transaction(async (tx) => {
       const [locked] = await tx
         .select()
@@ -295,14 +348,18 @@ router.post("/paystack/webhook", async (req, res) => {
         .where(and(eq(depositsTable.reference, reference), eq(depositsTable.status, "pending")))
         .for("update");
 
-      if (!locked) return; // Already processed
+      if (!locked) return;
 
       await tx
         .update(depositsTable)
         .set({ status: "completed", note: "Auto-credited via Paystack webhook" })
         .where(eq(depositsTable.id, locked.id));
 
-      await creditWallet(locked.userId, parseFloat(locked.amount), tx);
+      await creditWallet(locked.userId, parseFloat(locked.amount), tx, {
+        source: "paystack",
+        reference: locked.reference ?? undefined,
+        note: `Paystack webhook credit GH₵${locked.amount}`,
+      });
     });
   }
 
@@ -351,7 +408,6 @@ router.post("/momo/claim", requireAuth, async (req, res) => {
 const SMS_WEBHOOK_SECRET = process.env.SMS_WEBHOOK_SECRET ?? "";
 
 router.post("/sms-webhook", async (req, res) => {
-  // Require a shared secret header if one is configured
   if (SMS_WEBHOOK_SECRET) {
     const provided = (req.headers["x-sms-secret"] ?? req.query["secret"]) as string | undefined;
     if (!provided || provided !== SMS_WEBHOOK_SECRET) {
@@ -385,15 +441,11 @@ router.post("/sms-webhook", async (req, res) => {
     return;
   }
 
-  // Use an external SMS message ID if provided for deduplication, otherwise
-  // build a reference keyed on deposit code + amount (rounded to minute)
-  // to catch duplicate deliveries of the same SMS within the same minute.
   const minuteKey = Math.floor(Date.now() / 60000);
   const reference = body.id
     ? `MOMO-SMS-EXT-${body.id}`
     : `MOMO-SMS-${user.id}-${depositCode}-${amount.toFixed(2)}-${minuteKey}`;
 
-  // Deduplication: skip if a deposit with this reference was already processed
   const [existing] = await db
     .select()
     .from(depositsTable)
@@ -404,7 +456,6 @@ router.post("/sms-webhook", async (req, res) => {
     return;
   }
 
-  // Atomic: insert deposit record + credit wallet in one transaction
   await db.transaction(async (tx) => {
     await tx.insert(depositsTable).values({
       userId: user.id,
@@ -414,7 +465,11 @@ router.post("/sms-webhook", async (req, res) => {
       reference,
       note: `Auto-credited from MoMo SMS (ref: ${depositCode})`,
     });
-    await creditWallet(user.id, amount, tx);
+    await creditWallet(user.id, amount, tx, {
+      source: "momo",
+      reference,
+      note: `MoMo SMS auto-credit GH₵${amount.toFixed(2)}`,
+    });
   });
 
   res.sendStatus(200);
@@ -427,4 +482,4 @@ router.get("/momo-info", requireAuth, async (req, res) => {
   res.json({ momoNumber: MOMO_NUMBER, referenceCode });
 });
 
-export { router as walletRouter, getOrCreateWallet, creditWallet };
+export { router as walletRouter, getOrCreateWallet, creditWallet, insertLedgerEntry };

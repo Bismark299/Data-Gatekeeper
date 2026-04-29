@@ -63,10 +63,22 @@ A full-stack data bundle sales platform with a modern client interface and admin
 ## Security Model
 
 - All business logic is server-side
-- Session cookies (httpOnly, secure in production)
-- `requireAuth` middleware for all protected routes
-- `requireAdmin` middleware for admin-only routes
-- Frontend never trusts its own role checks — server re-validates
+- Session cookies (httpOnly, secure, SameSite=None for Replit cross-origin)
+- **PostgreSQL session store** (connect-pg-simple) — sessions persist across restarts, stored in `sessions` table
+- `requireAuth` / `requireAdmin` middleware for all protected routes
+- **Helmet** security headers on all responses
+- **Rate limiting**: auth 20/15min, wallet 30/min, general API 120/min
+- **CORS** locked to known Replit domains (REPLIT_DOMAINS + REPLIT_DEV_DOMAIN)
+- **Wallet ledger** (`wallet_ledger` table) — immutable append-only record of every balance change; balance on `wallets` is a cached total
+- **Soft-delete** for users (`deleted_at` column) — financial records preserved; hard delete removed
+- `deposits.reference` has a DB-level UNIQUE constraint
+- `orders.status` has a DB-level CHECK constraint (pending/processing/completed/failed only)
+- All financial mutations wrapped in `db.transaction()` with `SELECT FOR UPDATE`
+- **Reconciliation endpoint** (`GET /admin/reconcile`) — surfaces stuck processing orders and wallet/ledger discrepancies
+- **Pagination** on all admin list endpoints (page/pageSize params)
+- Store order lookup (`GET /s/:slug/orders`) requires phone + email (two-factor customer identification)
+- Store order verify (`POST /s/:slug/verify`) uses SELECT FOR UPDATE to prevent duplicate state transitions
+- `POST /wallet/sms-webhook` protected by `SMS_WEBHOOK_SECRET` header with minute-keyed deduplication
 
 ## Demo Credentials
 

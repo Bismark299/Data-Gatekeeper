@@ -16,13 +16,28 @@ export const depositsTable = pgTable("deposits", {
   amount: numeric("amount", { precision: 10, scale: 2 }).notNull(),
   status: text("status").notNull().default("pending"),
   method: text("method").notNull().default("manual"),
-  reference: text("reference"),
+  reference: text("reference").unique(),
   note: text("note"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
+});
+
+// Immutable ledger: every wallet balance change is recorded here.
+// Positive amount = credit, negative = debit.
+// Balance on walletsTable is a cached running total; this table is the source of truth for audits.
+export const walletLedgerTable = pgTable("wallet_ledger", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
+  amount: numeric("amount", { precision: 12, scale: 2 }).notNull(),
+  type: text("type").notNull(),
+  source: text("source").notNull(),
+  reference: text("reference"),
+  note: text("note"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const insertDepositSchema = createInsertSchema(depositsTable).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertDeposit = z.infer<typeof insertDepositSchema>;
 export type Wallet = typeof walletsTable.$inferSelect;
 export type Deposit = typeof depositsTable.$inferSelect;
+export type WalletLedgerEntry = typeof walletLedgerTable.$inferSelect;

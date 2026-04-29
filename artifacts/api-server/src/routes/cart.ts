@@ -3,7 +3,7 @@ import { db, cartItemsTable, bundlesTable, ordersTable, walletsTable } from "@wo
 import { requireAuth } from "../middlewares/auth";
 import { eq, and } from "drizzle-orm";
 import { AddToCartBody } from "@workspace/api-zod";
-import { getOrCreateWallet } from "./wallet";
+import { getOrCreateWallet, insertLedgerEntry } from "./wallet";
 
 const router = Router();
 
@@ -80,9 +80,8 @@ router.delete("/:id", requireAuth, async (req, res) => {
   res.status(204).send();
 });
 
-// Checkout: atomically debits wallet and creates all orders.
-// SELECT FOR UPDATE on the wallet row prevents concurrent checkouts from
-// both reading the same balance and both succeeding (double-spend).
+// Checkout: atomically debits wallet, creates all orders, and writes one ledger entry per order.
+// SELECT FOR UPDATE on the wallet row prevents concurrent checkouts from double-spending.
 router.post("/checkout", requireAuth, async (req, res) => {
   const userId = req.session.userId!;
 
@@ -94,14 +93,12 @@ router.post("/checkout", requireAuth, async (req, res) => {
 
   const total = items.reduce((sum, i) => sum + i.price, 0);
 
-  // Ensure wallet exists before entering the transaction
   await getOrCreateWallet(userId);
 
   let result: { orders: object[]; totalCharged: number; remainingBalance: number };
 
   try {
     result = await db.transaction(async (tx) => {
-      // Lock wallet row — prevents another concurrent checkout from double-spending
       const [wallet] = await tx
         .select()
         .from(walletsTable)
@@ -121,7 +118,6 @@ router.post("/checkout", requireAuth, async (req, res) => {
       const newBalance = (currentBalance - total).toFixed(2);
       await tx.update(walletsTable).set({ balance: newBalance }).where(eq(walletsTable.userId, userId));
 
-      // Insert all orders within the same transaction — if any fail, wallet debit rolls back
       const createdOrders = await Promise.all(
         items.map(item =>
           tx.insert(ordersTable).values({
@@ -136,22 +132,40 @@ router.post("/checkout", requireAuth, async (req, res) => {
         )
       );
 
-      // Clear cart within the same transaction
       await tx.delete(cartItemsTable).where(eq(cartItemsTable.userId, userId));
 
-      const orders = createdOrders.flat().map(o => ({
-        id: o.id,
-        userId: o.userId,
-        bundleId: o.bundleId,
-        bundleName: o.bundleName,
-        bundleData: o.bundleData,
-        price: parseFloat(o.price),
-        status: o.status,
-        phoneNumber: o.phoneNumber,
-        createdAt: o.createdAt,
-      }));
+      const orders = createdOrders.flat();
 
-      return { orders, totalCharged: total, remainingBalance: parseFloat(newBalance) };
+      // Write one ledger debit entry per order, all within this transaction
+      await Promise.all(
+        orders.map(o =>
+          insertLedgerEntry(
+            tx,
+            userId,
+            -parseFloat(o.price),
+            "debit",
+            "cart",
+            `order-${o.id}`,
+            `${o.bundleName} → ${o.phoneNumber}`,
+          )
+        )
+      );
+
+      return {
+        orders: orders.map(o => ({
+          id: o.id,
+          userId: o.userId,
+          bundleId: o.bundleId,
+          bundleName: o.bundleName,
+          bundleData: o.bundleData,
+          price: parseFloat(o.price),
+          status: o.status,
+          phoneNumber: o.phoneNumber,
+          createdAt: o.createdAt,
+        })),
+        totalCharged: total,
+        remainingBalance: parseFloat(newBalance),
+      };
     });
   } catch (err: unknown) {
     const e = err as { message?: string; status?: number };

@@ -5,8 +5,12 @@ import session from "express-session";
 import cookieParser from "cookie-parser";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
+import connectPg from "connect-pg-simple";
+import { pool } from "@workspace/db";
 import router from "./routes";
 import { logger } from "./lib/logger";
+
+const PgStore = connectPg(session);
 
 const app: Express = express();
 
@@ -35,7 +39,22 @@ app.use(
   }),
 );
 
-app.use(cors({ origin: true, credentials: true }));
+// CORS: allow only known Replit domains; fall back to true only when no env vars are set
+// (e.g. local dev without .env). In production REPLIT_DOMAINS is always present.
+const rawDomains = process.env.REPLIT_DOMAINS ?? "";
+const devDomain  = process.env.REPLIT_DEV_DOMAIN ?? "";
+const allowedOrigins: string[] = [
+  ...rawDomains.split(",").filter(Boolean).map((d) => `https://${d.trim()}`),
+  ...(devDomain ? [`https://${devDomain}`] : []),
+];
+
+app.use(
+  cors({
+    origin: allowedOrigins.length > 0 ? allowedOrigins : true,
+    credentials: true,
+  }),
+);
+
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true, limit: "1mb" }));
 app.use(cookieParser());
@@ -47,6 +66,13 @@ if (!sessionSecret) {
 
 app.use(
   session({
+    // PostgreSQL session store: persists sessions across restarts,
+    // allows immediate invalidation when a user is deactivated or role-changed,
+    // and does not leak memory under load.
+    store: new PgStore({
+      pool,
+      tableName: "sessions",
+    }),
     secret: sessionSecret,
     resave: false,
     saveUninitialized: false,
@@ -61,25 +87,22 @@ app.use(
 
 // ── Rate limiters ─────────────────────────────────────────────────────────────
 
-// Strict limiter for auth endpoints — prevents brute-force attacks
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
+  windowMs: 15 * 60 * 1000,
   max: 20,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Too many requests. Please try again in 15 minutes." },
 });
 
-// Wallet/financial endpoints — tighter limit to prevent automated abuse
 const walletLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
+  windowMs: 60 * 1000,
   max: 30,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Too many wallet requests. Please slow down." },
 });
 
-// General API limiter
 const apiLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 120,

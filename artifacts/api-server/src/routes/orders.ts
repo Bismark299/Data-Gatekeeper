@@ -1,12 +1,12 @@
 import { Router, type IRouter } from "express";
 import { eq, and, desc } from "drizzle-orm";
-import { db, ordersTable, bundlesTable, walletsTable } from "@workspace/db";
+import { db, ordersTable, bundlesTable, walletsTable, walletLedgerTable } from "@workspace/db";
 import {
   CreateOrderBody,
   GetOrderParams,
 } from "@workspace/api-zod";
 import { requireAuth } from "../middlewares/auth";
-import { getOrCreateWallet } from "./wallet";
+import { getOrCreateWallet, insertLedgerEntry } from "./wallet";
 
 const router: IRouter = Router();
 
@@ -78,7 +78,7 @@ router.post("/orders", requireAuth, async (req, res): Promise<void> => {
   res.status(201).json(formatOrder(order));
 });
 
-// Direct purchase: atomically checks balance, debits wallet, and creates order.
+// Direct purchase: atomically checks balance, debits wallet, creates order, and writes ledger entry.
 // Uses SELECT FOR UPDATE to prevent concurrent double-spend.
 router.post("/orders/purchase", requireAuth, async (req, res): Promise<void> => {
   const parsed = CreateOrderBody.safeParse(req.body);
@@ -107,15 +107,12 @@ router.post("/orders/purchase", requireAuth, async (req, res): Promise<void> => 
 
   const price = parseFloat(bundle.price);
 
-  // Ensure wallet row exists before entering the transaction
   await getOrCreateWallet(userId);
 
   let order: typeof ordersTable.$inferSelect;
 
   try {
     order = await db.transaction(async (tx) => {
-      // Lock the wallet row for this transaction — prevents concurrent purchases
-      // from reading the same balance and both succeeding
       const [wallet] = await tx
         .select()
         .from(walletsTable)
@@ -150,6 +147,17 @@ router.post("/orders/purchase", requireAuth, async (req, res): Promise<void> => 
           phoneNumber: phoneNumber.trim(),
         })
         .returning();
+
+      // Write immutable ledger entry for this debit
+      await insertLedgerEntry(
+        tx,
+        userId,
+        -price,
+        "debit",
+        "order",
+        `order-${created.id}`,
+        `${bundle.name} → ${phoneNumber.trim()}`,
+      );
 
       return created;
     });

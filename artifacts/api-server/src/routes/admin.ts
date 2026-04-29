@@ -1,7 +1,13 @@
 import { Router, type IRouter } from "express";
-import { eq, count, sum, desc, gte, and, ilike, inArray, type SQL, sql } from "drizzle-orm";
-import { db, usersTable, bundlesTable, ordersTable, walletsTable, depositsTable, storesTable, settingsTable } from "@workspace/db";
-import { creditWallet } from "./wallet";
+import {
+  eq, count, sum, desc, gte, and, ilike, inArray, isNull, isNotNull, lt,
+  type SQL, sql,
+} from "drizzle-orm";
+import {
+  db, usersTable, bundlesTable, ordersTable, walletsTable, depositsTable,
+  storesTable, settingsTable, walletLedgerTable,
+} from "@workspace/db";
+import { creditWallet, insertLedgerEntry } from "./wallet";
 import {
   AdminListUsersQueryParams,
   AdminUpdateUserParams,
@@ -14,6 +20,16 @@ import {
 import { requireAdmin } from "../middlewares/auth";
 
 const router: IRouter = Router();
+
+// ── Pagination helper ─────────────────────────────────────────────────────────
+
+function parsePage(query: Record<string, unknown>) {
+  const page = Math.max(1, parseInt(String(query.page ?? "1")));
+  const pageSize = Math.min(200, Math.max(1, parseInt(String(query.pageSize ?? "50"))));
+  return { page, pageSize, offset: (page - 1) * pageSize };
+}
+
+// ── Formatters ────────────────────────────────────────────────────────────────
 
 function formatUser(u: typeof usersTable.$inferSelect) {
   return {
@@ -40,8 +56,11 @@ function formatOrder(o: typeof ordersTable.$inferSelect, network?: string | null
     status: o.status,
     phoneNumber: o.phoneNumber,
     createdAt: o.createdAt.toISOString(),
+    updatedAt: o.updatedAt.toISOString(),
   };
 }
+
+// ── Users ─────────────────────────────────────────────────────────────────────
 
 router.get("/admin/users", requireAdmin, async (req, res): Promise<void> => {
   const params = AdminListUsersQueryParams.safeParse(req.query);
@@ -51,29 +70,60 @@ router.get("/admin/users", requireAdmin, async (req, res): Promise<void> => {
   }
 
   const { search, role } = params.data;
-  const conditions: SQL[] = [];
+  const { page, pageSize, offset } = parsePage(req.query as Record<string, unknown>);
 
-  if (search) {
-    conditions.push(ilike(usersTable.name, `%${search}%`));
-  }
-  if (role) {
-    conditions.push(eq(usersTable.role, role));
-  }
+  const conditions: SQL[] = [isNull(usersTable.deletedAt)]; // exclude soft-deleted
 
-  const rows = conditions.length > 0
-    ? await db
-        .select({ user: usersTable, balance: walletsTable.balance })
-        .from(usersTable)
-        .leftJoin(walletsTable, eq(walletsTable.userId, usersTable.id))
-        .where(and(...conditions))
-        .orderBy(desc(usersTable.createdAt))
-    : await db
-        .select({ user: usersTable, balance: walletsTable.balance })
-        .from(usersTable)
-        .leftJoin(walletsTable, eq(walletsTable.userId, usersTable.id))
-        .orderBy(desc(usersTable.createdAt));
+  if (search) conditions.push(ilike(usersTable.name, `%${search}%`));
+  if (role)   conditions.push(eq(usersTable.role, role));
 
-  res.json(rows.map(r => ({ ...formatUser(r.user), walletBalance: Number(r.balance ?? 0) })));
+  const rows = await db
+    .select({ user: usersTable, balance: walletsTable.balance })
+    .from(usersTable)
+    .leftJoin(walletsTable, eq(walletsTable.userId, usersTable.id))
+    .where(and(...conditions))
+    .orderBy(desc(usersTable.createdAt))
+    .limit(pageSize)
+    .offset(offset);
+
+  const [{ total }] = await db
+    .select({ total: count() })
+    .from(usersTable)
+    .where(and(...conditions));
+
+  res.json({
+    total,
+    page,
+    pageSize,
+    data: rows.map(r => ({ ...formatUser(r.user), walletBalance: Number(r.balance ?? 0) })),
+  });
+});
+
+router.get("/admin/users/deleted", requireAdmin, async (req, res): Promise<void> => {
+  const { page, pageSize, offset } = parsePage(req.query as Record<string, unknown>);
+
+  const rows = await db
+    .select({ user: usersTable })
+    .from(usersTable)
+    .where(isNotNull(usersTable.deletedAt))
+    .orderBy(desc(usersTable.updatedAt))
+    .limit(pageSize)
+    .offset(offset);
+
+  const [{ total }] = await db
+    .select({ total: count() })
+    .from(usersTable)
+    .where(isNotNull(usersTable.deletedAt));
+
+  res.json({
+    total,
+    page,
+    pageSize,
+    data: rows.map(r => ({
+      ...formatUser(r.user),
+      deletedAt: r.user.deletedAt?.toISOString() ?? null,
+    })),
+  });
 });
 
 router.patch("/admin/users/:id", requireAdmin, async (req, res): Promise<void> => {
@@ -93,7 +143,7 @@ router.patch("/admin/users/:id", requireAdmin, async (req, res): Promise<void> =
   const [user] = await db
     .update(usersTable)
     .set(parsed.data)
-    .where(eq(usersTable.id, paramsParsed.data.id))
+    .where(and(eq(usersTable.id, paramsParsed.data.id), isNull(usersTable.deletedAt)))
     .returning();
 
   if (!user) {
@@ -104,6 +154,9 @@ router.patch("/admin/users/:id", requireAdmin, async (req, res): Promise<void> =
   res.json(formatUser(user));
 });
 
+// Soft-delete: sets deletedAt instead of removing the row.
+// Financial records (orders, deposits, wallet) are preserved for dispute resolution.
+// Use GET /admin/users/deleted to view and potentially restore deleted users.
 router.delete("/admin/users/:id", requireAdmin, async (req, res): Promise<void> => {
   const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const params = AdminDeleteUserParams.safeParse({ id: raw });
@@ -118,10 +171,40 @@ router.delete("/admin/users/:id", requireAdmin, async (req, res): Promise<void> 
     return;
   }
 
-  await db.delete(usersTable).where(eq(usersTable.id, params.data.id));
+  const [deleted] = await db
+    .update(usersTable)
+    .set({ deletedAt: new Date(), isActive: false })
+    .where(and(eq(usersTable.id, params.data.id), isNull(usersTable.deletedAt)))
+    .returning({ id: usersTable.id });
+
+  if (!deleted) {
+    res.status(404).json({ error: "User not found or already deleted" });
+    return;
+  }
 
   res.sendStatus(204);
 });
+
+// Restore a previously soft-deleted user
+router.post("/admin/users/:id/restore", requireAdmin, async (req, res): Promise<void> => {
+  const id = Number(req.params.id);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid user ID" }); return; }
+
+  const [restored] = await db
+    .update(usersTable)
+    .set({ deletedAt: null, isActive: true })
+    .where(and(eq(usersTable.id, id), isNotNull(usersTable.deletedAt)))
+    .returning();
+
+  if (!restored) {
+    res.status(404).json({ error: "User not found or not deleted" });
+    return;
+  }
+
+  res.json(formatUser(restored));
+});
+
+// ── Orders ────────────────────────────────────────────────────────────────────
 
 router.get("/admin/orders", requireAdmin, async (req, res): Promise<void> => {
   const params = AdminListOrdersQueryParams.safeParse(req.query);
@@ -131,29 +214,32 @@ router.get("/admin/orders", requireAdmin, async (req, res): Promise<void> => {
   }
 
   const { status, userId } = params.data;
-  const conditions: SQL[] = [];
+  const { page, pageSize, offset } = parsePage(req.query as Record<string, unknown>);
 
-  if (status) {
-    conditions.push(eq(ordersTable.status, status));
-  }
-  if (userId !== undefined) {
-    conditions.push(eq(ordersTable.userId, userId));
-  }
+  const conditions: SQL[] = [];
+  if (status)            conditions.push(eq(ordersTable.status, status));
+  if (userId !== undefined) conditions.push(eq(ordersTable.userId, userId));
+
+  const baseQuery = db
+    .select({ order: ordersTable, network: bundlesTable.network })
+    .from(ordersTable)
+    .leftJoin(bundlesTable, eq(bundlesTable.id, ordersTable.bundleId));
 
   const rows = conditions.length > 0
-    ? await db
-        .select({ order: ordersTable, network: bundlesTable.network })
-        .from(ordersTable)
-        .leftJoin(bundlesTable, eq(bundlesTable.id, ordersTable.bundleId))
-        .where(and(...conditions))
-        .orderBy(desc(ordersTable.createdAt))
-    : await db
-        .select({ order: ordersTable, network: bundlesTable.network })
-        .from(ordersTable)
-        .leftJoin(bundlesTable, eq(bundlesTable.id, ordersTable.bundleId))
-        .orderBy(desc(ordersTable.createdAt));
+    ? await baseQuery.where(and(...conditions)).orderBy(desc(ordersTable.createdAt)).limit(pageSize).offset(offset)
+    : await baseQuery.orderBy(desc(ordersTable.createdAt)).limit(pageSize).offset(offset);
 
-  res.json(rows.map(r => formatOrder(r.order, r.network)));
+  const countQuery = db.select({ total: count() }).from(ordersTable);
+  const [{ total }] = conditions.length > 0
+    ? await countQuery.where(and(...conditions))
+    : await countQuery;
+
+  res.json({
+    total,
+    page,
+    pageSize,
+    data: rows.map(r => formatOrder(r.order, r.network)),
+  });
 });
 
 router.patch("/admin/orders/:id/status", requireAdmin, async (req, res): Promise<void> => {
@@ -196,7 +282,6 @@ router.post("/admin/orders/:id/refund", requireAdmin, async (req, res): Promise<
 
   try {
     const refunded = await db.transaction(async (tx) => {
-      // Lock the order row to prevent concurrent refunds
       const [locked] = await tx
         .select()
         .from(ordersTable)
@@ -205,18 +290,16 @@ router.post("/admin/orders/:id/refund", requireAdmin, async (req, res): Promise<
 
       if (!locked) throw Object.assign(new Error("Order not found"), { status: 404 });
       if (locked.status === "completed") throw Object.assign(new Error("Cannot refund a completed order"), { status: 400 });
-      if (locked.status === "failed") throw Object.assign(new Error("Order is already failed/refunded"), { status: 400 });
+      if (locked.status === "failed")    throw Object.assign(new Error("Order is already failed/refunded"), { status: 400 });
 
       await tx.update(ordersTable).set({ status: "failed" }).where(eq(ordersTable.id, id));
 
-      // Atomically credit the refund amount back to the user's wallet
-      await tx
-        .insert(walletsTable)
-        .values({ userId: locked.userId, balance: locked.price })
-        .onConflictDoUpdate({
-          target: walletsTable.userId,
-          set: { balance: sql`wallets.balance + ${locked.price}::numeric` },
-        });
+      // Credit the refund amount back to wallet and record in the ledger
+      await creditWallet(locked.userId, parseFloat(locked.price), tx, {
+        source: "refund",
+        reference: `refund-order-${id}`,
+        note: `Refund for order #${id} (${locked.bundleName})`,
+      });
 
       return Number(locked.price);
     });
@@ -259,6 +342,8 @@ router.post("/admin/orders/complete-processing", requireAdmin, async (req, res):
   res.json({ updated: processingOrders.length });
 });
 
+// ── Users: password reset ─────────────────────────────────────────────────────
+
 router.post("/admin/users/:id/reset-password", requireAdmin, async (req, res): Promise<void> => {
   const id = Number(req.params.id);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid user ID" }); return; }
@@ -270,15 +355,21 @@ router.post("/admin/users/:id/reset-password", requireAdmin, async (req, res): P
   const [user] = await db
     .update(usersTable)
     .set({ passwordHash })
-    .where(eq(usersTable.id, id))
+    .where(and(eq(usersTable.id, id), isNull(usersTable.deletedAt)))
     .returning();
 
   if (!user) { res.status(404).json({ error: "User not found" }); return; }
 
+  // NOTE: tempPassword is intentionally returned to the admin here.
+  // When email delivery is configured, send it via email instead of this response.
   res.json({ success: true, tempPassword });
 });
 
+// ── Wallets ───────────────────────────────────────────────────────────────────
+
 router.get("/admin/wallets", requireAdmin, async (req, res): Promise<void> => {
+  const { page, pageSize, offset } = parsePage(req.query as Record<string, unknown>);
+
   const rows = await db
     .select({
       id: walletsTable.id,
@@ -293,16 +384,18 @@ router.get("/admin/wallets", requireAdmin, async (req, res): Promise<void> => {
     })
     .from(walletsTable)
     .leftJoin(usersTable, eq(walletsTable.userId, usersTable.id))
-    .orderBy(desc(walletsTable.balance));
+    .orderBy(desc(walletsTable.balance))
+    .limit(pageSize)
+    .offset(offset);
 
-  // Aggregate totals per user
+  const [{ total }] = await db.select({ total: count() }).from(walletsTable);
+
   const depositTotals = await db
     .select({ userId: depositsTable.userId, total: sum(depositsTable.amount) })
     .from(depositsTable)
     .where(eq(depositsTable.status, "completed"))
     .groupBy(depositsTable.userId);
 
-  // All orders regardless of status — total monetary value of orders placed
   const orderTotals = await db
     .select({ userId: ordersTable.userId, total: sum(ordersTable.price) })
     .from(ordersTable)
@@ -311,19 +404,24 @@ router.get("/admin/wallets", requireAdmin, async (req, res): Promise<void> => {
   const depMap = new Map(depositTotals.map(d => [d.userId, Number(d.total ?? 0)]));
   const ordMap = new Map(orderTotals.map(o => [o.userId, Number(o.total ?? 0)]));
 
-  res.json(rows.map(w => ({
-    id: w.id,
-    userId: w.userId,
-    balance: Number(w.balance),
-    updatedAt: w.updatedAt?.toISOString() ?? null,
-    userName: w.userName ?? "Unknown",
-    userEmail: w.userEmail ?? "Unknown",
-    userPhone: w.userPhone ?? null,
-    userRole: w.userRole ?? "user",
-    userDepositCode: w.userDepositCode ?? null,
-    totalLoaded: depMap.get(w.userId!) ?? 0,
-    totalOrders: ordMap.get(w.userId!) ?? 0,
-  })));
+  res.json({
+    total,
+    page,
+    pageSize,
+    data: rows.map(w => ({
+      id: w.id,
+      userId: w.userId,
+      balance: Number(w.balance),
+      updatedAt: w.updatedAt?.toISOString() ?? null,
+      userName: w.userName ?? "Unknown",
+      userEmail: w.userEmail ?? "Unknown",
+      userPhone: w.userPhone ?? null,
+      userRole: w.userRole ?? "user",
+      userDepositCode: w.userDepositCode ?? null,
+      totalLoaded: depMap.get(w.userId!) ?? 0,
+      totalOrders: ordMap.get(w.userId!) ?? 0,
+    })),
+  });
 });
 
 router.post("/admin/wallets/:userId/topup", requireAdmin, async (req, res): Promise<void> => {
@@ -335,17 +433,23 @@ router.post("/admin/wallets/:userId/topup", requireAdmin, async (req, res): Prom
     res.status(400).json({ error: "Invalid user ID or amount" }); return;
   }
 
-  // Atomic: insert the audit record first, then credit — if credit fails the record rolls back
+  const ref = `admin-topup-${adminId}-${Date.now()}`;
+
+  // Atomic: insert audit record, credit wallet, write ledger entry — all or nothing
   const updated = await db.transaction(async (tx) => {
     await tx.insert(depositsTable).values({
       userId,
       amount: amount.toFixed(2),
       method: "admin",
-      reference: `admin-topup-${adminId}-${Date.now()}`,
+      reference: ref,
       status: "completed",
       note: `${note} (by admin #${adminId})`,
     });
-    return creditWallet(userId, amount, tx);
+    return creditWallet(userId, amount, tx, {
+      source: "admin",
+      reference: ref,
+      note: `Admin top-up: ${note} (admin #${adminId})`,
+    });
   });
 
   res.json({ balance: Number(updated.balance), message: `GH₵${amount.toFixed(2)} added to wallet` });
@@ -360,9 +464,10 @@ router.post("/admin/wallets/:userId/debit", requireAdmin, async (req, res): Prom
     res.status(400).json({ error: "Invalid user ID or amount" }); return;
   }
 
+  const ref = `admin-debit-${adminId}-${Date.now()}`;
+
   try {
     const updated = await db.transaction(async (tx) => {
-      // Lock wallet row to prevent concurrent debits racing
       const [wallet] = await tx
         .select()
         .from(walletsTable)
@@ -384,15 +489,18 @@ router.post("/admin/wallets/:userId/debit", requireAdmin, async (req, res): Prom
         .where(eq(walletsTable.userId, userId))
         .returning();
 
-      // Audit record for the debit
+      // Audit record (positive amount stored separately, method:"admin")
       await tx.insert(depositsTable).values({
         userId,
         amount: (-amount).toFixed(2),
         method: "admin",
-        reference: `admin-debit-${adminId}-${Date.now()}`,
+        reference: ref,
         status: "completed",
         note: `${note} (by admin #${adminId})`,
       });
+
+      // Immutable ledger entry for the debit
+      await insertLedgerEntry(tx, userId, -amount, "debit", "admin", ref, `Admin debit: ${note} (admin #${adminId})`);
 
       return debited;
     });
@@ -424,21 +532,147 @@ router.get("/admin/wallets/:userId/deposits", requireAdmin, async (req, res): Pr
   })));
 });
 
+// ── Deposits ──────────────────────────────────────────────────────────────────
+
+router.get("/admin/deposits", requireAdmin, async (req, res): Promise<void> => {
+  const { status } = req.query as { status?: string };
+  const { page, pageSize, offset } = parsePage(req.query as Record<string, unknown>);
+
+  const conditions: SQL[] = [];
+  if (status) conditions.push(eq(depositsTable.status, status));
+
+  const baseQuery = db
+    .select({
+      id: depositsTable.id,
+      userId: depositsTable.userId,
+      userName: usersTable.name,
+      userEmail: usersTable.email,
+      amount: depositsTable.amount,
+      status: depositsTable.status,
+      method: depositsTable.method,
+      reference: depositsTable.reference,
+      note: depositsTable.note,
+      createdAt: depositsTable.createdAt,
+    })
+    .from(depositsTable)
+    .innerJoin(usersTable, eq(depositsTable.userId, usersTable.id));
+
+  const rows = conditions.length > 0
+    ? await baseQuery.where(and(...conditions)).orderBy(desc(depositsTable.createdAt)).limit(pageSize).offset(offset)
+    : await baseQuery.orderBy(desc(depositsTable.createdAt)).limit(pageSize).offset(offset);
+
+  const countQ = db.select({ total: count() }).from(depositsTable).innerJoin(usersTable, eq(depositsTable.userId, usersTable.id));
+  const [{ total }] = conditions.length > 0 ? await countQ.where(and(...conditions)) : await countQ;
+
+  res.json({
+    total,
+    page,
+    pageSize,
+    data: rows.map(d => ({ ...d, amount: parseFloat(d.amount) })),
+  });
+});
+
+router.post("/admin/deposits/:id/approve", requireAdmin, async (req, res): Promise<void> => {
+  const id = parseInt(String(req.params.id), 10);
+  if (isNaN(id)) {
+    res.status(400).json({ error: "Invalid deposit ID" });
+    return;
+  }
+
+  let updated: typeof depositsTable.$inferSelect;
+
+  try {
+    updated = await db.transaction(async (tx) => {
+      const [locked] = await tx
+        .select()
+        .from(depositsTable)
+        .where(eq(depositsTable.id, id))
+        .for("update");
+
+      if (!locked) throw Object.assign(new Error("Deposit not found"), { status: 404 });
+      if (locked.status !== "pending") {
+        throw Object.assign(
+          new Error(`Deposit is already ${locked.status}`),
+          { status: 400 }
+        );
+      }
+
+      const [dep] = await tx
+        .update(depositsTable)
+        .set({ status: "completed", note: `Approved by admin #${req.session.userId!}` })
+        .where(eq(depositsTable.id, id))
+        .returning();
+
+      await creditWallet(locked.userId, parseFloat(locked.amount), tx, {
+        source: locked.method,
+        reference: locked.reference ?? undefined,
+        note: `Deposit approved GH₵${locked.amount} (admin #${req.session.userId!})`,
+      });
+
+      return dep;
+    });
+  } catch (err: unknown) {
+    const e = err as { message?: string; status?: number };
+    res.status(e.status ?? 500).json({ error: e.message ?? "Approval failed" });
+    return;
+  }
+
+  const [user] = await db.select().from(usersTable).where(eq(usersTable.id, updated.userId));
+
+  res.json({
+    ...updated,
+    amount: parseFloat(updated.amount),
+    userName: user?.name ?? "",
+    userEmail: user?.email ?? "",
+  });
+});
+
+router.post("/admin/deposits/:id/reject", requireAdmin, async (req, res): Promise<void> => {
+  const id = parseInt(String(req.params.id), 10);
+  if (isNaN(id)) {
+    res.status(400).json({ error: "Invalid deposit ID" });
+    return;
+  }
+
+  const [deposit] = await db.select().from(depositsTable).where(eq(depositsTable.id, id));
+  if (!deposit) {
+    res.status(404).json({ error: "Deposit not found" });
+    return;
+  }
+
+  const [updated] = await db
+    .update(depositsTable)
+    .set({ status: "rejected", note: "Rejected by admin" })
+    .where(eq(depositsTable.id, id))
+    .returning();
+
+  const [user] = await db.select().from(usersTable).where(eq(usersTable.id, deposit.userId));
+
+  res.json({
+    ...updated,
+    amount: parseFloat(updated.amount),
+    userName: user?.name ?? "",
+    userEmail: user?.email ?? "",
+  });
+});
+
+// ── Stats / Revenue ───────────────────────────────────────────────────────────
+
 router.get("/admin/stats", requireAdmin, async (req, res): Promise<void> => {
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-  const [totalUsers] = await db.select({ count: count() }).from(usersTable);
-  const [totalOrders] = await db.select({ count: count() }).from(ordersTable);
-  const [revenueRow] = await db.select({ total: sum(ordersTable.price) }).from(ordersTable).where(eq(ordersTable.status, "completed"));
-  const [activeBundles] = await db.select({ count: count() }).from(bundlesTable).where(eq(bundlesTable.isActive, true));
-  const [pendingOrders] = await db.select({ count: count() }).from(ordersTable).where(eq(ordersTable.status, "pending"));
-  const [completedOrders] = await db.select({ count: count() }).from(ordersTable).where(eq(ordersTable.status, "completed"));
+  const [totalUsers]       = await db.select({ count: count() }).from(usersTable).where(isNull(usersTable.deletedAt));
+  const [totalOrders]      = await db.select({ count: count() }).from(ordersTable);
+  const [revenueRow]       = await db.select({ total: sum(ordersTable.price) }).from(ordersTable).where(eq(ordersTable.status, "completed"));
+  const [activeBundles]    = await db.select({ count: count() }).from(bundlesTable).where(eq(bundlesTable.isActive, true));
+  const [pendingOrders]    = await db.select({ count: count() }).from(ordersTable).where(eq(ordersTable.status, "pending"));
+  const [completedOrders]  = await db.select({ count: count() }).from(ordersTable).where(eq(ordersTable.status, "completed"));
   const [processingOrders] = await db.select({ count: count() }).from(ordersTable).where(eq(ordersTable.status, "processing"));
-  const [failedOrders] = await db.select({ count: count() }).from(ordersTable).where(eq(ordersTable.status, "failed"));
-  const [recentUsers] = await db.select({ count: count() }).from(usersTable).where(gte(usersTable.createdAt, thirtyDaysAgo));
-  const [recentOrders] = await db.select({ count: count() }).from(ordersTable).where(gte(ordersTable.createdAt, thirtyDaysAgo));
-  const [walletRow] = await db.select({ total: sum(walletsTable.balance) }).from(walletsTable);
+  const [failedOrders]     = await db.select({ count: count() }).from(ordersTable).where(eq(ordersTable.status, "failed"));
+  const [recentUsers]      = await db.select({ count: count() }).from(usersTable).where(and(gte(usersTable.createdAt, thirtyDaysAgo), isNull(usersTable.deletedAt)));
+  const [recentOrders]     = await db.select({ count: count() }).from(ordersTable).where(gte(ordersTable.createdAt, thirtyDaysAgo));
+  const [walletRow]        = await db.select({ total: sum(walletsTable.balance) }).from(walletsTable);
 
   res.json({
     totalUsers: totalUsers.count,
@@ -472,13 +706,9 @@ router.get("/admin/revenue", requireAdmin, async (req, res): Promise<void> => {
 
   for (const order of orders) {
     const date = order.createdAt.toISOString().split("T")[0];
-    if (!byDate[date]) {
-      byDate[date] = { revenue: 0, orders: 0 };
-    }
+    if (!byDate[date]) byDate[date] = { revenue: 0, orders: 0 };
     byDate[date].orders += 1;
-    if (order.status === "completed") {
-      byDate[date].revenue += Number(order.price);
-    }
+    if (order.status === "completed") byDate[date].revenue += Number(order.price);
   }
 
   const result = Object.entries(byDate)
@@ -501,20 +731,14 @@ router.get("/admin/top-bundles", requireAdmin, async (req, res): Promise<void> =
   const bundleMap: Record<number, { name: string; orders: number; revenue: number }> = {};
 
   for (const o of orders) {
-    if (!bundleMap[o.bundleId]) {
-      bundleMap[o.bundleId] = { name: o.bundleName, orders: 0, revenue: 0 };
-    }
+    if (!bundleMap[o.bundleId]) bundleMap[o.bundleId] = { name: o.bundleName, orders: 0, revenue: 0 };
     bundleMap[o.bundleId].orders += 1;
-    if (o.status === "completed") {
-      bundleMap[o.bundleId].revenue += Number(o.price);
-    }
+    if (o.status === "completed") bundleMap[o.bundleId].revenue += Number(o.price);
   }
 
   const bundles = await db.select().from(bundlesTable);
   const bundleCategoryMap: Record<number, string> = {};
-  for (const b of bundles) {
-    bundleCategoryMap[b.id] = b.category;
-  }
+  for (const b of bundles) bundleCategoryMap[b.id] = b.category;
 
   const result = Object.entries(bundleMap)
     .sort(([, a], [, b]) => b.orders - a.orders)
@@ -530,125 +754,13 @@ router.get("/admin/top-bundles", requireAdmin, async (req, res): Promise<void> =
   res.json(result);
 });
 
-router.get("/admin/deposits", requireAdmin, async (req, res): Promise<void> => {
-  const { status } = req.query as { status?: string };
+// ── Agents ────────────────────────────────────────────────────────────────────
 
-  const depositsWithUsers = await db
-    .select({
-      id: depositsTable.id,
-      userId: depositsTable.userId,
-      userName: usersTable.name,
-      userEmail: usersTable.email,
-      amount: depositsTable.amount,
-      status: depositsTable.status,
-      method: depositsTable.method,
-      reference: depositsTable.reference,
-      note: depositsTable.note,
-      createdAt: depositsTable.createdAt,
-    })
-    .from(depositsTable)
-    .innerJoin(usersTable, eq(depositsTable.userId, usersTable.id))
-    .orderBy(desc(depositsTable.createdAt));
-
-  const filtered = status
-    ? depositsWithUsers.filter((d) => d.status === status)
-    : depositsWithUsers;
-
-  res.json(
-    filtered.map((d) => ({
-      ...d,
-      amount: parseFloat(d.amount),
-    }))
-  );
-});
-
-router.post("/admin/deposits/:id/approve", requireAdmin, async (req, res): Promise<void> => {
-  const id = parseInt(req.params.id, 10);
-  if (isNaN(id)) {
-    res.status(400).json({ error: "Invalid deposit ID" });
-    return;
-  }
-
-  let updated: typeof depositsTable.$inferSelect;
-
-  try {
-    updated = await db.transaction(async (tx) => {
-      // Lock the deposit row — prevents two admins approving simultaneously (TOCTOU)
-      const [locked] = await tx
-        .select()
-        .from(depositsTable)
-        .where(eq(depositsTable.id, id))
-        .for("update");
-
-      if (!locked) throw Object.assign(new Error("Deposit not found"), { status: 404 });
-      if (locked.status !== "pending") {
-        throw Object.assign(
-          new Error(`Deposit is already ${locked.status}`),
-          { status: 400 }
-        );
-      }
-
-      const [dep] = await tx
-        .update(depositsTable)
-        .set({ status: "completed", note: `Approved by admin #${req.session.userId!}` })
-        .where(eq(depositsTable.id, id))
-        .returning();
-
-      await creditWallet(locked.userId, parseFloat(locked.amount), tx);
-
-      return dep;
-    });
-  } catch (err: unknown) {
-    const e = err as { message?: string; status?: number };
-    res.status(e.status ?? 500).json({ error: e.message ?? "Approval failed" });
-    return;
-  }
-
-  const [user] = await db.select().from(usersTable).where(eq(usersTable.id, updated.userId));
-
-  res.json({
-    ...updated,
-    amount: parseFloat(updated.amount),
-    userName: user?.name ?? "",
-    userEmail: user?.email ?? "",
-  });
-});
-
-router.post("/admin/deposits/:id/reject", requireAdmin, async (req, res): Promise<void> => {
-  const id = parseInt(req.params.id, 10);
-  if (isNaN(id)) {
-    res.status(400).json({ error: "Invalid deposit ID" });
-    return;
-  }
-
-  const [deposit] = await db.select().from(depositsTable).where(eq(depositsTable.id, id));
-  if (!deposit) {
-    res.status(404).json({ error: "Deposit not found" });
-    return;
-  }
-
-  const [updated] = await db
-    .update(depositsTable)
-    .set({ status: "rejected", note: "Rejected by admin" })
-    .where(eq(depositsTable.id, id))
-    .returning();
-
-  const [user] = await db.select().from(usersTable).where(eq(usersTable.id, deposit.userId));
-
-  res.json({
-    ...updated,
-    amount: parseFloat(updated.amount),
-    userName: user?.name ?? "",
-    userEmail: user?.email ?? "",
-  });
-});
-
-// ── GET /admin/agents/:userId — full agent profile ──────────────────────────
 router.get("/admin/agents/:userId", requireAdmin, async (req, res): Promise<void> => {
-  const userId = parseInt(req.params.userId, 10);
+  const userId = parseInt(String(req.params.userId), 10);
   if (isNaN(userId)) { res.status(400).json({ error: "Invalid user ID" }); return; }
 
-  const [user] = await db.select().from(usersTable).where(eq(usersTable.id, userId));
+  const [user] = await db.select().from(usersTable).where(and(eq(usersTable.id, userId), isNull(usersTable.deletedAt)));
   if (!user) { res.status(404).json({ error: "User not found" }); return; }
 
   const [wallet] = await db.select().from(walletsTable).where(eq(walletsTable.userId, userId));
@@ -725,7 +837,8 @@ router.get("/admin/agents/:userId", requireAdmin, async (req, res): Promise<void
   });
 });
 
-// ── GET /admin/wallet-transactions ─────────────────────────────────────────
+// ── Wallet transactions (combined ledger view) ────────────────────────────────
+
 router.get("/admin/wallet-transactions", requireAdmin, async (req, res) => {
   const {
     agentId = "", type = "all", status = "all",
@@ -733,11 +846,9 @@ router.get("/admin/wallet-transactions", requireAdmin, async (req, res) => {
     page = "1", pageSize = "50",
   } = req.query as Record<string, string>;
 
-  // Current wallet balances for running-balance computation
   const wallets = await db.select().from(walletsTable);
   const walletByUser = new Map(wallets.map(w => [w.userId, parseFloat(w.balance)]));
 
-  // Completed deposits → credits
   const deposits = await db
     .select({
       id:          depositsTable.id,
@@ -755,7 +866,6 @@ router.get("/admin/wallet-transactions", requireAdmin, async (req, res) => {
     .leftJoin(usersTable, eq(depositsTable.userId, usersTable.id))
     .where(eq(depositsTable.status, "completed"));
 
-  // All orders → debits (wallet deducted at creation time)
   const orders = await db
     .select({
       id:          ordersTable.id,
@@ -804,9 +914,8 @@ router.get("/admin/wallet-transactions", requireAdmin, async (req, res) => {
       note: o.bundleName,
       date: o.createdAt,
     })),
-  ].sort((a, b) => b.date.getTime() - a.date.getTime()); // newest first
+  ].sort((a, b) => b.date.getTime() - a.date.getTime());
 
-  // Compute running balances per user (backward from current balance)
   const userTxns = new Map<number, TxItem[]>();
   for (const t of txns) {
     if (!userTxns.has(t.userId)) userTxns.set(t.userId, []);
@@ -815,7 +924,7 @@ router.get("/admin/wallet-transactions", requireAdmin, async (req, res) => {
   const balMap = new Map<string, { prev: number; curr: number }>();
   for (const [uid, utxns] of userTxns) {
     let running = walletByUser.get(uid) ?? 0;
-    for (const t of utxns) { // newest first
+    for (const t of utxns) {
       const curr = running;
       const prev = curr - t.amount;
       balMap.set(t.key, { curr, prev });
@@ -843,7 +952,6 @@ router.get("/admin/wallet-transactions", requireAdmin, async (req, res) => {
     };
   });
 
-  // Apply filters
   if (agentId.trim()) {
     const q = agentId.trim().toLowerCase();
     result = result.filter(t =>
@@ -870,7 +978,57 @@ router.get("/admin/wallet-transactions", requireAdmin, async (req, res) => {
   res.json({ total, page: pg, pageSize: ps, data: result.slice((pg - 1) * ps, pg * ps) });
 });
 
-// ── GET /admin/settings ─────────────────────────────────────────────────────
+// ── Reconciliation ────────────────────────────────────────────────────────────
+// Surfaces two classes of issues that require admin attention:
+//   1. Orders stuck in "processing" for > 24 hours (fulfilment may have failed silently)
+//   2. Users whose wallet balance diverges from the sum of their ledger entries
+//      (only relevant once ledger entries start being written — new balances only)
+
+router.get("/admin/reconcile", requireAdmin, async (req, res): Promise<void> => {
+  const threshold = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+  const stuckOrders = await db
+    .select({ order: ordersTable, network: bundlesTable.network })
+    .from(ordersTable)
+    .leftJoin(bundlesTable, eq(bundlesTable.id, ordersTable.bundleId))
+    .where(and(eq(ordersTable.status, "processing"), lt(ordersTable.updatedAt, threshold)))
+    .orderBy(ordersTable.updatedAt);
+
+  const wallets = await db.select().from(walletsTable);
+
+  const ledgerSums = await db
+    .select({ userId: walletLedgerTable.userId, total: sum(walletLedgerTable.amount) })
+    .from(walletLedgerTable)
+    .groupBy(walletLedgerTable.userId);
+
+  const ledgerMap = new Map(ledgerSums.map(l => [l.userId, Number(l.total ?? 0)]));
+
+  // Only report discrepancies for wallets that have ledger entries
+  const discrepancies = wallets
+    .filter(w => {
+      const ls = ledgerMap.get(w.userId!);
+      if (ls === undefined) return false; // No entries yet — this wallet predates the ledger
+      return Math.abs(Number(w.balance) - ls) > 0.01;
+    })
+    .map(w => ({
+      userId: w.userId,
+      walletBalance: Number(w.balance),
+      ledgerSum: +(ledgerMap.get(w.userId!) ?? 0).toFixed(2),
+      difference: +(Number(w.balance) - (ledgerMap.get(w.userId!) ?? 0)).toFixed(2),
+    }));
+
+  res.json({
+    summary: {
+      stuckOrderCount: stuckOrders.length,
+      discrepancyCount: discrepancies.length,
+    },
+    stuckOrders: stuckOrders.map(r => formatOrder(r.order, r.network)),
+    discrepancies,
+  });
+});
+
+// ── Settings ──────────────────────────────────────────────────────────────────
+
 router.get("/admin/settings", requireAdmin, async (_req, res): Promise<void> => {
   const rows = await db.select().from(settingsTable);
   const settings: Record<string, string> = {};
@@ -878,7 +1036,6 @@ router.get("/admin/settings", requireAdmin, async (_req, res): Promise<void> => 
   res.json(settings);
 });
 
-// ── PUT /admin/settings ─────────────────────────────────────────────────────
 router.put("/admin/settings", requireAdmin, async (req, res): Promise<void> => {
   const body = req.body as Record<string, string>;
   if (typeof body !== "object" || Array.isArray(body)) {
@@ -896,5 +1053,8 @@ router.put("/admin/settings", requireAdmin, async (req, res): Promise<void> => {
   for (const r of rows) settings[r.key] = r.value;
   res.json(settings);
 });
+
+// ── Store orders (admin) ──────────────────────────────────────────────────────
+// (store order complete / reject / store order list handled in stores.ts admin section)
 
 export default router;

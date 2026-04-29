@@ -174,7 +174,7 @@ router.post("/stores/my/bundles", requireAuth, async (req, res) => {
 });
 
 router.put("/stores/my/bundles/:id", requireAuth, async (req, res) => {
-  const id = parseInt(req.params.id, 10);
+  const id = parseInt(String(req.params.id), 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
 
   const parsed = z.object({ sellingPrice: z.number().positive(), isActive: z.boolean().optional() }).safeParse(req.body);
@@ -203,7 +203,7 @@ router.put("/stores/my/bundles/:id", requireAuth, async (req, res) => {
 });
 
 router.delete("/stores/my/bundles/:id", requireAuth, async (req, res) => {
-  const id = parseInt(req.params.id, 10);
+  const id = parseInt(String(req.params.id), 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
 
   const [store] = await db.select().from(storesTable).where(eq(storesTable.userId, req.session.userId!));
@@ -566,11 +566,16 @@ router.post("/s/:slug/checkout", async (req, res) => {
   res.json({ authorizationUrl: psData.data!.authorization_url, reference, storeOrderId: storeOrder.id });
 });
 
+// Requires BOTH phone AND email to confirm customer identity before revealing order history.
+// Phone alone is not a sufficient secret — it appears on SMS receipts and can be guessed.
 router.get("/s/:slug/orders", async (req, res) => {
   const { slug } = req.params;
-  const { phone } = req.query as { phone?: string };
+  const { phone, email } = req.query as { phone?: string; email?: string };
   if (!phone || phone.trim().length < 7) {
     res.status(400).json({ error: "Valid phone number required" }); return;
+  }
+  if (!email || !email.includes("@")) {
+    res.status(400).json({ error: "Email address required" }); return;
   }
   const [store] = await db.select().from(storesTable).where(eq(storesTable.slug, slug));
   if (!store) { res.status(404).json({ error: "Store not found" }); return; }
@@ -586,20 +591,36 @@ router.get("/s/:slug/orders", async (req, res) => {
       createdAt: storeOrdersTable.createdAt,
     })
     .from(storeOrdersTable)
-    .where(and(eq(storeOrdersTable.storeId, store.id), eq(storeOrdersTable.customerPhone, phone.trim())))
+    .where(and(
+      eq(storeOrdersTable.storeId, store.id),
+      eq(storeOrdersTable.customerPhone, phone.trim()),
+      eq(storeOrdersTable.customerEmail, email.trim().toLowerCase()),
+    ))
     .orderBy(desc(storeOrdersTable.createdAt))
     .limit(50);
   res.json(orders.map(o => ({ ...o, sellingPrice: parseFloat(o.sellingPrice as any) })));
 });
 
+// Verify Paystack payment for a store order.
+// Uses SELECT FOR UPDATE to prevent a race where two concurrent callbacks
+// both pass the status check and try to mark the same order as processing.
 router.post("/s/:slug/verify", async (req, res) => {
   const { ref } = req.body as { ref?: string };
   if (!ref) { res.status(400).json({ error: "Reference required" }); return; }
 
-  const [storeOrder] = await db.select().from(storeOrdersTable).where(eq(storeOrdersTable.paystackReference, ref));
-  if (!storeOrder) { res.status(404).json({ error: "Order not found" }); return; }
-  if (storeOrder.status === "completed") { res.json(formatStoreOrder(storeOrder)); return; }
+  // Quick existence check outside the transaction (avoids holding locks during the Paystack call)
+  const [preCheck] = await db.select({ id: storeOrdersTable.id, status: storeOrdersTable.status })
+    .from(storeOrdersTable).where(eq(storeOrdersTable.paystackReference, ref));
+  if (!preCheck) { res.status(404).json({ error: "Order not found" }); return; }
 
+  // If already fully processed, return immediately without locking
+  if (preCheck.status === "completed") {
+    const [order] = await db.select().from(storeOrdersTable).where(eq(storeOrdersTable.id, preCheck.id));
+    res.json(formatStoreOrder(order));
+    return;
+  }
+
+  // Verify payment with Paystack (network call — outside the DB transaction to avoid long-held locks)
   const psRes = await fetch(`https://api.paystack.co/transaction/verify/${ref}`, {
     headers: { Authorization: `Bearer ${PAYSTACK_SECRET}` },
   });
@@ -610,12 +631,27 @@ router.post("/s/:slug/verify", async (req, res) => {
     return;
   }
 
-  // Payment confirmed — move to "processing" for admin to fulfil; profit credited on admin completion
-  if (storeOrder.status !== "processing") {
-    await db.update(storeOrdersTable).set({ status: "processing" }).where(eq(storeOrdersTable.id, storeOrder.id));
-  }
+  // Atomically transition to "processing" — FOR UPDATE prevents two concurrent
+  // successful verifications from both writing, ensuring exactly-once transition.
+  const updated = await db.transaction(async (tx) => {
+    const [locked] = await tx
+      .select()
+      .from(storeOrdersTable)
+      .where(eq(storeOrdersTable.id, preCheck.id))
+      .for("update");
 
-  const [updated] = await db.select().from(storeOrdersTable).where(eq(storeOrdersTable.id, storeOrder.id));
+    if (!locked) return null;
+    if (locked.status === "completed" || locked.status === "processing") return locked;
+
+    const [u] = await tx
+      .update(storeOrdersTable)
+      .set({ status: "processing" })
+      .where(eq(storeOrdersTable.id, locked.id))
+      .returning();
+    return u;
+  });
+
+  if (!updated) { res.status(404).json({ error: "Order not found" }); return; }
   res.json(formatStoreOrder(updated));
 });
 
@@ -674,7 +710,7 @@ router.get("/admin/stores", requireAuth, async (req, res) => {
 
 router.get("/admin/stores/:storeId/withdrawals", requireAuth, async (req, res) => {
   if (req.session.userRole !== "admin") { res.status(403).json({ error: "Forbidden" }); return; }
-  const storeId = parseInt(req.params.storeId);
+  const storeId = parseInt(String(req.params.storeId));
   if (isNaN(storeId)) { res.status(400).json({ error: "Invalid store id" }); return; }
 
   const withdrawals = await db.select().from(storeWithdrawalsTable)
@@ -686,7 +722,7 @@ router.get("/admin/stores/:storeId/withdrawals", requireAuth, async (req, res) =
 
 router.get("/admin/stores/:storeId/orders", requireAuth, async (req, res) => {
   if (req.session.userRole !== "admin") { res.status(403).json({ error: "Forbidden" }); return; }
-  const storeId = parseInt(req.params.storeId);
+  const storeId = parseInt(String(req.params.storeId));
   if (isNaN(storeId)) { res.status(400).json({ error: "Invalid store id" }); return; }
 
   const rows = await db.select({
@@ -748,7 +784,7 @@ router.get("/admin/store-orders", requireAuth, async (req, res) => {
 
 router.patch("/admin/store-orders/:id/complete", requireAuth, async (req, res) => {
   if (req.session.userRole !== "admin") { res.status(403).json({ error: "Forbidden" }); return; }
-  const id = parseInt(req.params.id);
+  const id = parseInt(String(req.params.id));
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
 
   try {
@@ -788,7 +824,7 @@ router.patch("/admin/store-orders/:id/complete", requireAuth, async (req, res) =
 
 router.patch("/admin/store-orders/:id/cancel", requireAuth, async (req, res) => {
   if (req.session.userRole !== "admin") { res.status(403).json({ error: "Forbidden" }); return; }
-  const id = parseInt(req.params.id);
+  const id = parseInt(String(req.params.id));
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
   const [order] = await db.select().from(storeOrdersTable).where(eq(storeOrdersTable.id, id));
   if (!order) { res.status(404).json({ error: "Order not found" }); return; }
@@ -801,7 +837,7 @@ router.patch("/admin/store-orders/:id/cancel", requireAuth, async (req, res) => 
 
 router.patch("/admin/stores/withdrawals/:id/approve", requireAuth, async (req, res) => {
   if (req.session.userRole !== "admin") { res.status(403).json({ error: "Forbidden" }); return; }
-  const id = parseInt(req.params.id);
+  const id = parseInt(String(req.params.id));
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
 
   const [w] = await db.select().from(storeWithdrawalsTable).where(eq(storeWithdrawalsTable.id, id));
@@ -868,7 +904,7 @@ router.patch("/admin/stores/withdrawals/:id/approve", requireAuth, async (req, r
 
 router.patch("/admin/stores/withdrawals/:id/reject", requireAuth, async (req, res) => {
   if (req.session.userRole !== "admin") { res.status(403).json({ error: "Forbidden" }); return; }
-  const id = parseInt(req.params.id);
+  const id = parseInt(String(req.params.id));
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
 
   let updated: typeof storeWithdrawalsTable.$inferSelect;
