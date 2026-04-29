@@ -319,36 +319,64 @@ router.post("/stores/my/withdraw", requireAuth, async (req, res) => {
   const parsed = WithdrawBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "Invalid withdrawal data" }); return; }
 
-  const [store] = await db.select().from(storesTable).where(eq(storesTable.userId, req.session.userId!));
-  if (!store) { res.status(404).json({ error: "No store found" }); return; }
-
   const WITHDRAWAL_FEE = 1;
   const MIN_WITHDRAWAL = 10;
-  const profit = parseFloat(store.profitBalance);
 
   if (parsed.data.amount < MIN_WITHDRAWAL) {
     res.status(400).json({ error: `Minimum withdrawal is GH₵${MIN_WITHDRAWAL}.00` }); return;
   }
-  const totalDeduction = parsed.data.amount + WITHDRAWAL_FEE;
-  if (totalDeduction > profit) {
-    res.status(400).json({ error: `Insufficient balance. Need GH₵${totalDeduction.toFixed(2)} (amount + GH₵${WITHDRAWAL_FEE} fee). Available: GH₵${profit.toFixed(2)}` });
+
+  let store: typeof storesTable.$inferSelect;
+  let w: typeof storeWithdrawalsTable.$inferSelect;
+
+  try {
+    ({ store, w } = await db.transaction(async (tx) => {
+      // Lock the store row so concurrent withdrawal requests can't both
+      // read the same balance and both succeed
+      const [locked] = await tx
+        .select()
+        .from(storesTable)
+        .where(eq(storesTable.userId, req.session.userId!))
+        .for("update");
+
+      if (!locked) throw Object.assign(new Error("No store found"), { status: 404 });
+
+      const profit = parseFloat(locked.profitBalance);
+      const totalDeduction = parsed.data.amount + WITHDRAWAL_FEE;
+
+      if (totalDeduction > profit) {
+        throw Object.assign(
+          new Error(`Insufficient balance. Need GH₵${totalDeduction.toFixed(2)} (amount + GH₵${WITHDRAWAL_FEE} fee). Available: GH₵${profit.toFixed(2)}`),
+          { status: 400 }
+        );
+      }
+
+      // Deduct amount + fee from profit balance
+      const newBalance = (profit - totalDeduction).toFixed(2);
+      const [updatedStore] = await tx
+        .update(storesTable)
+        .set({ profitBalance: newBalance })
+        .where(eq(storesTable.id, locked.id))
+        .returning();
+
+      const [withdrawal] = await tx.insert(storeWithdrawalsTable).values({
+        storeId: locked.id,
+        amount: parsed.data.amount.toFixed(2),
+        status: "pending",
+        method: parsed.data.method ?? "mobile_money",
+        accountNumber: parsed.data.accountNumber,
+        accountName: parsed.data.accountName ?? "",
+        bankCode: parsed.data.bankCode ?? "MTN",
+        note: parsed.data.note ?? "",
+      }).returning();
+
+      return { store: updatedStore, w: withdrawal };
+    }));
+  } catch (err: unknown) {
+    const e = err as { message?: string; status?: number };
+    res.status(e.status ?? 500).json({ error: e.message ?? "Withdrawal failed" });
     return;
   }
-
-  // Deduct amount + fee from profit balance
-  const newBalance = (profit - totalDeduction).toFixed(2);
-  await db.update(storesTable).set({ profitBalance: newBalance }).where(eq(storesTable.id, store.id));
-
-  const [w] = await db.insert(storeWithdrawalsTable).values({
-    storeId: store.id,
-    amount: parsed.data.amount.toFixed(2),
-    status: "pending",
-    method: parsed.data.method ?? "mobile_money",
-    accountNumber: parsed.data.accountNumber,
-    accountName: parsed.data.accountName ?? "",
-    bankCode: parsed.data.bankCode ?? "MTN",
-    note: parsed.data.note ?? "",
-  }).returning();
 
   // ── Step 1: Check Paystack balance before attempting transfer ────────────────
   let paystackBalanceGHS = 0;
@@ -825,23 +853,48 @@ router.patch("/admin/stores/withdrawals/:id/reject", requireAuth, async (req, re
   const id = parseInt(req.params.id);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
 
-  const [w] = await db.select().from(storeWithdrawalsTable).where(eq(storeWithdrawalsTable.id, id));
-  if (!w) { res.status(404).json({ error: "Withdrawal not found" }); return; }
-  if (w.status === "cancelled" || w.status === "completed") {
-    res.status(400).json({ error: "Cannot reject a withdrawal that is already " + w.status });
+  let updated: typeof storeWithdrawalsTable.$inferSelect;
+
+  try {
+    updated = await db.transaction(async (tx) => {
+      // Lock the withdrawal row to prevent concurrent approve/reject races
+      const [locked] = await tx
+        .select()
+        .from(storeWithdrawalsTable)
+        .where(eq(storeWithdrawalsTable.id, id))
+        .for("update");
+
+      if (!locked) throw Object.assign(new Error("Withdrawal not found"), { status: 404 });
+      if (locked.status === "cancelled" || locked.status === "completed") {
+        throw Object.assign(
+          new Error("Cannot reject a withdrawal that is already " + locked.status),
+          { status: 400 }
+        );
+      }
+
+      // Mark as cancelled
+      const [cancelled] = await tx
+        .update(storeWithdrawalsTable)
+        .set({ status: "cancelled" })
+        .where(eq(storeWithdrawalsTable.id, id))
+        .returning();
+
+      // Atomically refund the deducted amount + fee back to the store's profit balance
+      const WITHDRAWAL_FEE = 1;
+      const refundAmount = parseFloat(locked.amount as any) + WITHDRAWAL_FEE;
+      await tx
+        .update(storesTable)
+        .set({ profitBalance: sql`profit_balance + ${refundAmount.toFixed(2)}::numeric` })
+        .where(eq(storesTable.id, locked.storeId));
+
+      return cancelled;
+    });
+  } catch (err: unknown) {
+    const e = err as { message?: string; status?: number };
+    res.status(e.status ?? 500).json({ error: e.message ?? "Rejection failed" });
     return;
   }
 
-  // Mark as cancelled and refund the amount back to the store's profit balance
-  await db.update(storeWithdrawalsTable).set({ status: "cancelled" }).where(eq(storeWithdrawalsTable.id, id));
-
-  const [store] = await db.select().from(storesTable).where(eq(storesTable.id, w.storeId));
-  if (store) {
-    const refunded = (parseFloat(store.profitBalance) + parseFloat(w.amount as any)).toFixed(2);
-    await db.update(storesTable).set({ profitBalance: refunded }).where(eq(storesTable.id, store.id));
-  }
-
-  const [updated] = await db.select().from(storeWithdrawalsTable).where(eq(storeWithdrawalsTable.id, id));
   res.json({ ...updated, amount: parseFloat(updated.amount as any) });
 });
 

@@ -1,15 +1,22 @@
 import { Router } from "express";
 import { db, walletsTable, depositsTable, usersTable } from "@workspace/db";
 import { requireAuth } from "../middlewares/auth";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, and } from "drizzle-orm";
+import { sql } from "drizzle-orm";
+import type { NodePgTransaction } from "drizzle-orm/node-postgres";
 import { DepositToWalletBody } from "@workspace/api-zod";
 import { z } from "zod";
 import crypto from "crypto";
+
+// Union type that accepts both the top-level db and a transaction context
+type DbOrTx = typeof db | NodePgTransaction<any, any>;
 
 const router = Router();
 
 const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET_KEY ?? "";
 const MOMO_NUMBER = process.env.MOMO_NUMBER ?? "0200000000";
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 async function getOrCreateWallet(userId: number) {
   const [existing] = await db.select().from(walletsTable).where(eq(walletsTable.userId, userId));
@@ -18,16 +25,42 @@ async function getOrCreateWallet(userId: number) {
   return created;
 }
 
-async function creditWallet(userId: number, amount: number) {
-  const wallet = await getOrCreateWallet(userId);
-  const newBalance = (parseFloat(wallet.balance) + amount).toFixed(2);
-  const [updated] = await db
+/**
+ * Atomically increment a wallet balance using a SQL expression.
+ * Accepts an optional Drizzle transaction context (tx) so callers
+ * can use this inside their own transaction.
+ */
+async function creditWallet(userId: number, amount: number, tx?: DbOrTx) {
+  const client = tx ?? db;
+  // Upsert wallet row if it doesn't exist yet
+  await client
+    .insert(walletsTable)
+    .values({ userId, balance: amount.toFixed(2) })
+    .onConflictDoNothing();
+
+  const [updated] = await client
     .update(walletsTable)
-    .set({ balance: newBalance })
+    .set({ balance: sql`balance + ${amount.toFixed(2)}::numeric` })
     .where(eq(walletsTable.userId, userId))
     .returning();
+
+  if (!updated) {
+    // Row didn't exist yet (race on insert above) — retry credit
+    const [created] = await client
+      .insert(walletsTable)
+      .values({ userId, balance: amount.toFixed(2) })
+      .onConflictDoUpdate({
+        target: walletsTable.userId,
+        set: { balance: sql`wallets.balance + ${amount.toFixed(2)}::numeric` },
+      })
+      .returning();
+    return created;
+  }
+
   return updated;
 }
+
+// ── Routes ────────────────────────────────────────────────────────────────────
 
 router.get("/balance", requireAuth, async (req, res) => {
   const wallet = await getOrCreateWallet(req.session.userId!);
@@ -49,16 +82,19 @@ router.post("/deposit", requireAuth, async (req, res) => {
 
   const userId = req.session.userId!;
 
-  await db.insert(depositsTable).values({
-    userId,
-    amount: amount.toFixed(2),
-    status: "completed",
-    method: method ?? "mobile_money",
-    reference: reference ?? null,
-    note: note ?? null,
+  // Atomic: insert deposit record + credit wallet in one transaction
+  const updated = await db.transaction(async (tx) => {
+    await tx.insert(depositsTable).values({
+      userId,
+      amount: amount.toFixed(2),
+      status: "completed",
+      method: method ?? "mobile_money",
+      reference: reference ?? null,
+      note: note ?? null,
+    });
+    return creditWallet(userId, amount, tx);
   });
 
-  const updated = await creditWallet(userId, amount);
   res.json({ balance: parseFloat(updated.balance), updatedAt: updated.updatedAt });
 });
 
@@ -168,6 +204,7 @@ router.post("/paystack/verify", requireAuth, async (req, res) => {
   const userId = req.session.userId!;
   const { reference } = parsed.data;
 
+  // Fetch the deposit first (outside the transaction) to check ownership
   const [deposit] = await db
     .select()
     .from(depositsTable)
@@ -183,12 +220,14 @@ router.post("/paystack/verify", requireAuth, async (req, res) => {
     return;
   }
 
+  // Already completed — idempotent return
   if (deposit.status === "completed") {
     const wallet = await getOrCreateWallet(userId);
     res.json({ balance: parseFloat(wallet.balance), updatedAt: wallet.updatedAt });
     return;
   }
 
+  // Verify with Paystack
   const verifyRes = await fetch(`https://api.paystack.co/transaction/verify/${reference}`, {
     headers: { Authorization: `Bearer ${PAYSTACK_SECRET}` },
   });
@@ -204,14 +243,30 @@ router.post("/paystack/verify", requireAuth, async (req, res) => {
     return;
   }
 
-  await db
-    .update(depositsTable)
-    .set({ status: "completed", note: "Paystack payment verified" })
-    .where(eq(depositsTable.reference, reference));
+  // Atomic: flip deposit to completed + credit wallet.
+  // SELECT FOR UPDATE prevents concurrent requests from double-crediting.
+  const wallet = await db.transaction(async (tx) => {
+    const [locked] = await tx
+      .select()
+      .from(depositsTable)
+      .where(and(eq(depositsTable.id, deposit.id), eq(depositsTable.status, "pending")))
+      .for("update");
 
-  const amountGhs = parseFloat(deposit.amount);
-  const updated = await creditWallet(userId, amountGhs);
-  res.json({ balance: parseFloat(updated.balance), updatedAt: updated.updatedAt });
+    if (!locked) {
+      // Another concurrent request already processed this — return current balance
+      const [w] = await tx.select().from(walletsTable).where(eq(walletsTable.userId, userId));
+      return w;
+    }
+
+    await tx
+      .update(depositsTable)
+      .set({ status: "completed", note: "Paystack payment verified" })
+      .where(eq(depositsTable.id, deposit.id));
+
+    return creditWallet(userId, parseFloat(locked.amount), tx);
+  });
+
+  res.json({ balance: parseFloat(wallet!.balance), updatedAt: wallet!.updatedAt });
 });
 
 router.post("/paystack/webhook", async (req, res) => {
@@ -231,18 +286,24 @@ router.post("/paystack/webhook", async (req, res) => {
   const event = req.body as { event: string; data?: { reference: string; status: string } };
   if (event.event === "charge.success" && event.data?.status === "success") {
     const { reference } = event.data;
-    const [deposit] = await db
-      .select()
-      .from(depositsTable)
-      .where(eq(depositsTable.reference, reference));
 
-    if (deposit && deposit.status !== "completed") {
-      await db
+    // Atomic: only credit if status is still pending (FOR UPDATE prevents race)
+    await db.transaction(async (tx) => {
+      const [locked] = await tx
+        .select()
+        .from(depositsTable)
+        .where(and(eq(depositsTable.reference, reference), eq(depositsTable.status, "pending")))
+        .for("update");
+
+      if (!locked) return; // Already processed
+
+      await tx
         .update(depositsTable)
         .set({ status: "completed", note: "Auto-credited via Paystack webhook" })
-        .where(eq(depositsTable.reference, reference));
-      await creditWallet(deposit.userId, parseFloat(deposit.amount));
-    }
+        .where(eq(depositsTable.id, locked.id));
+
+      await creditWallet(locked.userId, parseFloat(locked.amount), tx);
+    });
   }
 
   res.sendStatus(200);
@@ -314,16 +375,20 @@ router.post("/sms-webhook", async (req, res) => {
   }
 
   const reference = `MOMO-SMS-${user.id}-${Date.now()}`;
-  await db.insert(depositsTable).values({
-    userId: user.id,
-    amount: amount.toFixed(2),
-    status: "completed",
-    method: "momo",
-    reference,
-    note: `Auto-credited from MoMo SMS (ref: ${depositCode})`,
+
+  // Atomic: insert deposit record + credit wallet in one transaction
+  await db.transaction(async (tx) => {
+    await tx.insert(depositsTable).values({
+      userId: user.id,
+      amount: amount.toFixed(2),
+      status: "completed",
+      method: "momo",
+      reference,
+      note: `Auto-credited from MoMo SMS (ref: ${depositCode})`,
+    });
+    await creditWallet(user.id, amount, tx);
   });
 
-  await creditWallet(user.id, amount);
   res.sendStatus(200);
 });
 

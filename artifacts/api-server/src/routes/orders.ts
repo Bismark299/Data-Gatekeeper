@@ -78,7 +78,8 @@ router.post("/orders", requireAuth, async (req, res): Promise<void> => {
   res.status(201).json(formatOrder(order));
 });
 
-// Direct purchase: deducts wallet balance + creates order in one step
+// Direct purchase: atomically checks balance, debits wallet, and creates order.
+// Uses SELECT FOR UPDATE to prevent concurrent double-spend.
 router.post("/orders/purchase", requireAuth, async (req, res): Promise<void> => {
   const parsed = CreateOrderBody.safeParse(req.body);
   if (!parsed.success) {
@@ -105,34 +106,58 @@ router.post("/orders/purchase", requireAuth, async (req, res): Promise<void> => 
   }
 
   const price = parseFloat(bundle.price);
-  const wallet = await getOrCreateWallet(userId);
-  const balance = parseFloat(wallet.balance);
 
-  if (balance < price) {
-    res.status(400).json({
-      error: `Insufficient balance. Need GH₵${price.toFixed(2)}, have GH₵${balance.toFixed(2)}`,
+  // Ensure wallet row exists before entering the transaction
+  await getOrCreateWallet(userId);
+
+  let order: typeof ordersTable.$inferSelect;
+
+  try {
+    order = await db.transaction(async (tx) => {
+      // Lock the wallet row for this transaction — prevents concurrent purchases
+      // from reading the same balance and both succeeding
+      const [wallet] = await tx
+        .select()
+        .from(walletsTable)
+        .where(eq(walletsTable.userId, userId))
+        .for("update");
+
+      if (!wallet) throw Object.assign(new Error("Wallet not found"), { status: 404 });
+
+      const balance = parseFloat(wallet.balance);
+      if (balance < price) {
+        throw Object.assign(
+          new Error(`Insufficient balance. Need GH₵${price.toFixed(2)}, have GH₵${balance.toFixed(2)}`),
+          { status: 400 }
+        );
+      }
+
+      const newBalance = (balance - price).toFixed(2);
+      await tx
+        .update(walletsTable)
+        .set({ balance: newBalance })
+        .where(eq(walletsTable.userId, userId));
+
+      const [created] = await tx
+        .insert(ordersTable)
+        .values({
+          userId,
+          bundleId: bundle.id,
+          bundleName: bundle.name,
+          bundleData: bundle.dataAmount,
+          price: bundle.price,
+          status: "pending",
+          phoneNumber: phoneNumber.trim(),
+        })
+        .returning();
+
+      return created;
     });
+  } catch (err: unknown) {
+    const e = err as { message?: string; status?: number };
+    res.status(e.status ?? 500).json({ error: e.message ?? "Purchase failed" });
     return;
   }
-
-  const newBalance = (balance - price).toFixed(2);
-  await db
-    .update(walletsTable)
-    .set({ balance: newBalance })
-    .where(eq(walletsTable.userId, userId));
-
-  const [order] = await db
-    .insert(ordersTable)
-    .values({
-      userId,
-      bundleId: bundle.id,
-      bundleName: bundle.name,
-      bundleData: bundle.dataAmount,
-      price: bundle.price,
-      status: "pending",
-      phoneNumber: phoneNumber.trim(),
-    })
-    .returning();
 
   res.status(201).json(formatOrder(order));
 });

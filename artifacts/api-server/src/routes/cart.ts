@@ -80,6 +80,9 @@ router.delete("/:id", requireAuth, async (req, res) => {
   res.status(204).send();
 });
 
+// Checkout: atomically debits wallet and creates all orders.
+// SELECT FOR UPDATE on the wallet row prevents concurrent checkouts from
+// both reading the same balance and both succeeding (double-spend).
 router.post("/checkout", requireAuth, async (req, res) => {
   const userId = req.session.userId!;
 
@@ -90,46 +93,73 @@ router.post("/checkout", requireAuth, async (req, res) => {
   }
 
   const total = items.reduce((sum, i) => sum + i.price, 0);
-  const wallet = await getOrCreateWallet(userId);
-  const currentBalance = parseFloat(wallet.balance);
 
-  if (currentBalance < total) {
-    res.status(400).json({ error: `Insufficient wallet balance. Need GH₵${total.toFixed(2)}, have GH₵${currentBalance.toFixed(2)}` });
+  // Ensure wallet exists before entering the transaction
+  await getOrCreateWallet(userId);
+
+  let result: { orders: object[]; totalCharged: number; remainingBalance: number };
+
+  try {
+    result = await db.transaction(async (tx) => {
+      // Lock wallet row — prevents another concurrent checkout from double-spending
+      const [wallet] = await tx
+        .select()
+        .from(walletsTable)
+        .where(eq(walletsTable.userId, userId))
+        .for("update");
+
+      if (!wallet) throw Object.assign(new Error("Wallet not found"), { status: 404 });
+
+      const currentBalance = parseFloat(wallet.balance);
+      if (currentBalance < total) {
+        throw Object.assign(
+          new Error(`Insufficient wallet balance. Need GH₵${total.toFixed(2)}, have GH₵${currentBalance.toFixed(2)}`),
+          { status: 400 }
+        );
+      }
+
+      const newBalance = (currentBalance - total).toFixed(2);
+      await tx.update(walletsTable).set({ balance: newBalance }).where(eq(walletsTable.userId, userId));
+
+      // Insert all orders within the same transaction — if any fail, wallet debit rolls back
+      const createdOrders = await Promise.all(
+        items.map(item =>
+          tx.insert(ordersTable).values({
+            userId,
+            bundleId: item.bundleId,
+            bundleName: item.bundleName,
+            bundleData: item.bundleData,
+            price: item.price.toFixed(2),
+            status: "pending",
+            phoneNumber: item.phoneNumber,
+          }).returning()
+        )
+      );
+
+      // Clear cart within the same transaction
+      await tx.delete(cartItemsTable).where(eq(cartItemsTable.userId, userId));
+
+      const orders = createdOrders.flat().map(o => ({
+        id: o.id,
+        userId: o.userId,
+        bundleId: o.bundleId,
+        bundleName: o.bundleName,
+        bundleData: o.bundleData,
+        price: parseFloat(o.price),
+        status: o.status,
+        phoneNumber: o.phoneNumber,
+        createdAt: o.createdAt,
+      }));
+
+      return { orders, totalCharged: total, remainingBalance: parseFloat(newBalance) };
+    });
+  } catch (err: unknown) {
+    const e = err as { message?: string; status?: number };
+    res.status(e.status ?? 500).json({ error: e.message ?? "Checkout failed" });
     return;
   }
 
-  const newBalance = (currentBalance - total).toFixed(2);
-  await db.update(walletsTable).set({ balance: newBalance }).where(eq(walletsTable.userId, userId));
-
-  const createdOrders = await Promise.all(
-    items.map(item =>
-      db.insert(ordersTable).values({
-        userId,
-        bundleId: item.bundleId,
-        bundleName: item.bundleName,
-        bundleData: item.bundleData,
-        price: item.price.toFixed(2),
-        status: "pending",
-        phoneNumber: item.phoneNumber,
-      }).returning()
-    )
-  );
-
-  await db.delete(cartItemsTable).where(eq(cartItemsTable.userId, userId));
-
-  const orders = createdOrders.flat().map(o => ({
-    id: o.id,
-    userId: o.userId,
-    bundleId: o.bundleId,
-    bundleName: o.bundleName,
-    bundleData: o.bundleData,
-    price: parseFloat(o.price),
-    status: o.status,
-    phoneNumber: o.phoneNumber,
-    createdAt: o.createdAt,
-  }));
-
-  res.json({ orders, totalCharged: total, remainingBalance: parseFloat(newBalance) });
+  res.json(result);
 });
 
 export { router as cartRouter };
