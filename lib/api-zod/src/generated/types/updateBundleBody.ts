@@ -12,6 +12,8 @@ export interface UpdateBundleBody {
   dataAmount?: string;
   validityDays?: number;
   price?: number;
+  dealerPrice?: number | null;
+  agentPrice?: number | null;
   category?: string;
   network?: string;
   isActive?: boolean;

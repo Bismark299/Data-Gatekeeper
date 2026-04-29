@@ -9,6 +9,8 @@ export const bundlesTable = pgTable("bundles", {
   dataAmount: text("data_amount").notNull(),
   validityDays: integer("validity_days").notNull(),
   price: numeric("price", { precision: 10, scale: 2 }).notNull(),
+  dealerPrice: numeric("dealer_price", { precision: 10, scale: 2 }),
+  agentPrice: numeric("agent_price", { precision: 10, scale: 2 }),
   category: text("category").notNull(),
   network: text("network").notNull().default("mtn"),
   isActive: boolean("is_active").notNull().default(true),

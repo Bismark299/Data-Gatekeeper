@@ -1098,6 +1098,12 @@ components:
           type: integer
         price:
           type: number
+        dealerPrice:
+          type: number
+          nullable: true
+        agentPrice:
+          type: number
+          nullable: true
         category:
           type: string
         network:
@@ -1131,6 +1137,12 @@ components:
           type: integer
         price:
           type: number
+        dealerPrice:
+          type: number
+          nullable: true
+        agentPrice:
+          type: number
+          nullable: true
         category:
           type: string
         network:
@@ -1157,6 +1169,12 @@ components:
           type: integer
         price:
           type: number
+        dealerPrice:
+          type: number
+          nullable: true
+        agentPrice:
+          type: number
+          nullable: true
         category:
           type: string
         network:

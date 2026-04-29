@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { storeApi, type Store, type StoreBundle, type StoreStats } from "@/lib/storeApi";
 import { useListBundles } from "@workspace/api-client-react";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
+import { useAuth } from "@/context/AuthContext";
 import { Navbar } from "@/components/Navbar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -165,6 +166,7 @@ function CreateStoreForm({ onCreated }: { onCreated: (s: Store) => void }) {
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
 function StoreDashboard({ store: initialStore }: { store: Store }) {
   const qc = useQueryClient();
+  const { user } = useAuth();
   const [tab, setTab] = useState<"overview" | "bundles" | "orders" | "settings" | "withdrawals">("overview");
   const [copied, setCopied] = useState(false);
 
@@ -246,7 +248,7 @@ function StoreDashboard({ store: initialStore }: { store: Store }) {
 
       {/* Tab content */}
       {tab === "overview" && <OverviewTab stats={stats} orders={orders} storeBundles={storeBundles} />}
-      {tab === "bundles" && <BundlesTab storeBundles={storeBundles} store={store} />}
+      {tab === "bundles" && <BundlesTab storeBundles={storeBundles} store={store} userRole={user?.role ?? "user"} />}
       {tab === "orders" && <OrdersTab orders={orders} />}
       {tab === "withdrawals" && <WithdrawalsTab stats={stats} withdrawals={withdrawals} store={store} />}
       {tab === "settings" && <SettingsTab store={store} />}
@@ -304,7 +306,7 @@ function OverviewTab({ stats, orders, storeBundles }: { stats?: StoreStats; orde
 type Network = "mtn" | "telecel" | "at-ishare" | "at-bigtime";
 const ALL_NETWORKS: Network[] = ["mtn", "telecel", "at-ishare", "at-bigtime"];
 
-function BundlesTab({ storeBundles, store }: { storeBundles: StoreBundle[]; store: Store }) {
+function BundlesTab({ storeBundles, store, userRole }: { storeBundles: StoreBundle[]; store: Store; userRole: string }) {
   const qc = useQueryClient();
   const [showAdd, setShowAdd] = useState(false);
   const [addNetwork, setAddNetwork] = useState<Network>("mtn");
@@ -343,7 +345,17 @@ function BundlesTab({ storeBundles, store }: { storeBundles: StoreBundle[]; stor
   const notInStore = (availableBundles as any[]).filter(b => !storeBundleIds.has(b.id));
 
   const selectedBundle = (availableBundles as any[]).find(b => b.id === selectedBundleId);
-  const basePrice = selectedBundle ? parseFloat(selectedBundle.price) : 0;
+
+  // Pick the role-appropriate base price
+  function getRolePrice(b: any): number {
+    if (!b) return 0;
+    if (userRole === "dealer" && b.dealerPrice != null) return parseFloat(b.dealerPrice);
+    if (userRole !== "dealer" && b.agentPrice != null) return parseFloat(b.agentPrice);
+    return parseFloat(b.price);
+  }
+
+  const rolePriceLabel = userRole === "dealer" ? "dealer price" : "agent price";
+  const basePrice = getRolePrice(selectedBundle);
   const profit = sellingPrice && basePrice ? Math.max(0, parseFloat(sellingPrice) - basePrice) : 0;
 
   return (
@@ -376,14 +388,17 @@ function BundlesTab({ storeBundles, store }: { storeBundles: StoreBundle[]; stor
             <div className="text-center text-sm text-muted-foreground py-6">All {NETWORK_LABELS[addNetwork]} bundles already added</div>
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-              {notInStore.map((b: any) => (
-                <button key={b.id} onClick={() => { setSelectedBundleId(b.id); setSellingPrice(parseFloat(b.price).toFixed(2)); }}
+              {notInStore.map((b: any) => {
+                const rp = getRolePrice(b);
+                return (
+                <button key={b.id} onClick={() => { setSelectedBundleId(b.id); setSellingPrice(rp.toFixed(2)); }}
                   className={`relative p-3 rounded-xl border-2 text-left transition-all ${selectedBundleId === b.id ? "border-primary bg-primary/5" : "border-border hover:border-primary/40"}`}>
                   {selectedBundleId === b.id && <Check className="absolute top-2 right-2 w-4 h-4 text-primary" />}
                   <div className="text-xl font-black text-foreground">{b.dataAmount}</div>
-                  <div className="text-xs text-muted-foreground mt-0.5">∞ · Base GH₵{b.price}</div>
+                  <div className="text-xs text-muted-foreground mt-0.5">GH₵{rp.toFixed(2)}</div>
                 </button>
-              ))}
+                );
+              })}
             </div>
           )}
 
@@ -394,7 +409,7 @@ function BundlesTab({ storeBundles, store }: { storeBundles: StoreBundle[]; stor
                 <Label htmlFor="selling-price" className="text-sm font-semibold mb-1.5 block">Your Selling Price (GH₵)</Label>
                 <Input id="selling-price" type="number" step="0.01" min={basePrice} value={sellingPrice}
                   onChange={e => setSellingPrice(e.target.value)} className="h-10 font-mono" />
-                <p className="text-xs text-muted-foreground mt-1">Min: GH₵{basePrice.toFixed(2)} (base price)</p>
+                <p className="text-xs text-muted-foreground mt-1">Min: GH₵{basePrice.toFixed(2)} ({rolePriceLabel})</p>
               </div>
               <div className={`p-3 rounded-xl border ${profit > 0 ? "bg-emerald-50 border-emerald-200 dark:bg-emerald-900/10 dark:border-emerald-800" : "bg-muted border-border"}`}>
                 <div className="text-xs text-muted-foreground">Your profit per sale</div>

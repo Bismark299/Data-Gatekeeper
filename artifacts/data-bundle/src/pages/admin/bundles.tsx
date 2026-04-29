@@ -45,6 +45,8 @@ const netLabel = (v: string) => NETWORKS.find(n => n.value === v)?.label ?? v;
 const bundleSchema = z.object({
   dataAmount: z.string().min(1, "Data amount required"),
   price: z.coerce.number().positive("Must be positive"),
+  dealerPrice: z.coerce.number().positive("Must be positive").optional().or(z.literal("")),
+  agentPrice: z.coerce.number().positive("Must be positive").optional().or(z.literal("")),
   network: z.string().min(1, "Select a network"),
 });
 
@@ -52,7 +54,8 @@ type BundleForm = z.infer<typeof bundleSchema>;
 
 interface Bundle {
   id: number; name: string; description: string; dataAmount: string;
-  validityDays: number; price: number; category: string; network: string; isActive: boolean;
+  validityDays: number; price: number; dealerPrice: number | null; agentPrice: number | null;
+  category: string; network: string; isActive: boolean;
 }
 
 const PAGE_SIZES = [10, 25, 50];
@@ -87,7 +90,17 @@ function AdminBundlesContent() {
   });
 
   const openCreate = () => { setEditing(null); reset({ network: "mtn" }); setShowForm(true); };
-  const openEdit   = (b: Bundle) => { setEditing(b); reset({ dataAmount: b.dataAmount, price: b.price, network: b.network }); setShowForm(true); };
+  const openEdit   = (b: Bundle) => {
+    setEditing(b);
+    reset({
+      dataAmount: b.dataAmount,
+      price: b.price,
+      dealerPrice: b.dealerPrice ?? undefined,
+      agentPrice: b.agentPrice ?? undefined,
+      network: b.network,
+    });
+    setShowForm(true);
+  };
 
   const onSubmit = (data: BundleForm) => {
     const networkLbl = netLabel(data.network);
@@ -97,6 +110,8 @@ function AdminBundlesContent() {
       dataAmount: data.dataAmount,
       validityDays: 30,
       price: data.price,
+      dealerPrice: data.dealerPrice !== "" && data.dealerPrice !== undefined ? Number(data.dealerPrice) : null,
+      agentPrice: data.agentPrice !== "" && data.agentPrice !== undefined ? Number(data.agentPrice) : null,
       network: data.network,
       category: "standard",
     };
@@ -275,7 +290,7 @@ function AdminBundlesContent() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-border bg-muted/20">
-                      {["Network", "Data", "Price", "Status", "Actions"].map(h => (
+                      {["Network", "Data", "Cost Price", "Dealer Price", "Agent Price", "Status", "Actions"].map(h => (
                         <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
                       ))}
                     </tr>
@@ -293,6 +308,16 @@ function AdminBundlesContent() {
                           </td>
                           <td className="px-5 py-3.5 font-bold text-foreground text-base">{bundle.dataAmount}</td>
                           <td className="px-5 py-3.5 font-bold text-foreground">GH₵{Number(bundle.price).toFixed(2)}</td>
+                          <td className="px-5 py-3.5">
+                            {(bundle as Bundle).dealerPrice != null
+                              ? <span className="font-semibold text-foreground">GH₵{Number((bundle as Bundle).dealerPrice).toFixed(2)}</span>
+                              : <span className="text-muted-foreground/40 italic text-xs">—</span>}
+                          </td>
+                          <td className="px-5 py-3.5">
+                            {(bundle as Bundle).agentPrice != null
+                              ? <span className="font-semibold text-foreground">GH₵{Number((bundle as Bundle).agentPrice).toFixed(2)}</span>
+                              : <span className="text-muted-foreground/40 italic text-xs">—</span>}
+                          </td>
                           <td className="px-5 py-3.5">
                             <button
                               onClick={() => toggleActive(bundle as Bundle)}
@@ -376,9 +401,27 @@ function AdminBundlesContent() {
                 {errors.dataAmount && <p className="text-xs text-destructive">{errors.dataAmount.message}</p>}
               </div>
               <div className="space-y-1.5">
-                <Label>Price (GH₵)</Label>
+                <Label className="flex items-center gap-1">
+                  Cost Price <span className="text-[10px] text-muted-foreground font-normal">(admin only)</span>
+                </Label>
                 <Input type="number" step="0.01" {...register("price")} placeholder="9.99" data-testid="input-price" />
                 {errors.price && <p className="text-xs text-destructive">{errors.price.message}</p>}
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="flex items-center gap-1">
+                  Dealer Price <span className="text-[10px] text-muted-foreground font-normal">(dealers see this)</span>
+                </Label>
+                <Input type="number" step="0.01" {...register("dealerPrice")} placeholder="optional" />
+                {errors.dealerPrice && <p className="text-xs text-destructive">{errors.dealerPrice.message}</p>}
+              </div>
+              <div className="space-y-1.5">
+                <Label className="flex items-center gap-1">
+                  Agent Price <span className="text-[10px] text-muted-foreground font-normal">(agents see this)</span>
+                </Label>
+                <Input type="number" step="0.01" {...register("agentPrice")} placeholder="optional" />
+                {errors.agentPrice && <p className="text-xs text-destructive">{errors.agentPrice.message}</p>}
               </div>
             </div>
             <DialogFooter>

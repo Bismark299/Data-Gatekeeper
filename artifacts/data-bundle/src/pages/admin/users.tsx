@@ -35,7 +35,7 @@ function AdminUsersContent() {
   const [, navigate] = useLocation();
   const [sidebarOpen, setSidebarOpen]  = useState(false);
   const [search, setSearch]            = useState("");
-  const [roleFilter, setRoleFilter]    = useState<"all" | "user" | "admin">("all");
+  const [roleFilter, setRoleFilter]    = useState<"all" | "user" | "dealer" | "admin">("all");
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("all");
   const [deleting, setDeleting]        = useState<{ id: number; name: string } | null>(null);
   const [resetResult, setResetResult]  = useState<{ name: string; tempPassword: string } | null>(null);
@@ -57,8 +57,7 @@ function AdminUsersContent() {
     });
   };
 
-  const toggleRole = (u: { id: number; role: string; name: string }) => {
-    const newRole = u.role === "admin" ? "user" : "admin";
+  const changeRole = (u: { id: number; name: string }, newRole: string) => {
     updateUser.mutate({ id: u.id, data: { role: newRole } }, {
       onSuccess: () => { toast({ title: `${u.name} is now ${newRole}` }); invalidate(); },
     });
@@ -89,7 +88,12 @@ function AdminUsersContent() {
   // Counts
   const counts = useMemo(() => {
     const src = allUsers ?? [];
-    return { total: src.length, admins: src.filter(u => u.role === "admin").length, active: src.filter(u => u.isActive).length };
+    return {
+      total: src.length,
+      admins: src.filter(u => u.role === "admin").length,
+      dealers: src.filter(u => u.role === "dealer").length,
+      active: src.filter(u => u.isActive).length,
+    };
   }, [allUsers]);
 
   // Filter
@@ -145,10 +149,11 @@ function AdminUsersContent() {
         <main className="flex-1 p-6 space-y-4">
 
           {/* Summary cards */}
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-4 gap-4">
             {[
               { label: "Total Users", value: counts.total, color: "text-sky-600", bg: "bg-sky-100 dark:bg-sky-900/20", icon: Users },
               { label: "Active",      value: counts.active, color: "text-emerald-600", bg: "bg-emerald-100 dark:bg-emerald-900/20", icon: CheckCircle2 },
+              { label: "Dealers",     value: counts.dealers, color: "text-amber-600", bg: "bg-amber-100 dark:bg-amber-900/20", icon: ShieldCheck },
               { label: "Admins",      value: counts.admins, color: "text-violet-600", bg: "bg-violet-100 dark:bg-violet-900/20", icon: ShieldCheck },
             ].map(c => (
               <div key={c.label} className="bg-card border border-border rounded-2xl p-4 flex items-center gap-3">
@@ -181,10 +186,15 @@ function AdminUsersContent() {
               </div>
               {/* Role */}
               <div className="flex items-center gap-1">
-                {(["all", "user", "admin"] as const).map(r => (
-                  <button key={r} onClick={() => { setRoleFilter(r); setPage(1); }}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold capitalize transition-colors ${roleFilter === r ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}>
-                    {r === "all" ? "All Roles" : r === "admin" ? "Admins" : "Users"}
+                {([
+                  { v: "all",    label: "All Roles" },
+                  { v: "user",   label: "Agents" },
+                  { v: "dealer", label: "Dealers" },
+                  { v: "admin",  label: "Admins" },
+                ] as const).map(r => (
+                  <button key={r.v} onClick={() => { setRoleFilter(r.v); setPage(1); }}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${roleFilter === r.v ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}>
+                    {r.label}
                   </button>
                 ))}
               </div>
@@ -266,18 +276,23 @@ function AdminUsersContent() {
                             </span>
                           </td>
                           <td className="px-5 py-3.5">
-                            <button
-                              onClick={() => toggleRole({ id: u.id, role: u.role, name: u.name })}
-                              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold capitalize transition-colors cursor-pointer ${
-                                u.role === "admin"
-                                  ? "bg-violet-100 text-violet-700 dark:bg-violet-900/20 dark:text-violet-400 hover:bg-violet-200"
-                                  : "bg-muted text-muted-foreground hover:bg-muted/80"
-                              }`}
-                              data-testid={`badge-role-${u.id}`}
-                            >
-                              {u.role === "admin" ? <ShieldCheck className="w-3 h-3" /> : <User className="w-3 h-3" />}
-                              {u.role}
-                            </button>
+                            <Select value={u.role} onValueChange={(newRole) => changeRole({ id: u.id, name: u.name }, newRole)}>
+                              <SelectTrigger
+                                className={`h-7 px-2.5 text-xs font-semibold border-0 w-auto gap-1 ${
+                                  u.role === "admin"  ? "bg-violet-100 text-violet-700 dark:bg-violet-900/20 dark:text-violet-400" :
+                                  u.role === "dealer" ? "bg-amber-100 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400" :
+                                  "bg-sky-100 text-sky-700 dark:bg-sky-900/20 dark:text-sky-400"
+                                }`}
+                                data-testid={`badge-role-${u.id}`}
+                              >
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="user">Agent</SelectItem>
+                                <SelectItem value="dealer">Dealer</SelectItem>
+                                <SelectItem value="admin">Admin</SelectItem>
+                              </SelectContent>
+                            </Select>
                           </td>
                           <td className="px-5 py-3.5">
                             <button

@@ -21,6 +21,8 @@ function formatBundle(b: typeof bundlesTable.$inferSelect) {
     dataAmount: b.dataAmount,
     validityDays: b.validityDays,
     price: Number(b.price),
+    dealerPrice: b.dealerPrice != null ? Number(b.dealerPrice) : null,
+    agentPrice: b.agentPrice != null ? Number(b.agentPrice) : null,
     category: b.category,
     network: b.network,
     isActive: b.isActive,
@@ -67,9 +69,15 @@ router.post("/bundles", requireAdmin, async (req, res): Promise<void> => {
     return;
   }
 
+  const { dealerPrice, agentPrice, ...rest } = parsed.data;
   const [bundle] = await db
     .insert(bundlesTable)
-    .values({ ...parsed.data, price: String(parsed.data.price) })
+    .values({
+      ...rest,
+      price: String(rest.price),
+      dealerPrice: dealerPrice != null ? String(dealerPrice) : null,
+      agentPrice: agentPrice != null ? String(agentPrice) : null,
+    })
     .returning();
 
   res.status(201).json(formatBundle(bundle));
@@ -110,10 +118,11 @@ router.patch("/bundles/:id", requireAdmin, async (req, res): Promise<void> => {
     return;
   }
 
-  const updateData: Partial<typeof bundlesTable.$inferInsert> = { ...parsed.data };
-  if (parsed.data.price !== undefined) {
-    updateData.price = String(parsed.data.price);
-  }
+  const { dealerPrice: dp, agentPrice: ap, price, ...restData } = parsed.data;
+  const updateData: Partial<typeof bundlesTable.$inferInsert> = { ...restData };
+  if (price !== undefined) updateData.price = String(price);
+  if (dp !== undefined) updateData.dealerPrice = dp != null ? String(dp) : null;
+  if (ap !== undefined) updateData.agentPrice = ap != null ? String(ap) : null;
 
   const [bundle] = await db
     .update(bundlesTable)
