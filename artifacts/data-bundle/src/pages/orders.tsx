@@ -67,16 +67,25 @@ function OrdersContent() {
   const [dateFrom, setDateFrom]       = useState(todayStr);
   const [dateTo, setDateTo]           = useState(todayStr);
 
+  // counts apply date filter but NOT status filter, so badges reflect the selected period
   const counts = useMemo(() => {
-    const all = orders ?? [];
+    let list = orders ?? [];
+    if (dateFrom) {
+      const from = new Date(dateFrom); from.setHours(0, 0, 0, 0);
+      list = list.filter(o => new Date(o.createdAt) >= from);
+    }
+    if (dateTo) {
+      const to = new Date(dateTo); to.setHours(23, 59, 59, 999);
+      list = list.filter(o => new Date(o.createdAt) <= to);
+    }
     return {
-      all:        all.length,
-      pending:    all.filter(o => o.status === "pending").length,
-      processing: all.filter(o => o.status === "processing").length,
-      completed:  all.filter(o => o.status === "completed").length,
-      failed:     all.filter(o => o.status === "failed").length,
+      all:        list.length,
+      pending:    list.filter(o => o.status === "pending").length,
+      processing: list.filter(o => o.status === "processing").length,
+      completed:  list.filter(o => o.status === "completed").length,
+      failed:     list.filter(o => o.status === "failed").length,
     };
-  }, [orders]);
+  }, [orders, dateFrom, dateTo]);
 
   const filtered = useMemo(() => {
     let list = orders ?? [];
