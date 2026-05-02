@@ -698,12 +698,33 @@ router.get("/admin/financial-summary", requireAdmin, async (req, res): Promise<v
       .from(ordersTable)
       .leftJoin(bundlesTable, eq(ordersTable.bundleId, bundlesTable.id))
       .where(eq(ordersTable.status, "completed")),
-    // Store orders
-    db.select({ sellingPrice: storeOrdersTable.sellingPrice, agentCost: storeOrdersTable.agentCost, basePrice: storeOrdersTable.basePrice })
+    // Store orders — join bundle + store owner role so we can compute system profit
+    // even for legacy rows where agentCost was not yet captured
+    db.select({
+        sellingPrice: storeOrdersTable.sellingPrice,
+        agentCost:    storeOrdersTable.agentCost,
+        basePrice:    storeOrdersTable.basePrice,
+        ownerRole:    usersTable.role,
+        agentPrice:   bundlesTable.agentPrice,
+        dealerPrice:  bundlesTable.dealerPrice,
+      })
       .from(storeOrdersTable)
+      .leftJoin(storesTable,  eq(storeOrdersTable.storeId,  storesTable.id))
+      .leftJoin(usersTable,   eq(storesTable.userId,        usersTable.id))
+      .leftJoin(bundlesTable, eq(storeOrdersTable.bundleId, bundlesTable.id))
       .where(and(eq(storeOrdersTable.status, "completed"), gte(storeOrdersTable.createdAt, todayStart))),
-    db.select({ sellingPrice: storeOrdersTable.sellingPrice, agentCost: storeOrdersTable.agentCost, basePrice: storeOrdersTable.basePrice })
+    db.select({
+        sellingPrice: storeOrdersTable.sellingPrice,
+        agentCost:    storeOrdersTable.agentCost,
+        basePrice:    storeOrdersTable.basePrice,
+        ownerRole:    usersTable.role,
+        agentPrice:   bundlesTable.agentPrice,
+        dealerPrice:  bundlesTable.dealerPrice,
+      })
       .from(storeOrdersTable)
+      .leftJoin(storesTable,  eq(storeOrdersTable.storeId,  storesTable.id))
+      .leftJoin(usersTable,   eq(storesTable.userId,        usersTable.id))
+      .leftJoin(bundlesTable, eq(storeOrdersTable.bundleId, bundlesTable.id))
       .where(eq(storeOrdersTable.status, "completed")),
   ]);
 
@@ -713,12 +734,19 @@ router.get("/admin/financial-summary", requireAdmin, async (req, res): Promise<v
   const allRevenuePlatform     = platformAll.reduce((s, o) => s + Number(o.price), 0);
   const allProfitPlatform      = platformAll.reduce((s, o) => s + (Number(o.price) - Number(o.buyingCost ?? 0)), 0);
 
-  // Store financials: systemProfit = agentCost - basePrice (platform keeps), revenue = sellingPrice (customer paid)
+  // Resolve the effective agentCost for a store order.
+  // Priority: stored agentCost → current bundle role-price → basePrice (0 profit fallback)
+  const resolveAgentCost = (o: typeof storeAll[0]) => {
+    if (o.agentCost != null) return Number(o.agentCost);
+    const base = Number(o.basePrice);
+    if (o.ownerRole === "dealer" && o.dealerPrice != null) return Number(o.dealerPrice);
+    if (o.ownerRole === "agent"  && o.agentPrice  != null) return Number(o.agentPrice);
+    return base; // unknown role or price not set → no system profit
+  };
+
+  // Store financials: systemProfit = resolvedAgentCost - basePrice
   const storeSystemProfit = (orders: typeof storeAll) =>
-    orders.reduce((s, o) => {
-      const ac = o.agentCost != null ? Number(o.agentCost) : Number(o.basePrice);
-      return s + (ac - Number(o.basePrice));
-    }, 0);
+    orders.reduce((s, o) => s + (resolveAgentCost(o) - Number(o.basePrice)), 0);
   const storeRevenue = (orders: typeof storeAll) => orders.reduce((s, o) => s + Number(o.sellingPrice), 0);
 
   const todayRevenueStore  = storeRevenue(storeToday);

@@ -781,15 +781,25 @@ router.get("/admin/store-orders", requireAuth, async (req, res) => {
       paystackReference: storeOrdersTable.paystackReference,
       createdAt: storeOrdersTable.createdAt,
       updatedAt: storeOrdersTable.updatedAt,
+      ownerRole:   usersTable.role,
+      agentPrice:  bundlesTable.agentPrice,
+      dealerPrice: bundlesTable.dealerPrice,
     })
     .from(storeOrdersTable)
-    .innerJoin(storesTable, eq(storeOrdersTable.storeId, storesTable.id))
+    .innerJoin(storesTable,  eq(storeOrdersTable.storeId,  storesTable.id))
+    .leftJoin(usersTable,    eq(storesTable.userId,         usersTable.id))
+    .leftJoin(bundlesTable,  eq(storeOrdersTable.bundleId,  bundlesTable.id))
     .orderBy(desc(storeOrdersTable.createdAt));
   res.json(rows.map(o => {
     const sellingPrice = parseFloat(o.sellingPrice as any);
     const basePrice    = parseFloat(o.basePrice as any);
-    const agentCost    = o.agentCost != null ? parseFloat(o.agentCost as any) : null;
     const profit       = parseFloat(o.profit as any);
+    // Resolve effective agentCost: stored value first, then current bundle role-price fallback
+    let agentCost: number | null = o.agentCost != null ? parseFloat(o.agentCost as any) : null;
+    if (agentCost == null) {
+      if (o.ownerRole === "dealer" && o.dealerPrice != null) agentCost = parseFloat(o.dealerPrice as any);
+      else if (o.ownerRole === "agent" && o.agentPrice != null) agentCost = parseFloat(o.agentPrice as any);
+    }
     const systemProfit = agentCost != null ? +(agentCost - basePrice).toFixed(2) : null;
     return { ...o, sellingPrice, basePrice, agentCost, profit, systemProfit };
   }));
