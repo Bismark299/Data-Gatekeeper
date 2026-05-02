@@ -5,7 +5,7 @@ import {
 } from "drizzle-orm";
 import {
   db, usersTable, bundlesTable, ordersTable, walletsTable, depositsTable,
-  storesTable, settingsTable, walletLedgerTable,
+  storesTable, storeOrdersTable, settingsTable, walletLedgerTable,
 } from "@workspace/db";
 import { creditWallet, insertLedgerEntry } from "./wallet";
 import {
@@ -640,30 +640,44 @@ router.get("/admin/stats", requireAdmin, async (req, res): Promise<void> => {
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-  const [totalUsers]       = await db.select({ count: count() }).from(usersTable).where(isNull(usersTable.deletedAt));
-  const [totalOrders]      = await db.select({ count: count() }).from(ordersTable);
-  const [revenueRow]       = await db.select({ total: sum(ordersTable.price) }).from(ordersTable).where(eq(ordersTable.status, "completed"));
-  const [activeBundles]    = await db.select({ count: count() }).from(bundlesTable).where(eq(bundlesTable.isActive, true));
-  const [pendingOrders]    = await db.select({ count: count() }).from(ordersTable).where(eq(ordersTable.status, "pending"));
-  const [completedOrders]  = await db.select({ count: count() }).from(ordersTable).where(eq(ordersTable.status, "completed"));
-  const [processingOrders] = await db.select({ count: count() }).from(ordersTable).where(eq(ordersTable.status, "processing"));
-  const [failedOrders]     = await db.select({ count: count() }).from(ordersTable).where(eq(ordersTable.status, "failed"));
-  const [recentUsers]      = await db.select({ count: count() }).from(usersTable).where(and(gte(usersTable.createdAt, thirtyDaysAgo), isNull(usersTable.deletedAt)));
-  const [recentOrders]     = await db.select({ count: count() }).from(ordersTable).where(gte(ordersTable.createdAt, thirtyDaysAgo));
-  const [walletRow]        = await db.select({ total: sum(walletsTable.balance) }).from(walletsTable);
+  const [
+    totalUsers, totalOrders, revenueRow, activeBundles,
+    pendingOrders, completedOrders, processingOrders, failedOrders,
+    recentUsers, recentOrders, walletRow,
+    storePending, storeCompleted, storeProcessing, storeFailed, storeTotal,
+  ] = await Promise.all([
+    db.select({ count: count() }).from(usersTable).where(isNull(usersTable.deletedAt)).then(r => r[0]),
+    db.select({ count: count() }).from(ordersTable).then(r => r[0]),
+    db.select({ total: sum(ordersTable.price) }).from(ordersTable).where(eq(ordersTable.status, "completed")).then(r => r[0]),
+    db.select({ count: count() }).from(bundlesTable).where(eq(bundlesTable.isActive, true)).then(r => r[0]),
+    db.select({ count: count() }).from(ordersTable).where(eq(ordersTable.status, "pending")).then(r => r[0]),
+    db.select({ count: count() }).from(ordersTable).where(eq(ordersTable.status, "completed")).then(r => r[0]),
+    db.select({ count: count() }).from(ordersTable).where(eq(ordersTable.status, "processing")).then(r => r[0]),
+    db.select({ count: count() }).from(ordersTable).where(eq(ordersTable.status, "failed")).then(r => r[0]),
+    db.select({ count: count() }).from(usersTable).where(and(gte(usersTable.createdAt, thirtyDaysAgo), isNull(usersTable.deletedAt))).then(r => r[0]),
+    db.select({ count: count() }).from(ordersTable).where(gte(ordersTable.createdAt, thirtyDaysAgo)).then(r => r[0]),
+    db.select({ total: sum(walletsTable.balance) }).from(walletsTable).then(r => r[0]),
+    db.select({ count: count() }).from(storeOrdersTable).where(eq(storeOrdersTable.status, "pending")).then(r => r[0]),
+    db.select({ count: count() }).from(storeOrdersTable).where(eq(storeOrdersTable.status, "completed")).then(r => r[0]),
+    db.select({ count: count() }).from(storeOrdersTable).where(eq(storeOrdersTable.status, "processing")).then(r => r[0]),
+    db.select({ count: count() }).from(storeOrdersTable).where(eq(storeOrdersTable.status, "failed")).then(r => r[0]),
+    db.select({ count: count() }).from(storeOrdersTable).then(r => r[0]),
+  ]);
 
   res.json({
     totalUsers: totalUsers.count,
-    totalOrders: totalOrders.count,
+    totalOrders: Number(totalOrders.count) + Number(storeTotal.count),
     totalRevenue: Number(revenueRow.total ?? 0),
     totalWalletBalance: Number(walletRow?.total ?? 0),
     activeBundles: activeBundles.count,
-    pendingOrders: pendingOrders.count,
-    completedOrders: completedOrders.count,
-    processingOrders: processingOrders.count,
-    failedOrders: failedOrders.count,
+    pendingOrders: Number(pendingOrders.count) + Number(storePending.count),
+    completedOrders: Number(completedOrders.count) + Number(storeCompleted.count),
+    processingOrders: Number(processingOrders.count) + Number(storeProcessing.count),
+    failedOrders: Number(failedOrders.count) + Number(storeFailed.count),
     recentUsers: recentUsers.count,
     recentOrders: recentOrders.count,
+    platformOrders: totalOrders.count,
+    storeOrders: storeTotal.count,
   });
 });
 
@@ -671,7 +685,11 @@ router.get("/admin/financial-summary", requireAdmin, async (req, res): Promise<v
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
 
-  const [completedToday, allCompleted] = await Promise.all([
+  const [
+    platformToday, platformAll,
+    storeToday, storeAll,
+  ] = await Promise.all([
+    // Direct platform orders
     db.select({ price: ordersTable.price, buyingCost: bundlesTable.price })
       .from(ordersTable)
       .leftJoin(bundlesTable, eq(ordersTable.bundleId, bundlesTable.id))
@@ -680,12 +698,38 @@ router.get("/admin/financial-summary", requireAdmin, async (req, res): Promise<v
       .from(ordersTable)
       .leftJoin(bundlesTable, eq(ordersTable.bundleId, bundlesTable.id))
       .where(eq(ordersTable.status, "completed")),
+    // Store orders
+    db.select({ sellingPrice: storeOrdersTable.sellingPrice, agentCost: storeOrdersTable.agentCost, basePrice: storeOrdersTable.basePrice })
+      .from(storeOrdersTable)
+      .where(and(eq(storeOrdersTable.status, "completed"), gte(storeOrdersTable.createdAt, todayStart))),
+    db.select({ sellingPrice: storeOrdersTable.sellingPrice, agentCost: storeOrdersTable.agentCost, basePrice: storeOrdersTable.basePrice })
+      .from(storeOrdersTable)
+      .where(eq(storeOrdersTable.status, "completed")),
   ]);
 
-  const todayRevenue   = completedToday.reduce((s, o) => s + Number(o.price), 0);
-  const todayProfit    = completedToday.reduce((s, o) => s + (Number(o.price) - Number(o.buyingCost ?? 0)), 0);
-  const allTimeRevenue = allCompleted.reduce((s, o) => s + Number(o.price), 0);
-  const allTimeProfit  = allCompleted.reduce((s, o) => s + (Number(o.price) - Number(o.buyingCost ?? 0)), 0);
+  // Platform (direct) financials: profit = order.price - buyingCost
+  const todayRevenuePlatform   = platformToday.reduce((s, o) => s + Number(o.price), 0);
+  const todayProfitPlatform    = platformToday.reduce((s, o) => s + (Number(o.price) - Number(o.buyingCost ?? 0)), 0);
+  const allRevenuePlatform     = platformAll.reduce((s, o) => s + Number(o.price), 0);
+  const allProfitPlatform      = platformAll.reduce((s, o) => s + (Number(o.price) - Number(o.buyingCost ?? 0)), 0);
+
+  // Store financials: systemProfit = agentCost - basePrice (platform keeps), revenue = sellingPrice (customer paid)
+  const storeSystemProfit = (orders: typeof storeAll) =>
+    orders.reduce((s, o) => {
+      const ac = o.agentCost != null ? Number(o.agentCost) : Number(o.basePrice);
+      return s + (ac - Number(o.basePrice));
+    }, 0);
+  const storeRevenue = (orders: typeof storeAll) => orders.reduce((s, o) => s + Number(o.sellingPrice), 0);
+
+  const todayRevenueStore  = storeRevenue(storeToday);
+  const todayProfitStore   = storeSystemProfit(storeToday);
+  const allRevenueStore    = storeRevenue(storeAll);
+  const allProfitStore     = storeSystemProfit(storeAll);
+
+  const todayRevenue   = todayRevenuePlatform + todayRevenueStore;
+  const todayProfit    = todayProfitPlatform  + todayProfitStore;
+  const allTimeRevenue = allRevenuePlatform   + allRevenueStore;
+  const allTimeProfit  = allProfitPlatform    + allProfitStore;
 
   let paystackBalance: number | null = null;
   const paystackSecret = process.env.PAYSTACK_SECRET_KEY;
@@ -707,7 +751,15 @@ router.get("/admin/financial-summary", requireAdmin, async (req, res): Promise<v
     } catch { /* Paystack unreachable — return null */ }
   }
 
-  res.json({ todayRevenue, todayProfit, allTimeRevenue, allTimeProfit, paystackBalance });
+  res.json({
+    todayRevenue, todayProfit,
+    allTimeRevenue, allTimeProfit,
+    paystackBalance,
+    todayRevenuePlatform, todayProfitPlatform,
+    todayRevenueStore,   todayProfitStore,
+    allRevenuePlatform,  allProfitPlatform,
+    allRevenueStore,     allProfitStore,
+  });
 });
 
 router.get("/admin/revenue", requireAdmin, async (req, res): Promise<void> => {

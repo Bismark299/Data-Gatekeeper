@@ -46,7 +46,7 @@ export default function Dashboard() {
 
 function DashboardContent() {
   const { data: user } = useGetMe({ query: { queryKey: getGetMeQueryKey() } });
-  const { data: orders, isLoading } = useListMyOrders();
+  const { data: orders, isLoading } = useListMyOrders({ refetchInterval: 10000, staleTime: 0 } as any);
   const { data: wallet } = useGetWalletBalance();
 
   const todayStart = new Date();

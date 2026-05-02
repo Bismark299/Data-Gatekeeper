@@ -172,10 +172,10 @@ function StoreDashboard({ store: initialStore }: { store: Store }) {
 
   const { data: storeData } = useQuery<Store | null>({ queryKey: ["myStore"], queryFn: storeApi.getMyStore, initialData: initialStore });
   const store: Store = (storeData ?? initialStore)!;
-  const { data: stats } = useQuery<StoreStats>({ queryKey: ["myStoreStats"], queryFn: storeApi.getStats, refetchInterval: 30000 });
-  const { data: storeBundles = [] } = useQuery<StoreBundle[]>({ queryKey: ["myStoreBundles"], queryFn: storeApi.getBundles });
-  const { data: orders = [] } = useQuery({ queryKey: ["myStoreOrders"], queryFn: storeApi.getOrders });
-  const { data: withdrawals = [] } = useQuery({ queryKey: ["myStoreWithdrawals"], queryFn: storeApi.getWithdrawals });
+  const { data: stats } = useQuery<StoreStats>({ queryKey: ["myStoreStats"], queryFn: storeApi.getStats, refetchInterval: 10000, staleTime: 0 });
+  const { data: storeBundles = [] } = useQuery<StoreBundle[]>({ queryKey: ["myStoreBundles"], queryFn: storeApi.getBundles, refetchInterval: 30000 });
+  const { data: orders = [] } = useQuery({ queryKey: ["myStoreOrders"], queryFn: storeApi.getOrders, refetchInterval: 10000, staleTime: 0 });
+  const { data: withdrawals = [] } = useQuery({ queryKey: ["myStoreWithdrawals"], queryFn: storeApi.getWithdrawals, refetchInterval: 30000 });
 
   const storeUrl = `${window.location.origin}/s/${store.slug}`;
   const theme = THEME_MAP[store.colorTheme] ?? THEME_MAP.blue;
@@ -512,10 +512,11 @@ function BundlesTab({ storeBundles, store, userRole }: { storeBundles: StoreBund
 
 // ─── Orders Tab ───────────────────────────────────────────────────────────────
 function OrdersTab({ orders }: { orders: any[] }) {
+  const todayStr = new Date().toISOString().slice(0, 10);
   const [phoneFilter, setPhoneFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  const [dateFrom, setDateFrom] = useState(todayStr);
+  const [dateTo, setDateTo] = useState(todayStr);
 
   const filtered = orders.filter(o => {
     if (phoneFilter && !o.customerPhone.includes(phoneFilter.trim())) return false;
@@ -525,10 +526,19 @@ function OrdersTab({ orders }: { orders: any[] }) {
     return true;
   });
 
+  const isToday = dateFrom === todayStr && dateTo === todayStr;
+  const hasFilters = phoneFilter || statusFilter !== "all" || !isToday;
+
   return (
     <div className="bg-card border border-border rounded-2xl overflow-hidden">
       <div className="px-5 py-4 border-b border-border flex flex-wrap items-center gap-3">
-        <h3 className="font-bold text-foreground mr-auto">Store Sales</h3>
+        <div className="mr-auto">
+          <h3 className="font-bold text-foreground">Store Sales</h3>
+          <p className="text-xs text-muted-foreground">
+            {isToday ? "Showing today's transactions" : `${dateFrom} → ${dateTo}`}
+            {" · "}{filtered.length} order{filtered.length !== 1 ? "s" : ""}
+          </p>
+        </div>
         <Input placeholder="Filter by phone…" value={phoneFilter} onChange={e => setPhoneFilter(e.target.value)}
           className="h-8 w-40 text-sm font-mono" />
         <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
@@ -544,10 +554,16 @@ function OrdersTab({ orders }: { orders: any[] }) {
           className="h-8 rounded-lg border border-border bg-background px-2 text-xs" title="From date" />
         <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
           className="h-8 rounded-lg border border-border bg-background px-2 text-xs" title="To date" />
-        {(phoneFilter || statusFilter !== "all" || dateFrom || dateTo) && (
-          <button onClick={() => { setPhoneFilter(""); setStatusFilter("all"); setDateFrom(""); setDateTo(""); }}
-            className="text-xs text-muted-foreground hover:text-foreground underline">Clear</button>
-        )}
+        <div className="flex gap-1.5">
+          {!isToday && (
+            <button onClick={() => { setDateFrom(todayStr); setDateTo(todayStr); }}
+              className="text-xs px-2 py-1 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 font-medium">Today</button>
+          )}
+          {hasFilters && (
+            <button onClick={() => { setPhoneFilter(""); setStatusFilter("all"); setDateFrom(todayStr); setDateTo(todayStr); }}
+              className="text-xs text-muted-foreground hover:text-foreground underline">Clear</button>
+          )}
+        </div>
       </div>
       {filtered.length === 0 ? (
         <div className="p-12 text-center">

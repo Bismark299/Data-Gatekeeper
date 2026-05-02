@@ -41,6 +41,7 @@ export const storeOrdersTable = pgTable("store_orders", {
   customerEmail: text("customer_email").notNull().default(""),
   sellingPrice: numeric("selling_price", { precision: 10, scale: 2 }).notNull(),
   basePrice: numeric("base_price", { precision: 10, scale: 2 }).notNull(),
+  agentCost: numeric("agent_cost", { precision: 10, scale: 2 }),
   profit: numeric("profit", { precision: 10, scale: 2 }).notNull(),
   paystackReference: text("paystack_reference").notNull().default(""),
   status: text("status").notNull().default("pending"),

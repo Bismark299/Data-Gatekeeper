@@ -121,9 +121,13 @@ function AdminDashboardContent() {
 
   const { data: stats, isLoading: statsLoading, refetch: refetchStats } = useAdminGetStats({
     refetchInterval: 5000,
+    staleTime: 0,
   } as Parameters<typeof useAdminGetStats>[0]);
   const { data: deposits } = useAdminListDeposits({});
-  const { data: allOrders, refetch: refetchOrders } = useAdminListOrders({});
+  const { data: allOrders, refetch: refetchOrders } = useAdminListOrders({}, {
+    refetchInterval: 5000,
+    staleTime: 0,
+  } as any);
   const updateStatus = useAdminUpdateOrderStatus();
 
   const { data: storeOrders, refetch: refetchStoreOrders } = useQuery<any[]>({
@@ -134,7 +138,8 @@ function AdminDashboardContent() {
       const data = await r.json();
       return Array.isArray(data) ? data : [];
     },
-    refetchInterval: 10000,
+    refetchInterval: 5000,
+    staleTime: 0,
   });
 
   const handleRefresh = () => { refetchStats(); refetchOrders(); refetchStoreOrders(); toast({ title: "Dashboard refreshed" }); };
@@ -476,7 +481,7 @@ function AdminDashboardContent() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-border bg-muted/20">
-                        {["#", "Store", "Data", "Network", "Phone", "Revenue", "Profit", "Status", "Date", "Actions"].map(h => (
+                        {["#", "Store", "Data", "Network", "Phone", "Revenue", "Sys. Profit", "Status", "Date", "Actions"].map(h => (
                           <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
                         ))}
                       </tr>
@@ -501,7 +506,11 @@ function AdminDashboardContent() {
                             </td>
                             <td className="px-4 py-3 font-mono text-xs">{o.customerPhone}</td>
                             <td className="px-4 py-3 font-semibold text-xs">GH₵{o.sellingPrice.toFixed(2)}</td>
-                            <td className="px-4 py-3 text-emerald-600 font-semibold text-xs">+GH₵{o.profit.toFixed(2)}</td>
+                            <td className="px-4 py-3 font-semibold text-xs">
+                              {o.systemProfit != null
+                                ? <span className="text-emerald-600">+GH₵{o.systemProfit.toFixed(2)}</span>
+                                : <span className="text-muted-foreground italic text-[10px]">—</span>}
+                            </td>
                             <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${statusColor}`}>{o.status}</span></td>
                             <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(o.createdAt)}</td>
                             <td className="px-4 py-3">

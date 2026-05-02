@@ -60,7 +60,7 @@ export default function Orders() {
 }
 
 function OrdersContent() {
-  const { data: orders, isLoading } = useListMyOrders();
+  const { data: orders, isLoading } = useListMyOrders({ refetchInterval: 10000, staleTime: 0 } as any);
 
   const [activeStatus, setActiveStatus] = useState<StatusKey>("all");
   const [phoneSearch, setPhoneSearch] = useState("");
@@ -246,9 +246,20 @@ function OrdersContent() {
               ) : (
                 <>
                   <p className="text-sm font-medium mb-1">No orders for this period</p>
-                  <button className="text-xs text-primary mt-1 font-semibold" onClick={clearFilters}>
-                    Reset filters
-                  </button>
+                  <p className="text-xs mb-3">
+                    {dateFrom === todayStr ? "No orders today." : `Nothing from ${dateFrom} to ${dateTo}.`}
+                  </p>
+                  <div className="flex gap-2">
+                    <button className="text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground font-semibold"
+                      onClick={() => { setDateFrom(""); setDateTo(""); setActiveStatus("all"); setPhoneSearch(""); }}>
+                      Show all orders
+                    </button>
+                    {(dateFrom !== todayStr || dateTo !== todayStr) && (
+                      <button className="text-xs text-primary font-semibold" onClick={clearFilters}>
+                        Back to today
+                      </button>
+                    )}
+                  </div>
                 </>
               )}
             </div>

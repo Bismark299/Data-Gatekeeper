@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { TrendingUp, ArrowUpRight, CreditCard } from "lucide-react";
+import { TrendingUp, ArrowUpRight, CreditCard, Store, ShoppingCart } from "lucide-react";
 
 interface FinancialSummary {
   todayRevenue: number;
@@ -7,6 +7,14 @@ interface FinancialSummary {
   allTimeRevenue: number;
   allTimeProfit: number;
   paystackBalance: number | null;
+  todayRevenuePlatform: number;
+  todayProfitPlatform: number;
+  todayRevenueStore: number;
+  todayProfitStore: number;
+  allRevenuePlatform: number;
+  allProfitPlatform: number;
+  allRevenueStore: number;
+  allProfitStore: number;
 }
 
 async function fetchFinancialSummary(): Promise<FinancialSummary> {
@@ -19,6 +27,7 @@ function Pill({
   icon: Icon,
   label,
   value,
+  sub,
   colorClass,
   borderClass,
   bgClass,
@@ -27,6 +36,7 @@ function Pill({
   icon: React.ElementType;
   label: string;
   value: string;
+  sub?: string;
   colorClass: string;
   borderClass: string;
   bgClass: string;
@@ -42,6 +52,9 @@ function Pill({
         <div className={`text-sm font-extrabold ${textClass} leading-tight`}>
           {value}
         </div>
+        {sub && (
+          <div className={`text-[9px] ${colorClass} opacity-60 leading-tight mt-0.5`}>{sub}</div>
+        )}
       </div>
     </div>
   );
@@ -51,11 +64,11 @@ export function AdminFinancialSummary() {
   const { data, isLoading } = useQuery({
     queryKey: ["admin-financial-summary"],
     queryFn: fetchFinancialSummary,
-    refetchInterval: 60_000,
-    staleTime: 30_000,
+    refetchInterval: 5_000,
+    staleTime: 0,
   });
 
-  const fmt = (n: number) => `GH₵${n.toFixed(2)}`;
+  const fmt = (n: number | undefined | null) => `GH₵${(Number(n ?? 0)).toFixed(2)}`;
 
   if (isLoading || !data) {
     return (
@@ -67,12 +80,17 @@ export function AdminFinancialSummary() {
     );
   }
 
+  const platformSub = data.todayProfitPlatform !== data.todayProfit
+    ? `Direct: ${fmt(data.todayProfitPlatform)} · Store: ${fmt(data.todayProfitStore)}`
+    : undefined;
+
   return (
     <div className="hidden lg:flex items-center gap-2">
       <Pill
         icon={TrendingUp}
         label="Today's Revenue"
         value={fmt(data.todayRevenue)}
+        sub={`Direct: ${fmt(data.todayRevenuePlatform)} · Store: ${fmt(data.todayRevenueStore)}`}
         colorClass="text-emerald-600 dark:text-emerald-400"
         borderClass="border-emerald-200 dark:border-emerald-800"
         bgClass="bg-emerald-50 dark:bg-emerald-950/30"
@@ -82,20 +100,33 @@ export function AdminFinancialSummary() {
         icon={ArrowUpRight}
         label="Today's Profit"
         value={fmt(data.todayProfit)}
+        sub={platformSub}
         colorClass="text-sky-600 dark:text-sky-400"
         borderClass="border-sky-200 dark:border-sky-800"
         bgClass="bg-sky-50 dark:bg-sky-950/30"
         textClass="text-sky-700 dark:text-sky-300"
       />
+      {data.allProfitPlatform > 0 || data.allProfitStore > 0 ? (
+        <Pill
+          icon={data.allProfitStore > data.allProfitPlatform ? Store : ShoppingCart}
+          label="All-Time Profit"
+          value={fmt(data.allTimeProfit)}
+          sub={`Direct: ${fmt(data.allProfitPlatform)} · Store: ${fmt(data.allProfitStore)}`}
+          colorClass="text-violet-600 dark:text-violet-400"
+          borderClass="border-violet-200 dark:border-violet-800"
+          bgClass="bg-violet-50 dark:bg-violet-950/30"
+          textClass="text-violet-700 dark:text-violet-300"
+        />
+      ) : null}
       {data.paystackBalance !== null ? (
         <Pill
           icon={CreditCard}
           label="Paystack Balance"
           value={fmt(data.paystackBalance)}
-          colorClass="text-violet-600 dark:text-violet-400"
-          borderClass="border-violet-200 dark:border-violet-800"
-          bgClass="bg-violet-50 dark:bg-violet-950/30"
-          textClass="text-violet-700 dark:text-violet-300"
+          colorClass="text-amber-600 dark:text-amber-400"
+          borderClass="border-amber-200 dark:border-amber-800"
+          bgClass="bg-amber-50 dark:bg-amber-950/30"
+          textClass="text-amber-700 dark:text-amber-300"
         />
       ) : null}
     </div>

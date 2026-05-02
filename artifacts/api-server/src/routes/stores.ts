@@ -54,12 +54,12 @@ function formatStoreBundle(
 }
 
 function formatStoreOrder(o: typeof storeOrdersTable.$inferSelect) {
-  return {
-    ...o,
-    sellingPrice: parseFloat(o.sellingPrice),
-    basePrice: parseFloat(o.basePrice),
-    profit: parseFloat(o.profit),
-  };
+  const sellingPrice = parseFloat(o.sellingPrice);
+  const basePrice    = parseFloat(o.basePrice);
+  const agentCost    = o.agentCost != null ? parseFloat(o.agentCost) : null;
+  const profit       = parseFloat(o.profit);
+  const systemProfit = agentCost != null ? +(agentCost - basePrice).toFixed(2) : null;
+  return { ...o, sellingPrice, basePrice, agentCost, profit, systemProfit };
 }
 
 // ─── AUTHENTICATED: MY STORE ─────────────────────────────────────────────────
@@ -515,8 +515,17 @@ router.post("/s/:slug/checkout", async (req, res) => {
   const sb = sbRow.store_bundles;
   const bundle = sbRow.bundles;
   const sellingPrice = parseFloat(sb.sellingPrice);
-  const basePrice = parseFloat(bundle.price);
-  const profit = +(sellingPrice - basePrice).toFixed(2);
+  const basePrice = parseFloat(bundle.price); // platform's buying cost from telecom
+
+  // Determine store owner's role to pick the correct agent/dealer cost
+  const [owner] = await db.select({ role: usersTable.role }).from(usersTable).where(eq(usersTable.id, store.userId));
+  const ownerRole = owner?.role ?? "agent";
+  const agentCost = ownerRole === "dealer"
+    ? (bundle.dealerPrice != null ? parseFloat(bundle.dealerPrice) : basePrice)
+    : (bundle.agentPrice  != null ? parseFloat(bundle.agentPrice)  : basePrice);
+
+  // profit = what the agent earns (credited to their profitBalance on completion)
+  const profit = +(sellingPrice - agentCost).toFixed(2);
 
   const reference = `STORE-${store.id}-${Date.now()}`;
   const callbackUrl = `${DOMAIN}/s/${slug}?ref=${reference}`;
@@ -534,6 +543,7 @@ router.post("/s/:slug/checkout", async (req, res) => {
     customerEmail: parsed.data.customerEmail,
     sellingPrice: sellingPrice.toFixed(2),
     basePrice: basePrice.toFixed(2),
+    agentCost: agentCost.toFixed(2),
     profit: profit.toFixed(2),
     paystackReference: reference,
     status: "pending",
@@ -765,6 +775,7 @@ router.get("/admin/store-orders", requireAuth, async (req, res) => {
       customerEmail: storeOrdersTable.customerEmail,
       sellingPrice: storeOrdersTable.sellingPrice,
       basePrice: storeOrdersTable.basePrice,
+      agentCost: storeOrdersTable.agentCost,
       profit: storeOrdersTable.profit,
       status: storeOrdersTable.status,
       paystackReference: storeOrdersTable.paystackReference,
@@ -774,12 +785,14 @@ router.get("/admin/store-orders", requireAuth, async (req, res) => {
     .from(storeOrdersTable)
     .innerJoin(storesTable, eq(storeOrdersTable.storeId, storesTable.id))
     .orderBy(desc(storeOrdersTable.createdAt));
-  res.json(rows.map(o => ({
-    ...o,
-    sellingPrice: parseFloat(o.sellingPrice as any),
-    basePrice: parseFloat(o.basePrice as any),
-    profit: parseFloat(o.profit as any),
-  })));
+  res.json(rows.map(o => {
+    const sellingPrice = parseFloat(o.sellingPrice as any);
+    const basePrice    = parseFloat(o.basePrice as any);
+    const agentCost    = o.agentCost != null ? parseFloat(o.agentCost as any) : null;
+    const profit       = parseFloat(o.profit as any);
+    const systemProfit = agentCost != null ? +(agentCost - basePrice).toFixed(2) : null;
+    return { ...o, sellingPrice, basePrice, agentCost, profit, systemProfit };
+  }));
 });
 
 router.patch("/admin/store-orders/:id/complete", requireAuth, async (req, res) => {
