@@ -125,6 +125,14 @@ function ProfileContent() {
                 <div className="text-xs text-muted-foreground mb-0.5">Account Type</div>
                 <div className="font-medium text-foreground capitalize">{user?.role}</div>
               </div>
+              <div className="col-span-2">
+                <div className="text-xs text-muted-foreground mb-0.5">Reference Code</div>
+                {user?.depositCode ? (
+                  <span className="font-mono text-sm font-bold text-primary bg-primary/10 border border-primary/20 px-3 py-1 rounded-lg">{user.depositCode}</span>
+                ) : (
+                  <div className="font-medium text-muted-foreground">—</div>
+                )}
+              </div>
             </div>
 
             <div className="space-y-1.5">

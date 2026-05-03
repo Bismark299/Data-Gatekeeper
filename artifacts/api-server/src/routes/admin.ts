@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import {
-  eq, count, sum, desc, gte, and, ilike, inArray, isNull, isNotNull, lt,
+  eq, count, sum, desc, gte, and, ilike, inArray, isNull, isNotNull, lt, not,
   type SQL, sql,
 } from "drizzle-orm";
 import {
@@ -45,10 +45,11 @@ function formatUser(u: typeof usersTable.$inferSelect) {
   };
 }
 
-function formatOrder(o: typeof ordersTable.$inferSelect, network?: string | null) {
+function formatOrder(o: typeof ordersTable.$inferSelect, network?: string | null, userName?: string | null) {
   return {
     id: o.id,
     userId: o.userId,
+    userName: userName ?? null,
     bundleId: o.bundleId,
     bundleName: o.bundleName,
     bundleData: o.bundleData,
@@ -202,7 +203,17 @@ router.post("/admin/users", requireAdmin, async (req, res): Promise<void> => {
   const { default: bcrypt } = await import("bcryptjs");
   const passwordHash = await bcrypt.hash(password, 12);
 
-  const depositCode = "DC" + Math.floor(100000 + Math.random() * 900000).toString();
+  const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let depositCode = "";
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const rand = Array.from({ length: 5 }, () =>
+      CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)]
+    ).join("");
+    const candidate = rand;
+    const [taken] = await db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.depositCode, candidate));
+    if (!taken) { depositCode = candidate; break; }
+  }
+  if (!depositCode) { res.status(500).json({ error: "Could not generate unique deposit code" }); return; }
 
   const [user] = await db.insert(usersTable).values({
     name, email, phone: phone ?? null, passwordHash, role,
@@ -229,15 +240,16 @@ router.get("/admin/orders", requireAdmin, async (req, res): Promise<void> => {
   if (userId !== undefined) conditions.push(eq(ordersTable.userId, userId));
 
   const baseQuery = db
-    .select({ order: ordersTable, network: bundlesTable.network })
+    .select({ order: ordersTable, network: bundlesTable.network, userName: usersTable.name })
     .from(ordersTable)
-    .leftJoin(bundlesTable, eq(bundlesTable.id, ordersTable.bundleId));
+    .leftJoin(bundlesTable, eq(bundlesTable.id, ordersTable.bundleId))
+    .leftJoin(usersTable, eq(usersTable.id, ordersTable.userId));
 
   const rows = conditions.length > 0
     ? await baseQuery.where(and(...conditions)).orderBy(desc(ordersTable.createdAt)).limit(500)
     : await baseQuery.orderBy(desc(ordersTable.createdAt)).limit(500);
 
-  res.json(rows.map(r => formatOrder(r.order, r.network)));
+  res.json(rows.map(r => formatOrder(r.order, r.network, r.userName)));
 });
 
 router.patch("/admin/orders/:id/status", requireAdmin, async (req, res): Promise<void> => {
@@ -689,15 +701,15 @@ router.get("/admin/financial-summary", requireAdmin, async (req, res): Promise<v
     platformToday, platformAll,
     storeToday, storeAll,
   ] = await Promise.all([
-    // Direct platform orders
+    // Direct platform orders — wallet debited at placement, so count all non-cancelled orders
     db.select({ price: ordersTable.price, buyingCost: bundlesTable.price })
       .from(ordersTable)
       .leftJoin(bundlesTable, eq(ordersTable.bundleId, bundlesTable.id))
-      .where(and(eq(ordersTable.status, "completed"), gte(ordersTable.createdAt, todayStart))),
+      .where(and(not(eq(ordersTable.status, "cancelled")), gte(ordersTable.createdAt, todayStart))),
     db.select({ price: ordersTable.price, buyingCost: bundlesTable.price })
       .from(ordersTable)
       .leftJoin(bundlesTable, eq(ordersTable.bundleId, bundlesTable.id))
-      .where(eq(ordersTable.status, "completed")),
+      .where(not(eq(ordersTable.status, "cancelled"))),
     // Store orders — join bundle + store owner role so we can compute system profit
     // even for legacy rows where agentCost was not yet captured
     db.select({

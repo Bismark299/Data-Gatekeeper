@@ -239,14 +239,27 @@ function AdminDashboardContent() {
   const dayProcessing = dayOrders.filter(o => o.status === "processing");
   const dayFailed     = dayOrders.filter(o => o.status === "failed" || o.status === "cancelled");
 
+  const dayStoreOrders = useMemo(() => {
+    let src = Array.isArray(storeOrders) ? storeOrders : [];
+    if (dateFrom) src = src.filter((o: any) => new Date(o.createdAt) >= new Date(dateFrom));
+    if (dateTo) { const to = new Date(dateTo); to.setHours(23, 59, 59, 999); src = src.filter((o: any) => new Date(o.createdAt) <= to); }
+    return src;
+  }, [storeOrders, dateFrom, dateTo]);
+
+  const totalOrderCount = dayOrders.length + dayStoreOrders.length;
+  const totalCompleted  = dayCompleted.length + dayStoreOrders.filter((o: any) => o.status === "completed").length;
+  const totalPending    = dayPending.length   + dayStoreOrders.filter((o: any) => o.status === "pending").length;
+  const totalProcessing = dayProcessing.length + dayStoreOrders.filter((o: any) => o.status === "processing").length;
+  const totalFailed     = dayFailed.length    + dayStoreOrders.filter((o: any) => o.status === "failed" || o.status === "cancelled").length;
+
   const statCards = useMemo(() => stats ? [
     { icon: Wallet,       label: "Wallet Balance",  value: `GH₵${((stats as { totalWalletBalance?: number }).totalWalletBalance ?? 0).toFixed(2)}`, sub: "Total user wallet funds",              colorClass: "text-emerald-600", bgClass: "bg-emerald-100 dark:bg-emerald-900/20", accent: true },
-    { icon: ShoppingCart, label: "Total Orders",    value: dayOrders.length,    moneyValue: sumPrice(dayOrders),    sub: dateFrom === dateTo ? `For ${dateFrom}` : `${dateFrom} → ${dateTo}`,  colorClass: "text-violet-600",  bgClass: "bg-violet-100 dark:bg-violet-900/20" },
-    { icon: Clock,        label: "Pending Orders",  value: dayPending.length,   moneyValue: sumPrice(dayPending),   sub: "Awaiting processing",   colorClass: "text-amber-600",   bgClass: "bg-amber-100 dark:bg-amber-900/20",   pulse: dayPending.length > 0 },
-    { icon: CheckCircle2, label: "Completed",       value: dayCompleted.length, moneyValue: sumPrice(dayCompleted), sub: "Successfully fulfilled", colorClass: "text-teal-600",    bgClass: "bg-teal-100 dark:bg-teal-900/20" },
-    { icon: Zap,          label: "Processing",      value: dayProcessing.length, moneyValue: sumPrice(dayProcessing), sub: "Currently being processed", colorClass: "text-sky-600", bgClass: "bg-sky-100 dark:bg-sky-900/20", pulse: dayProcessing.length > 0 },
-    { icon: AlertCircle,  label: "Failed",          value: dayFailed.length,    moneyValue: sumPrice(dayFailed),    sub: "Failed or cancelled",   colorClass: "text-red-600",     bgClass: "bg-red-100 dark:bg-red-900/20" },
-  ] : [], [stats, dayOrders, dayPending, dayCompleted, dayProcessing, dayFailed, dateFrom, dateTo]);
+    { icon: ShoppingCart, label: "Total Orders",    value: totalOrderCount, moneyValue: sumPrice(dayOrders), sub: `${dayOrders.length} direct · ${dayStoreOrders.length} store`, colorClass: "text-violet-600",  bgClass: "bg-violet-100 dark:bg-violet-900/20" },
+    { icon: Clock,        label: "Pending",         value: totalPending,    sub: `${dayPending.length} direct · ${dayStoreOrders.filter((o: any) => o.status === "pending").length} store`,   colorClass: "text-amber-600",   bgClass: "bg-amber-100 dark:bg-amber-900/20",   pulse: totalPending > 0 },
+    { icon: CheckCircle2, label: "Completed",       value: totalCompleted,  moneyValue: sumPrice(dayCompleted), sub: `${dayCompleted.length} direct · ${dayStoreOrders.filter((o: any) => o.status === "completed").length} store`, colorClass: "text-teal-600",    bgClass: "bg-teal-100 dark:bg-teal-900/20" },
+    { icon: Zap,          label: "Processing",      value: totalProcessing, sub: `${dayProcessing.length} direct · ${dayStoreOrders.filter((o: any) => o.status === "processing").length} store`, colorClass: "text-sky-600", bgClass: "bg-sky-100 dark:bg-sky-900/20", pulse: totalProcessing > 0 },
+    { icon: AlertCircle,  label: "Failed",          value: totalFailed,     sub: `${dayFailed.length} direct · ${dayStoreOrders.filter((o: any) => o.status === "failed" || o.status === "cancelled").length} store`, colorClass: "text-red-600",     bgClass: "bg-red-100 dark:bg-red-900/20" },
+  ] : [], [stats, dayOrders, dayStoreOrders, dayPending, dayCompleted, dayProcessing, dayFailed, totalOrderCount, totalCompleted, totalPending, totalProcessing, totalFailed, dateFrom, dateTo]);
 
   const pendingDeposits = useMemo(() => (deposits ?? []).filter(d => d.status === "pending"), [deposits]);
 
@@ -266,14 +279,6 @@ function AdminDashboardContent() {
       ORDER_STATUSES.map(s => [s, s === "all" ? dayOrders.length : dayOrders.filter(o => o.status === s).length])
     );
   }, [dayOrders]);
-
-  // Filtered store orders for the dashboard view
-  const filteredStoreOrders = useMemo(() => {
-    let src = Array.isArray(storeOrders) ? storeOrders : [];
-    if (dateFrom) src = src.filter((o: any) => new Date(o.createdAt) >= new Date(dateFrom));
-    if (dateTo) { const to = new Date(dateTo); to.setHours(23, 59, 59, 999); src = src.filter((o: any) => new Date(o.createdAt) <= to); }
-    return src;
-  }, [storeOrders, dateFrom, dateTo]);
 
   // Store order actions
   const handleStoreOrderComplete = async (id: number) => {
@@ -397,7 +402,7 @@ function AdminDashboardContent() {
                 <div className="flex-1">
                   <h2 className="font-bold text-foreground">Orders</h2>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    {pageView === "platform" ? `${filteredOrders.length} platform order${filteredOrders.length !== 1 ? "s" : ""}` : `${filteredStoreOrders.length} store order${filteredStoreOrders.length !== 1 ? "s" : ""}`}
+                    {pageView === "platform" ? `${filteredOrders.length} platform order${filteredOrders.length !== 1 ? "s" : ""}` : `${dayStoreOrders.length} store order${dayStoreOrders.length !== 1 ? "s" : ""}`}
                     {" "}for {dateFrom === dateTo ? dateFrom : `${dateFrom} → ${dateTo}`}
                   </p>
                 </div>
@@ -409,9 +414,9 @@ function AdminDashboardContent() {
                   <button onClick={() => setPageView("store")}
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${pageView === "store" ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
                     Store
-                    {(filteredStoreOrders ?? []).filter((o: any) => o.status === "processing").length > 0 && (
+                    {(dayStoreOrders ?? []).filter((o: any) => o.status === "processing").length > 0 && (
                       <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-blue-500 text-white text-[10px] font-bold">
-                        {filteredStoreOrders.filter((o: any) => o.status === "processing").length}
+                        {dayStoreOrders.filter((o: any) => o.status === "processing").length}
                       </span>
                     )}
                   </button>
@@ -471,7 +476,7 @@ function AdminDashboardContent() {
 
             {/* ── Store Orders View ── */}
             {pageView === "store" && (
-              filteredStoreOrders.length === 0 ? (
+              dayStoreOrders.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-16 gap-3">
                   <Store className="w-10 h-10 text-muted-foreground" />
                   <p className="text-sm text-muted-foreground">No store orders for this period</p>
@@ -481,13 +486,13 @@ function AdminDashboardContent() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-border bg-muted/20">
-                        {["#", "Store", "Data", "Network", "Phone", "Revenue", "Sys. Profit", "Status", "Date", "Actions"].map(h => (
+                        {["#", "Store", "Agent", "Data", "Network", "Phone", "Revenue", "Sys. Profit", "Status", "Date", "Actions"].map(h => (
                           <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border">
-                      {filteredStoreOrders.map((o: any) => {
+                      {dayStoreOrders.map((o: any) => {
                         const statusColor = STATUS_COLORS[o.status] ?? "bg-gray-100 text-gray-700";
                         const isActioning = storeActionId === o.id;
                         const canAct = o.status !== "completed" && o.status !== "cancelled";
@@ -499,6 +504,7 @@ function AdminDashboardContent() {
                               <div className="text-xs font-semibold text-foreground">{o.storeName}</div>
                               <div className="text-[10px] text-muted-foreground font-mono">/{o.storeSlug}</div>
                             </td>
+                            <td className="px-4 py-3 text-xs text-foreground">{o.ownerName ?? "—"}</td>
                             <td className="px-4 py-3 font-bold text-foreground text-xs">{o.bundleData}</td>
                             <td className="px-4 py-3">
                               {nConf ? <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${nConf.badge}`}>{nConf.label}</span>
@@ -543,7 +549,7 @@ function AdminDashboardContent() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border bg-muted/20">
-                    {["Date", "Order ID", "Phone", "Network", "Data", "Amount", "Status", "Update", "Actions"].map(h => (
+                    {["Date", "Agent", "Order ID", "Phone", "Network", "Data", "Amount", "Status", "Update", "Actions"].map(h => (
                       <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
@@ -551,7 +557,7 @@ function AdminDashboardContent() {
                 <tbody className="divide-y divide-border">
                   {pagedOrders.length === 0 ? (
                     <tr>
-                      <td colSpan={9} className="text-center py-14 text-muted-foreground text-sm">
+                      <td colSpan={10} className="text-center py-14 text-muted-foreground text-sm">
                         <ShoppingCart className="w-8 h-8 mx-auto mb-2 opacity-20" />
                         No orders match your filters
                       </td>
@@ -559,6 +565,7 @@ function AdminDashboardContent() {
                   ) : pagedOrders.map(order => (
                     <tr key={order.id} className="hover:bg-muted/20 transition-colors" data-testid={`row-order-${order.id}`}>
                       <td className="px-5 py-3.5 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(order.createdAt)}</td>
+                      <td className="px-5 py-3.5 text-xs text-foreground">{(order as any).userName ?? "—"}</td>
                       <td className="px-5 py-3.5 text-xs font-mono text-muted-foreground">#{order.id}</td>
                       <td className="px-5 py-3.5 font-mono text-xs text-muted-foreground">{order.phoneNumber}</td>
                       <td className="px-5 py-3.5">

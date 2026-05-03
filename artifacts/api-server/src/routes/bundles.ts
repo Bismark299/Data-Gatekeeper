@@ -99,6 +99,17 @@ router.post("/bundles", requireAdmin, async (req, res): Promise<void> => {
   }
 
   const { dealerPrice, agentPrice, ...rest } = parsed.data;
+
+  // Profit margin guard: selling prices must exceed buying cost
+  if (agentPrice != null && agentPrice <= rest.price) {
+    res.status(400).json({ error: "agentPrice must be greater than cost price (price)" });
+    return;
+  }
+  if (dealerPrice != null && dealerPrice <= rest.price) {
+    res.status(400).json({ error: "dealerPrice must be greater than cost price (price)" });
+    return;
+  }
+
   const [bundle] = await db
     .insert(bundlesTable)
     .values({
@@ -109,7 +120,7 @@ router.post("/bundles", requireAdmin, async (req, res): Promise<void> => {
     })
     .returning();
 
-  res.status(201).json(formatBundle(bundle));
+  res.status(201).json(formatBundleAdmin(bundle));
 });
 
 router.get("/bundles/:id", async (req, res): Promise<void> => {
@@ -130,7 +141,18 @@ router.get("/bundles/:id", async (req, res): Promise<void> => {
     return;
   }
 
-  res.json(formatBundle(bundle));
+  const userId = req.session.userId;
+  let userRole = "guest";
+  if (userId) {
+    const [u] = await db.select({ role: usersTable.role }).from(usersTable).where(eq(usersTable.id, userId));
+    userRole = u?.role ?? "user";
+  }
+
+  if (userRole === "admin") {
+    res.json(formatBundleAdmin(bundle));
+  } else {
+    res.json(formatBundleForRole(bundle, userRole));
+  }
 });
 
 router.patch("/bundles/:id", requireAdmin, async (req, res): Promise<void> => {
@@ -148,6 +170,20 @@ router.patch("/bundles/:id", requireAdmin, async (req, res): Promise<void> => {
   }
 
   const { dealerPrice: dp, agentPrice: ap, price, ...restData } = parsed.data;
+
+  // Profit margin guard: resolve effective cost price (either updated or existing)
+  const effectiveCost = price ?? (await db.select({ price: bundlesTable.price }).from(bundlesTable).where(eq(bundlesTable.id, params.data.id)).then(r => r[0] ? Number(r[0].price) : null));
+  if (effectiveCost != null) {
+    if (ap != null && ap <= effectiveCost) {
+      res.status(400).json({ error: "agentPrice must be greater than cost price (price)" });
+      return;
+    }
+    if (dp != null && dp <= effectiveCost) {
+      res.status(400).json({ error: "dealerPrice must be greater than cost price (price)" });
+      return;
+    }
+  }
+
   const updateData: Partial<typeof bundlesTable.$inferInsert> = { ...restData };
   if (price !== undefined) updateData.price = String(price);
   if (dp !== undefined) updateData.dealerPrice = dp != null ? String(dp) : null;
@@ -164,7 +200,7 @@ router.patch("/bundles/:id", requireAdmin, async (req, res): Promise<void> => {
     return;
   }
 
-  res.json(formatBundle(bundle));
+  res.json(formatBundleAdmin(bundle));
 });
 
 router.delete("/bundles/:id", requireAdmin, async (req, res): Promise<void> => {

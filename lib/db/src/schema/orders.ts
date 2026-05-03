@@ -12,6 +12,7 @@ export const ordersTable = pgTable("orders", {
   bundleName: text("bundle_name").notNull(),
   bundleData: text("bundle_data").notNull(),
   price: numeric("price", { precision: 10, scale: 2 }).notNull(),
+  buyingCost: numeric("buying_cost", { precision: 10, scale: 2 }),
   status: text("status").notNull().default("pending"),
   phoneNumber: text("phone_number").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

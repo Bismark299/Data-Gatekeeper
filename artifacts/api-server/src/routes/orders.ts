@@ -5,7 +5,7 @@ import {
   CreateOrderBody,
   GetOrderParams,
 } from "@workspace/api-zod";
-import { requireAuth } from "../middlewares/auth";
+import { requireAuth, requireAdmin } from "../middlewares/auth";
 import { getOrCreateWallet, insertLedgerEntry } from "./wallet";
 
 const router: IRouter = Router();
@@ -37,7 +37,7 @@ router.get("/orders", requireAuth, async (req, res): Promise<void> => {
   res.json(rows.map(r => formatOrder(r.order, r.network)));
 });
 
-router.post("/orders", requireAuth, async (req, res): Promise<void> => {
+router.post("/orders", requireAdmin, async (req, res): Promise<void> => {
   const parsed = CreateOrderBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
@@ -65,9 +65,14 @@ router.post("/orders", requireAuth, async (req, res): Promise<void> => {
   const [currentUser] = await db.select({ role: usersTable.role }).from(usersTable).where(eq(usersTable.id, userId));
   const userRole = currentUser?.role ?? "user";
   const effectivePrice =
-    userRole === "dealer" && bundle.dealerPrice != null ? bundle.dealerPrice :
-    userRole === "agent"  && bundle.agentPrice  != null ? bundle.agentPrice  :
+    userRole === "dealer" ? bundle.dealerPrice :
+    userRole === "agent"  ? bundle.agentPrice  :
     bundle.price;
+
+  if (effectivePrice == null) {
+    res.status(400).json({ error: `This bundle is not priced for ${userRole} accounts. Contact admin.` });
+    return;
+  }
 
   const [order] = await db
     .insert(ordersTable)
@@ -77,6 +82,7 @@ router.post("/orders", requireAuth, async (req, res): Promise<void> => {
       bundleName: bundle.name,
       bundleData: bundle.dataAmount,
       price: effectivePrice,
+      buyingCost: bundle.price,
       status: "pending",
       phoneNumber: phoneNumber.trim(),
     })
@@ -115,9 +121,15 @@ router.post("/orders/purchase", requireAuth, async (req, res): Promise<void> => 
   const [currentUser2] = await db.select({ role: usersTable.role }).from(usersTable).where(eq(usersTable.id, userId));
   const userRole = currentUser2?.role ?? "user";
   const rawPrice =
-    userRole === "dealer" && bundle.dealerPrice != null ? bundle.dealerPrice :
-    userRole === "agent"  && bundle.agentPrice  != null ? bundle.agentPrice  :
+    userRole === "dealer" ? bundle.dealerPrice :
+    userRole === "agent"  ? bundle.agentPrice  :
     bundle.price;
+
+  if (rawPrice == null) {
+    res.status(400).json({ error: `This bundle is not priced for ${userRole} accounts. Contact admin.` });
+    return;
+  }
+
   const price = parseFloat(rawPrice);
 
   await getOrCreateWallet(userId);
@@ -156,6 +168,7 @@ router.post("/orders/purchase", requireAuth, async (req, res): Promise<void> => 
           bundleName: bundle.name,
           bundleData: bundle.dataAmount,
           price: rawPrice,
+          buyingCost: bundle.price,
           status: "pending",
           phoneNumber: phoneNumber.trim(),
         })

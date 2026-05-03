@@ -9,10 +9,10 @@ const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
 async function generateDepositCode(): Promise<string> {
   for (let attempt = 0; attempt < 20; attempt++) {
-    const rand = Array.from({ length: 6 }, () =>
+    const rand = Array.from({ length: 5 }, () =>
       CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)]
     ).join("");
-    const code = `BT-${rand}`;
+    const code = rand;
     const [existing] = await db.select().from(usersTable).where(eq(usersTable.depositCode, code));
     if (!existing) return code;
   }
@@ -41,7 +41,7 @@ router.post("/auth/register", async (req, res): Promise<void> => {
 
   const [user] = await db
     .insert(usersTable)
-    .values({ name, email, passwordHash, phone: phone ?? null, role: "agent", isActive: true, depositCode })
+    .values({ name, email, passwordHash, phone: phone || null, role: "agent", isActive: true, depositCode })
     .returning();
 
   req.session.userId = user.id;
@@ -93,6 +93,7 @@ router.post("/auth/login", async (req, res): Promise<void> => {
       phone: user.phone,
       role: user.role,
       isActive: user.isActive,
+      depositCode: user.depositCode ?? null,
       createdAt: user.createdAt.toISOString(),
     },
     message: "Login successful",
@@ -127,7 +128,7 @@ router.patch("/auth/me", requireAuth, async (req, res): Promise<void> => {
   const [updated] = await db.update(usersTable).set(updates).where(eq(usersTable.id, userId)).returning();
   res.json({
     id: updated.id, name: updated.name, email: updated.email, phone: updated.phone,
-    role: updated.role, isActive: updated.isActive, createdAt: updated.createdAt.toISOString(),
+    role: updated.role, isActive: updated.isActive, depositCode: updated.depositCode ?? null, createdAt: updated.createdAt.toISOString(),
   });
 });
 
@@ -147,6 +148,7 @@ router.get("/auth/me", requireAuth, async (req, res): Promise<void> => {
     phone: user.phone,
     role: user.role,
     isActive: user.isActive,
+    depositCode: user.depositCode ?? null,
     createdAt: user.createdAt.toISOString(),
   });
 });

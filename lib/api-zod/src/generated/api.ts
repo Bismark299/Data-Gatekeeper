@@ -21,7 +21,7 @@ export const RegisterBody = zod.object({
   name: zod.string(),
   email: zod.string(),
   password: zod.string(),
-  phone: zod.string().nullish(),
+  phone: zod.string().min(1),
 });
 
 /**

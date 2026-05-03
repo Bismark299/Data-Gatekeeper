@@ -11,6 +11,7 @@ interface User {
   phone: string | null;
   role: string;
   isActive: boolean;
+  depositCode: string | null;
   createdAt: string;
 }
 

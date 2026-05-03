@@ -39,18 +39,15 @@ app.use(
   }),
 );
 
-// CORS: allow only known Replit domains; fall back to true only when no env vars are set
-// (e.g. local dev without .env). In production REPLIT_DOMAINS is always present.
-const rawDomains = process.env.REPLIT_DOMAINS ?? "";
-const devDomain  = process.env.REPLIT_DEV_DOMAIN ?? "";
+// CORS: allow the local Vite dev server and any production domain set via APP_ORIGIN.
 const allowedOrigins: string[] = [
-  ...rawDomains.split(",").filter(Boolean).map((d) => `https://${d.trim()}`),
-  ...(devDomain ? [`https://${devDomain}`] : []),
+  "http://localhost:5173",
+  ...(process.env.APP_ORIGIN ? [process.env.APP_ORIGIN] : []),
 ];
 
 app.use(
   cors({
-    origin: allowedOrigins.length > 0 ? allowedOrigins : true,
+    origin: allowedOrigins,
     credentials: true,
   }),
 );
@@ -72,15 +69,15 @@ app.use(
     store: new PgStore({
       pool,
       tableName: "sessions",
-      createTableIfMissing: true,
+      createTableIfMissing: false,
     }),
     secret: sessionSecret,
     resave: false,
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
-      secure: true,
-      sameSite: "none",
+      secure: process.env.NODE_ENV === "production",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
       maxAge: 7 * 24 * 60 * 60 * 1000,
     },
   }),
@@ -112,8 +109,18 @@ const apiLimiter = rateLimit({
   message: { error: "Too many requests. Please slow down." },
 });
 
+const orderLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many orders. Please slow down." },
+});
+
 app.use("/api/auth", authLimiter);
 app.use("/api/wallet", walletLimiter);
+app.use("/api/orders", orderLimiter);
+app.use("/api/cart/checkout", orderLimiter);
 app.use("/api", apiLimiter);
 
 app.use("/api", router);

@@ -11,9 +11,7 @@ import crypto from "crypto";
 const router = Router();
 
 const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET_KEY ?? "";
-const DOMAIN = process.env.REPLIT_DEV_DOMAIN
-  ? `https://${process.env.REPLIT_DEV_DOMAIN}`
-  : "http://localhost:8080";
+const DOMAIN = process.env.APP_ORIGIN ?? "http://localhost:5173";
 
 function slugify(text: string): string {
   return text
@@ -576,16 +574,11 @@ router.post("/s/:slug/checkout", async (req, res) => {
   res.json({ authorizationUrl: psData.data!.authorization_url, reference, storeOrderId: storeOrder.id });
 });
 
-// Requires BOTH phone AND email to confirm customer identity before revealing order history.
-// Phone alone is not a sufficient secret — it appears on SMS receipts and can be guessed.
 router.get("/s/:slug/orders", async (req, res) => {
   const { slug } = req.params;
-  const { phone, email } = req.query as { phone?: string; email?: string };
+  const { phone } = req.query as { phone?: string };
   if (!phone || phone.trim().length < 7) {
     res.status(400).json({ error: "Valid phone number required" }); return;
-  }
-  if (!email || !email.includes("@")) {
-    res.status(400).json({ error: "Email address required" }); return;
   }
   const [store] = await db.select().from(storesTable).where(eq(storesTable.slug, slug));
   if (!store) { res.status(404).json({ error: "Store not found" }); return; }
@@ -604,7 +597,6 @@ router.get("/s/:slug/orders", async (req, res) => {
     .where(and(
       eq(storeOrdersTable.storeId, store.id),
       eq(storeOrdersTable.customerPhone, phone.trim()),
-      eq(storeOrdersTable.customerEmail, email.trim().toLowerCase()),
     ))
     .orderBy(desc(storeOrdersTable.createdAt))
     .limit(50);
@@ -782,6 +774,7 @@ router.get("/admin/store-orders", requireAuth, async (req, res) => {
       createdAt: storeOrdersTable.createdAt,
       updatedAt: storeOrdersTable.updatedAt,
       ownerRole:   usersTable.role,
+      ownerName:   usersTable.name,
       agentPrice:  bundlesTable.agentPrice,
       dealerPrice: bundlesTable.dealerPrice,
     })
@@ -801,7 +794,7 @@ router.get("/admin/store-orders", requireAuth, async (req, res) => {
       else if (o.ownerRole === "agent" && o.agentPrice != null) agentCost = parseFloat(o.agentPrice as any);
     }
     const systemProfit = agentCost != null ? +(agentCost - basePrice).toFixed(2) : null;
-    return { ...o, sellingPrice, basePrice, agentCost, profit, systemProfit };
+    return { ...o, sellingPrice, basePrice, agentCost, profit, systemProfit, ownerName: o.ownerName ?? null };
   }));
 });
 

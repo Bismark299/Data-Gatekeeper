@@ -148,6 +148,19 @@ function AdminOrdersContent() {
   });
 
   const [actioningId, setActioningId] = useState<number | null>(null);
+  const [storeStatusFilter, setStoreStatusFilter] = useState<string>("all");
+  const [storeDateFrom, setStoreDateFrom]   = useState(todayStr);
+  const [storeDateTo, setStoreDateTo]       = useState(todayStr);
+  const [storePhoneSearch, setStorePhoneSearch] = useState("");
+
+  const filteredStoreOrders = useMemo(() => {
+    let src = Array.isArray(storeOrders) ? storeOrders : [];
+    if (storeStatusFilter !== "all") src = src.filter((o: any) => o.status === storeStatusFilter);
+    if (storeDateFrom) src = src.filter((o: any) => new Date(o.createdAt) >= new Date(storeDateFrom));
+    if (storeDateTo) { const to = new Date(storeDateTo); to.setHours(23, 59, 59, 999); src = src.filter((o: any) => new Date(o.createdAt) <= to); }
+    if (storePhoneSearch.trim()) src = src.filter((o: any) => String(o.customerPhone ?? "").includes(storePhoneSearch.trim()));
+    return src;
+  }, [storeOrders, storeStatusFilter, storeDateFrom, storeDateTo, storePhoneSearch]);
 
   const handleStoreOrderComplete = async (id: number) => {
     setActioningId(id);
@@ -385,17 +398,57 @@ function AdminOrdersContent() {
                   <p className="text-sm text-muted-foreground">Orders placed through agent stores will appear here.</p>
                 </div>
               ) : (
+                <>
+                {/* Filter bar for store orders */}
+                <div className="flex flex-wrap items-end gap-3 px-5 py-3 border-b border-border bg-muted/20">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wide">Status</label>
+                    <Select value={storeStatusFilter} onValueChange={setStoreStatusFilter}>
+                      <SelectTrigger className="h-7 w-32 text-xs"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {["all", "pending", "processing", "completed", "failed", "cancelled"].map(s => (
+                          <SelectItem key={s} value={s} className="capitalize">{s === "all" ? "All statuses" : s}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wide">From</label>
+                    <input type="date" value={storeDateFrom} onChange={e => setStoreDateFrom(e.target.value)}
+                      className="h-7 rounded-md border border-border bg-background px-2 text-xs" />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wide">To</label>
+                    <input type="date" value={storeDateTo} onChange={e => setStoreDateTo(e.target.value)}
+                      className="h-7 rounded-md border border-border bg-background px-2 text-xs" />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wide">Phone</label>
+                    <div className="relative">
+                      <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground" />
+                      <input type="text" value={storePhoneSearch} onChange={e => setStorePhoneSearch(e.target.value)}
+                        placeholder="0244..." className="h-7 pl-6 pr-2 rounded-md border border-border bg-background text-xs" />
+                    </div>
+                  </div>
+                  {(storeStatusFilter !== "all" || storePhoneSearch || storeDateFrom !== todayStr || storeDateTo !== todayStr) && (
+                    <button onClick={() => { setStoreStatusFilter("all"); setStoreDateFrom(todayStr); setStoreDateTo(todayStr); setStorePhoneSearch(""); }}
+                      className="h-7 px-2.5 text-xs text-muted-foreground hover:text-foreground border border-border rounded-md bg-background flex items-center gap-1">
+                      <X className="w-3 h-3" /> Clear
+                    </button>
+                  )}
+                  <span className="text-xs text-muted-foreground ml-auto">{filteredStoreOrders.length} result{filteredStoreOrders.length !== 1 ? "s" : ""}</span>
+                </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-border bg-muted/40">
-                        {["#", "Store", "Data", "Network", "Phone", "Revenue", "Profit", "Status", "Date", "Actions"].map(h => (
+                        {["#", "Store", "Agent", "Data", "Network", "Phone", "Revenue", "Sys. Profit", "Status", "Date", "Actions"].map(h => (
                           <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border">
-                      {storeOrders.map((o: any) => {
+                      {filteredStoreOrders.map((o: any) => {
                         const statusColor = STATUS_COLORS[o.status] ?? "bg-gray-100 text-gray-700";
                         const isActioning = actioningId === o.id;
                         const canAct = o.status !== "completed" && o.status !== "cancelled";
@@ -406,6 +459,7 @@ function AdminOrdersContent() {
                               <div className="text-sm font-semibold text-foreground">{o.storeName}</div>
                               <div className="text-[10px] text-muted-foreground font-mono">/{o.storeSlug}</div>
                             </td>
+                            <td className="px-4 py-3 text-xs text-foreground">{o.ownerName ?? "—"}</td>
                             <td className="px-4 py-3 font-bold text-foreground">{o.bundleData}</td>
                             <td className="px-4 py-3">
                               {NETWORKS.find(n => n.value === o.bundleNetwork)
@@ -414,7 +468,7 @@ function AdminOrdersContent() {
                             </td>
                             <td className="px-4 py-3 font-mono text-xs">{o.customerPhone}</td>
                             <td className="px-4 py-3 font-semibold">GH₵{o.sellingPrice.toFixed(2)}</td>
-                            <td className="px-4 py-3 text-emerald-600 font-semibold">+GH₵{o.profit.toFixed(2)}</td>
+                            <td className="px-4 py-3 text-emerald-600 font-semibold">{o.systemProfit != null ? `+GH₵${Number(o.systemProfit).toFixed(2)}` : "—"}</td>
                             <td className="px-4 py-3">
                               <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${statusColor}`}>{o.status}</span>
                             </td>
@@ -449,6 +503,7 @@ function AdminOrdersContent() {
                     </tbody>
                   </table>
                 </div>
+                </>
               )}
             </div>
           )}
@@ -637,6 +692,7 @@ function AdminOrdersContent() {
                       <th className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
                         <div className="flex items-center gap-1">Date <SortButton field="date" current={sortField} dir={sortDir} onToggle={handleSort} /></div>
                       </th>
+                      <th className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Agent</th>
                       <th className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
                         <div className="flex items-center gap-1">ID <SortButton field="id" current={sortField} dir={sortDir} onToggle={handleSort} /></div>
                       </th>
@@ -654,6 +710,7 @@ function AdminOrdersContent() {
                     {pagedOrders.map(order => (
                       <tr key={order.id} className="hover:bg-muted/20 transition-colors group" data-testid={`row-order-${order.id}`}>
                         <td className="px-5 py-3.5 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(order.createdAt)}</td>
+                        <td className="px-5 py-3.5 text-xs text-foreground">{(order as any).userName ?? "—"}</td>
                         <td className="px-5 py-3.5 text-xs font-mono text-muted-foreground">#{order.id}</td>
                         <td className="px-5 py-3.5 font-mono text-sm text-muted-foreground">{order.phoneNumber}</td>
                         <td className="px-5 py-3.5 font-bold text-foreground text-xs">{order.bundleData ?? "—"}</td>

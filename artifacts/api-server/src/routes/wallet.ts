@@ -104,19 +104,30 @@ router.get("/balance", requireAuth, async (req, res) => {
 });
 
 router.post("/deposit", requireAdmin, async (req, res) => {
-  const parsed = DepositToWalletBody.safeParse(req.body);
+  const parsed = DepositToWalletBody.extend({ userId: z.number().int().positive() }).safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: "Invalid deposit data" });
+    res.status(400).json({ error: "Invalid deposit data — userId, amount are required" });
     return;
   }
 
-  const { amount, method, reference, note } = parsed.data;
+  const { amount, method, reference, note, userId } = parsed.data;
   if (!amount || amount <= 0) {
     res.status(400).json({ error: "Amount must be positive" });
     return;
   }
 
-  const userId = req.session.userId!;
+  // Admins cannot credit their own wallet via this endpoint to prevent self-enrichment
+  if (userId === req.session.userId) {
+    res.status(403).json({ error: "Admins cannot deposit to their own wallet via this endpoint" });
+    return;
+  }
+
+  // Verify the target user exists
+  const [targetUser] = await db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.id, userId));
+  if (!targetUser) {
+    res.status(404).json({ error: "Target user not found" });
+    return;
+  }
 
   // Atomic: insert deposit record + credit wallet + ledger entry in one transaction
   const updated = await db.transaction(async (tx) => {
@@ -199,8 +210,8 @@ router.post("/paystack/initialize", requireAuth, async (req, res) => {
   const amountPesewas = Math.round(amountGhs * 100);
   const reference = `DB-PS-${userId}-${Date.now()}`;
 
-  const domain = process.env.REPLIT_DOMAINS ?? process.env.REPLIT_DEV_DOMAIN ?? "localhost";
-  const callbackUrl = `https://${domain}/wallet?paystack_ref=${reference}`;
+  const appOrigin = process.env.APP_ORIGIN ?? "http://localhost:5173";
+  const callbackUrl = `${appOrigin}/wallet?paystack_ref=${reference}`;
 
   const paystackRes = await fetch("https://api.paystack.co/transaction/initialize", {
     method: "POST",
@@ -324,17 +335,23 @@ router.post("/paystack/verify", requireAuth, async (req, res) => {
 });
 
 router.post("/paystack/webhook", async (req, res) => {
-  const signature = req.headers["x-paystack-signature"] as string;
-  if (PAYSTACK_SECRET && signature) {
-    const hash = crypto
-      .createHmac("sha512", PAYSTACK_SECRET)
-      .update(JSON.stringify(req.body))
-      .digest("hex");
-
-    if (hash !== signature) {
-      res.status(401).send("Invalid signature");
-      return;
-    }
+  // Mandatory signature verification — reject unconditionally if secret not set or signature absent/invalid
+  if (!PAYSTACK_SECRET) {
+    res.status(503).send("Webhook not configured");
+    return;
+  }
+  const signature = req.headers["x-paystack-signature"] as string | undefined;
+  if (!signature) {
+    res.status(401).send("Missing signature");
+    return;
+  }
+  const hash = crypto
+    .createHmac("sha512", PAYSTACK_SECRET)
+    .update(JSON.stringify(req.body))
+    .digest("hex");
+  if (hash !== signature) {
+    res.status(401).send("Invalid signature");
+    return;
   }
 
   const event = req.body as { event: string; data?: { reference: string; status: string } };
@@ -406,17 +423,29 @@ router.post("/momo/claim", requireAuth, async (req, res) => {
 });
 
 const SMS_WEBHOOK_SECRET = process.env.SMS_WEBHOOK_SECRET ?? "";
+const SMS_MAX_AMOUNT = 5000; // GH₵ — reject implausibly large credits
 
 router.post("/sms-webhook", async (req, res) => {
-  if (SMS_WEBHOOK_SECRET) {
-    const provided = (req.headers["x-sms-secret"] ?? req.query["secret"]) as string | undefined;
-    if (!provided || provided !== SMS_WEBHOOK_SECRET) {
-      res.status(401).send("Unauthorized");
-      return;
-    }
+  // Secret is mandatory — reject silently if not configured to avoid info leakage
+  if (!SMS_WEBHOOK_SECRET) {
+    res.sendStatus(200);
+    return;
+  }
+  const provided = (req.headers["x-sms-secret"] ?? req.query["secret"]) as string | undefined;
+  if (!provided || provided !== SMS_WEBHOOK_SECRET) {
+    res.status(401).send("Unauthorized");
+    return;
   }
 
   const body = req.body as { from?: string; text?: string; sender?: string; message?: string; id?: string };
+
+  // Require a unique external message ID for deduplication — without it we cannot
+  // safely guarantee idempotency, so we silently ignore the message.
+  if (!body.id) {
+    res.sendStatus(200);
+    return;
+  }
+
   const smsText = body.text ?? body.message ?? "";
 
   const amountMatch = smsText.match(/GH[SC]?\s*([\d,]+\.?\d*)/i);
@@ -435,16 +464,20 @@ router.post("/sms-webhook", async (req, res) => {
     return;
   }
 
+  // Reject implausibly large amounts as a sanity check
+  if (amount > SMS_MAX_AMOUNT) {
+    res.sendStatus(200);
+    return;
+  }
+
   const [user] = await db.select().from(usersTable).where(eq(usersTable.depositCode, depositCode));
   if (!user) {
     res.sendStatus(200);
     return;
   }
 
-  const minuteKey = Math.floor(Date.now() / 60000);
-  const reference = body.id
-    ? `MOMO-SMS-EXT-${body.id}`
-    : `MOMO-SMS-${user.id}-${depositCode}-${amount.toFixed(2)}-${minuteKey}`;
+  // Use only the external SMS message ID as dedup key — no time-window fallback
+  const reference = `MOMO-SMS-EXT-${body.id}`;
 
   const [existing] = await db
     .select()

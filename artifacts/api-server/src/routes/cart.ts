@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { db, cartItemsTable, bundlesTable, ordersTable, walletsTable } from "@workspace/db";
+import { db, cartItemsTable, bundlesTable, ordersTable, walletsTable, usersTable } from "@workspace/db";
 import { requireAuth } from "../middlewares/auth";
 import { eq, and } from "drizzle-orm";
 import { AddToCartBody } from "@workspace/api-zod";
@@ -8,6 +8,9 @@ import { getOrCreateWallet, insertLedgerEntry } from "./wallet";
 const router = Router();
 
 async function getCartWithDetails(userId: number) {
+  const [currentUser] = await db.select({ role: usersTable.role }).from(usersTable).where(eq(usersTable.id, userId));
+  const userRole = currentUser?.role ?? "user";
+
   const items = await db.select({
     id: cartItemsTable.id,
     userId: cartItemsTable.userId,
@@ -17,13 +20,21 @@ async function getCartWithDetails(userId: number) {
     bundleName: bundlesTable.name,
     bundleData: bundlesTable.dataAmount,
     bundleNetwork: bundlesTable.network,
-    price: bundlesTable.price,
+    basePrice:   bundlesTable.price,
+    agentPrice:  bundlesTable.agentPrice,
+    dealerPrice: bundlesTable.dealerPrice,
   })
     .from(cartItemsTable)
     .innerJoin(bundlesTable, eq(cartItemsTable.bundleId, bundlesTable.id))
     .where(eq(cartItemsTable.userId, userId));
 
-  return items.map(i => ({ ...i, price: parseFloat(i.price) }));
+  return items.map(i => {
+    const raw =
+      userRole === "dealer" ? i.dealerPrice :
+      userRole === "agent"  ? i.agentPrice  :
+      i.basePrice;
+    return { ...i, price: raw != null ? parseFloat(raw) : null };
+  });
 }
 
 router.get("/", requireAuth, async (req, res) => {
@@ -47,6 +58,18 @@ router.post("/", requireAuth, async (req, res) => {
     return;
   }
 
+  const [currentUserCart] = await db.select({ role: usersTable.role }).from(usersTable).where(eq(usersTable.id, userId));
+  const cartUserRole = currentUserCart?.role ?? "user";
+  const cartRawPrice =
+    cartUserRole === "dealer" ? bundle.dealerPrice :
+    cartUserRole === "agent"  ? bundle.agentPrice  :
+    bundle.price;
+
+  if (cartRawPrice == null) {
+    res.status(400).json({ error: `This bundle is not priced for ${cartUserRole} accounts. Contact admin.` });
+    return;
+  }
+
   const [item] = await db.insert(cartItemsTable).values({ userId, bundleId, phoneNumber }).returning();
 
   res.status(201).json({
@@ -58,7 +81,7 @@ router.post("/", requireAuth, async (req, res) => {
     bundleName: bundle.name,
     bundleData: bundle.dataAmount,
     bundleNetwork: bundle.network,
-    price: parseFloat(bundle.price),
+    price: parseFloat(cartRawPrice),
   });
 });
 
@@ -82,16 +105,21 @@ router.delete("/:id", requireAuth, async (req, res) => {
 
 // Checkout: atomically debits wallet, creates all orders, and writes one ledger entry per order.
 // SELECT FOR UPDATE on the wallet row prevents concurrent checkouts from double-spending.
+// Bundle prices are re-fetched INSIDE the transaction to eliminate TOCTOU race conditions.
 router.post("/checkout", requireAuth, async (req, res) => {
   const userId = req.session.userId!;
 
-  const items = await getCartWithDetails(userId);
-  if (!items.length) {
+  // Pre-check outside transaction for early user-facing errors (empty cart, unpriced bundles)
+  const preCheck = await getCartWithDetails(userId);
+  if (!preCheck.length) {
     res.status(400).json({ error: "Cart is empty" });
     return;
   }
-
-  const total = items.reduce((sum, i) => sum + i.price, 0);
+  const unpriced = preCheck.filter(i => i.price == null);
+  if (unpriced.length) {
+    res.status(400).json({ error: `Some bundles are not priced for your account type: ${unpriced.map(i => i.bundleName).join(", ")}` });
+    return;
+  }
 
   await getOrCreateWallet(userId);
 
@@ -99,6 +127,51 @@ router.post("/checkout", requireAuth, async (req, res) => {
 
   try {
     result = await db.transaction(async (tx) => {
+      // Re-fetch prices atomically inside the transaction — prevents a price change
+      // between the pre-check above and the actual wallet debit (TOCTOU fix)
+      const [txUser] = await tx
+        .select({ role: usersTable.role })
+        .from(usersTable)
+        .where(eq(usersTable.id, userId));
+      const userRole = txUser?.role ?? "user";
+
+      const txItems = await tx
+        .select({
+          id: cartItemsTable.id,
+          userId: cartItemsTable.userId,
+          bundleId: cartItemsTable.bundleId,
+          phoneNumber: cartItemsTable.phoneNumber,
+          createdAt: cartItemsTable.createdAt,
+          bundleName: bundlesTable.name,
+          bundleData: bundlesTable.dataAmount,
+          basePrice:   bundlesTable.price,
+          agentPrice:  bundlesTable.agentPrice,
+          dealerPrice: bundlesTable.dealerPrice,
+        })
+        .from(cartItemsTable)
+        .innerJoin(bundlesTable, eq(cartItemsTable.bundleId, bundlesTable.id))
+        .where(and(eq(cartItemsTable.userId, userId), eq(bundlesTable.isActive, true)));
+
+      if (!txItems.length) throw Object.assign(new Error("Cart is empty"), { status: 400 });
+
+      const resolvedItems = txItems.map(i => {
+        const raw =
+          userRole === "dealer" ? i.dealerPrice :
+          userRole === "agent"  ? i.agentPrice  :
+          i.basePrice;
+        return { ...i, price: raw != null ? parseFloat(raw) : null };
+      });
+
+      const txUnpriced = resolvedItems.filter(i => i.price == null);
+      if (txUnpriced.length) {
+        throw Object.assign(
+          new Error(`Some bundles are not priced for your account: ${txUnpriced.map(i => i.bundleName).join(", ")}`),
+          { status: 400 }
+        );
+      }
+
+      const total = resolvedItems.reduce((sum, i) => sum + i.price!, 0);
+
       const [wallet] = await tx
         .select()
         .from(walletsTable)
@@ -119,13 +192,14 @@ router.post("/checkout", requireAuth, async (req, res) => {
       await tx.update(walletsTable).set({ balance: newBalance }).where(eq(walletsTable.userId, userId));
 
       const createdOrders = await Promise.all(
-        items.map(item =>
+        resolvedItems.map(item =>
           tx.insert(ordersTable).values({
             userId,
             bundleId: item.bundleId,
             bundleName: item.bundleName,
             bundleData: item.bundleData,
-            price: item.price.toFixed(2),
+            price: item.price!.toFixed(2),
+            buyingCost: item.basePrice,
             status: "pending",
             phoneNumber: item.phoneNumber,
           }).returning()

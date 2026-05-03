@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+﻿import { useQuery } from "@tanstack/react-query";
 import { TrendingUp, ArrowUpRight, CreditCard, Store, ShoppingCart } from "lucide-react";
 
 interface FinancialSummary {
@@ -80,10 +80,6 @@ export function AdminFinancialSummary() {
     );
   }
 
-  const platformSub = data.todayProfitPlatform !== data.todayProfit
-    ? `Direct: ${fmt(data.todayProfitPlatform)} · Store: ${fmt(data.todayProfitStore)}`
-    : undefined;
-
   return (
     <div className="hidden lg:flex items-center gap-2">
       <Pill
@@ -97,36 +93,44 @@ export function AdminFinancialSummary() {
         textClass="text-emerald-700 dark:text-emerald-300"
       />
       <Pill
-        icon={ArrowUpRight}
-        label="Today's Profit"
-        value={fmt(data.todayProfit)}
-        sub={platformSub}
+        icon={ShoppingCart}
+        label="Today's Profit (Direct)"
+        value={fmt(data.todayProfitPlatform)}
+        sub="From agent orders"
         colorClass="text-sky-600 dark:text-sky-400"
         borderClass="border-sky-200 dark:border-sky-800"
         bgClass="bg-sky-50 dark:bg-sky-950/30"
         textClass="text-sky-700 dark:text-sky-300"
       />
-      {data.allProfitPlatform > 0 || data.allProfitStore > 0 ? (
-        <Pill
-          icon={data.allProfitStore > data.allProfitPlatform ? Store : ShoppingCart}
-          label="All-Time Profit"
-          value={fmt(data.allTimeProfit)}
-          sub={`Direct: ${fmt(data.allProfitPlatform)} · Store: ${fmt(data.allProfitStore)}`}
-          colorClass="text-violet-600 dark:text-violet-400"
-          borderClass="border-violet-200 dark:border-violet-800"
-          bgClass="bg-violet-50 dark:bg-violet-950/30"
-          textClass="text-violet-700 dark:text-violet-300"
-        />
-      ) : null}
+      <Pill
+        icon={Store}
+        label="Today's Profit (Store)"
+        value={fmt(data.todayProfitStore)}
+        sub="From store orders"
+        colorClass="text-violet-600 dark:text-violet-400"
+        borderClass="border-violet-200 dark:border-violet-800"
+        bgClass="bg-violet-50 dark:bg-violet-950/30"
+        textClass="text-violet-700 dark:text-violet-300"
+      />
+      <Pill
+        icon={ArrowUpRight}
+        label="Today's Profit (Total)"
+        value={fmt(data.todayProfit)}
+        sub={`Direct + Store`}
+        colorClass="text-amber-600 dark:text-amber-400"
+        borderClass="border-amber-200 dark:border-amber-800"
+        bgClass="bg-amber-50 dark:bg-amber-950/30"
+        textClass="text-amber-700 dark:text-amber-300"
+      />
       {data.paystackBalance !== null ? (
         <Pill
           icon={CreditCard}
           label="Paystack Balance"
           value={fmt(data.paystackBalance)}
-          colorClass="text-amber-600 dark:text-amber-400"
-          borderClass="border-amber-200 dark:border-amber-800"
-          bgClass="bg-amber-50 dark:bg-amber-950/30"
-          textClass="text-amber-700 dark:text-amber-300"
+          colorClass="text-rose-600 dark:text-rose-400"
+          borderClass="border-rose-200 dark:border-rose-800"
+          bgClass="bg-rose-50 dark:bg-rose-950/30"
+          textClass="text-rose-700 dark:text-rose-300"
         />
       ) : null}
     </div>

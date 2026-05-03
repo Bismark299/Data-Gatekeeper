@@ -15,7 +15,7 @@ import { useToast } from "@/hooks/use-toast";
 const registerSchema = z.object({
   name: z.string().min(2, "Name must be at least 2 characters"),
   email: z.string().email("Valid email required"),
-  phone: z.string().optional(),
+  phone: z.string().min(10, "Phone number is required"),
   password: z.string().min(6, "Password must be at least 6 characters"),
   confirmPassword: z.string(),
 }).refine(d => d.password === d.confirmPassword, {
@@ -38,7 +38,7 @@ export default function Register() {
 
   const onSubmit = (data: RegisterForm) => {
     registerMutation.mutate(
-      { data: { name: data.name, email: data.email, password: data.password, phone: data.phone || null } },
+      { data: { name: data.name, email: data.email, password: data.password, phone: data.phone } },
       {
         onSuccess: (res) => {
           queryClient.setQueryData(getGetMeQueryKey(), res.user);
@@ -79,8 +79,9 @@ export default function Register() {
             </div>
 
             <div className="space-y-1.5">
-              <Label htmlFor="phone">Phone number (optional)</Label>
+              <Label htmlFor="phone">Phone number</Label>
               <Input id="phone" type="tel" placeholder="+1234567890" {...register("phone")} data-testid="input-phone" />
+              {errors.phone && <p className="text-xs text-destructive">{errors.phone.message}</p>}
             </div>
 
             <div className="space-y-1.5">
