@@ -40,11 +40,13 @@ export function Navbar() {
                 </Button>
               </Link>
             )}
-            <Link href="/bundles">
-              <Button variant={location === "/bundles" ? "secondary" : "ghost"} size="sm">
-                Packages
-              </Button>
-            </Link>
+            {isAuthenticated && (
+              <Link href="/bundles">
+                <Button variant={location === "/bundles" ? "secondary" : "ghost"} size="sm">
+                  Packages
+                </Button>
+              </Link>
+            )}
             {isAuthenticated && !isAdmin && (
               <Link href="/orders">
                 <Button variant={location === "/orders" ? "secondary" : "ghost"} size="sm">
@@ -179,9 +181,11 @@ export function Navbar() {
                 <Button variant="ghost" className="w-full justify-start">Dashboard</Button>
               </Link>
             )}
-            <Link href="/bundles" onClick={() => setMenuOpen(false)}>
-              <Button variant="ghost" className="w-full justify-start">Packages</Button>
-            </Link>
+            {isAuthenticated && (
+              <Link href="/bundles" onClick={() => setMenuOpen(false)}>
+                <Button variant="ghost" className="w-full justify-start">Packages</Button>
+              </Link>
+            )}
             {isAuthenticated && !isAdmin && (
               <>
                 <Link href="/orders" onClick={() => setMenuOpen(false)}>

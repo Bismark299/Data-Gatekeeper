@@ -19,7 +19,23 @@ const app: Express = express();
 app.set("trust proxy", 1);
 
 // Security headers
-app.use(helmet({ contentSecurityPolicy: false }));
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc:  ["'self'"],
+        scriptSrc:   ["'self'"],
+        styleSrc:    ["'self'", "'unsafe-inline'"],   // Tailwind/shadcn inline styles
+        imgSrc:      ["'self'", "data:", "https:"],
+        fontSrc:     ["'self'", "data:"],
+        connectSrc:  ["'self'", "https://api.paystack.co"],
+        frameSrc:    ["'self'", "https://*.paystack.co"],
+        objectSrc:   ["'none'"],
+        upgradeInsecureRequests: [],
+      },
+    },
+  }),
+);
 
 app.use(
   pinoHttp({

@@ -26,6 +26,7 @@ import Shop from "@/pages/shop";
 import StoreManager from "@/pages/store-manager";
 import PublicStore from "@/pages/public-store";
 import Profile from "@/pages/profile";
+import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { CheckoutSuccessDialog } from "@/components/CheckoutSuccessDialog";
 import { useCart } from "@/context/CartContext";
 
@@ -52,16 +53,16 @@ function Router() {
       <Route path="/orders" component={Orders} />
       <Route path="/wallet" component={WalletPage} />
       <Route path="/profile" component={Profile} />
-      <Route path="/admin" component={AdminDashboard} />
-      <Route path="/admin/bundles" component={AdminBundles} />
-      <Route path="/admin/users" component={AdminUsers} />
-      <Route path="/admin/orders" component={AdminOrders} />
-      <Route path="/admin/wallets" component={AdminWallets} />
-      <Route path="/admin/deposits" component={AdminDeposits} />
-      <Route path="/admin/stats" component={AdminStats} />
-      <Route path="/admin/stores" component={AdminStores} />
-      <Route path="/admin/agents/:userId" component={AdminAgentDetail} />
-      <Route path="/admin/settings" component={AdminSettings} />
+      <Route path="/admin">{() => <ProtectedRoute adminOnly><AdminDashboard /></ProtectedRoute>}</Route>
+      <Route path="/admin/bundles">{() => <ProtectedRoute adminOnly><AdminBundles /></ProtectedRoute>}</Route>
+      <Route path="/admin/users">{() => <ProtectedRoute adminOnly><AdminUsers /></ProtectedRoute>}</Route>
+      <Route path="/admin/orders">{() => <ProtectedRoute adminOnly><AdminOrders /></ProtectedRoute>}</Route>
+      <Route path="/admin/wallets">{() => <ProtectedRoute adminOnly><AdminWallets /></ProtectedRoute>}</Route>
+      <Route path="/admin/deposits">{() => <ProtectedRoute adminOnly><AdminDeposits /></ProtectedRoute>}</Route>
+      <Route path="/admin/stats">{() => <ProtectedRoute adminOnly><AdminStats /></ProtectedRoute>}</Route>
+      <Route path="/admin/stores">{() => <ProtectedRoute adminOnly><AdminStores /></ProtectedRoute>}</Route>
+      <Route path="/admin/agents/:userId">{(params) => <ProtectedRoute adminOnly><AdminAgentDetail /></ProtectedRoute>}</Route>
+      <Route path="/admin/settings">{() => <ProtectedRoute adminOnly><AdminSettings /></ProtectedRoute>}</Route>
       <Route path="/shop" component={Shop} />
       <Route path="/store-manager" component={StoreManager} />
       <Route path="/s/:slug" component={PublicStore} />

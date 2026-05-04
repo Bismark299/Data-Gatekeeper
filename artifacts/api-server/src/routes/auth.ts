@@ -5,7 +5,15 @@ import { db, usersTable } from "@workspace/db";
 import { RegisterBody, LoginBody } from "@workspace/api-zod";
 import { requireAuth } from "../middlewares/auth";
 
+import type { Request } from "express";
+
 const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+function regenerateSession(req: Request): Promise<void> {
+  return new Promise((resolve, reject) => {
+    req.session.regenerate((err) => (err ? reject(err) : resolve()));
+  });
+}
 
 async function generateDepositCode(): Promise<string> {
   for (let attempt = 0; attempt < 20; attempt++) {
@@ -44,6 +52,8 @@ router.post("/auth/register", async (req, res): Promise<void> => {
     .values({ name, email, passwordHash, phone: phone || null, role: "agent", isActive: true, depositCode })
     .returning();
 
+  // Regenerate the session ID to prevent session fixation attacks
+  await regenerateSession(req);
   req.session.userId = user.id;
   req.session.userRole = user.role;
 
@@ -82,6 +92,8 @@ router.post("/auth/login", async (req, res): Promise<void> => {
     return;
   }
 
+  // Regenerate the session ID to prevent session fixation attacks
+  await regenerateSession(req);
   req.session.userId = user.id;
   req.session.userRole = user.role;
 
