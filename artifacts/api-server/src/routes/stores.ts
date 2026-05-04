@@ -139,7 +139,7 @@ router.get("/stores/my/bundles", requireAuth, async (req, res) => {
 
 const AddStoreBundleBody = z.object({
   bundleId: z.number().int().positive(),
-  sellingPrice: z.number().positive(),
+  sellingPrice: z.number().positive().max(10000),
 });
 
 router.post("/stores/my/bundles", requireAuth, async (req, res) => {
@@ -305,12 +305,12 @@ router.get("/stores/my/withdrawals", requireAuth, async (req, res) => {
 });
 
 const WithdrawBody = z.object({
-  amount: z.number().positive(),
+  amount: z.number().positive().max(10000),
   method: z.string().optional(),
   bankCode: z.string().optional(),
-  accountNumber: z.string().min(3),
+  accountNumber: z.string().min(3).max(20),
   accountName: z.string().optional(),
-  note: z.string().optional(),
+  note: z.string().max(200).optional(),
 });
 
 router.post("/stores/my/withdraw", requireAuth, async (req, res) => {

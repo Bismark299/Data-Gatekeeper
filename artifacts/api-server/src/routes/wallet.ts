@@ -186,7 +186,7 @@ router.get("/ledger", requireAuth, async (req, res) => {
   })));
 });
 
-const PaystackInitBodySchema = z.object({ amount: z.number().positive() });
+const PaystackInitBodySchema = z.object({ amount: z.number().positive().max(10000) });
 router.post("/paystack/initialize", requireAuth, async (req, res) => {
   if (!PAYSTACK_SECRET) {
     res.status(503).json({ error: "Paystack is not configured" });

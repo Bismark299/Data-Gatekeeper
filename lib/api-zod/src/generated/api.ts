@@ -18,18 +18,18 @@ export const HealthCheckResponse = zod.object({
  * @summary Register a new user
  */
 export const RegisterBody = zod.object({
-  name: zod.string(),
-  email: zod.string(),
-  password: zod.string(),
-  phone: zod.string().min(1),
+  name: zod.string().min(2).max(80),
+  email: zod.string().email().max(254),
+  password: zod.string().min(6).max(128),
+  phone: zod.string().min(7).max(20),
 });
 
 /**
  * @summary Login a user
  */
 export const LoginBody = zod.object({
-  email: zod.string(),
-  password: zod.string(),
+  email: zod.string().email().max(254),
+  password: zod.string().min(1).max(128),
 });
 
 export const LoginResponse = zod.object({
