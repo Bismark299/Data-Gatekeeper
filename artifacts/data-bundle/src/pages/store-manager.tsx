@@ -56,14 +56,14 @@ function StatCard({ label, value, sub, icon: Icon, color }: {
   label: string; value: string; sub?: string; icon: React.ElementType; color: string;
 }) {
   return (
-    <div className="bg-card rounded-2xl border border-border p-5 flex items-start gap-4">
-      <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${color}`}>
-        <Icon className="w-5 h-5" />
+    <div className="bg-card rounded-2xl border border-border p-5 flex items-start gap-3">
+      <div className={`w-10 h-10 sm:w-11 sm:h-11 rounded-xl flex items-center justify-center shrink-0 ${color}`}>
+        <Icon className="w-4 h-4 sm:w-5 sm:h-5" />
       </div>
-      <div className="min-w-0">
-        <div className="text-2xl font-bold text-foreground">{value}</div>
-        <div className="text-sm font-medium text-muted-foreground">{label}</div>
-        {sub && <div className="text-xs text-muted-foreground mt-0.5">{sub}</div>}
+      <div className="min-w-0 flex-1">
+        <div className="text-base sm:text-2xl font-bold text-foreground truncate">{value}</div>
+        <div className="text-xs sm:text-sm font-medium text-muted-foreground truncate">{label}</div>
+        {sub && <div className="text-xs text-muted-foreground mt-0.5 truncate">{sub}</div>}
       </div>
     </div>
   );
@@ -229,14 +229,14 @@ function StoreDashboard({ store: initialStore }: { store: Store }) {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 bg-muted rounded-2xl p-1.5 mb-6 overflow-x-auto">
+      <div className="flex gap-1 bg-muted rounded-2xl p-1.5 mb-6 overflow-x-auto scrollbar-none">
         {TABS.map(t => {
           const Icon = t.icon;
           return (
             <button
               key={t.id}
               onClick={() => setTab(t.id)}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-semibold text-sm whitespace-nowrap transition-all flex-1 justify-center ${
+              className={`flex items-center gap-2 px-3 py-2.5 rounded-xl font-semibold text-sm whitespace-nowrap transition-all shrink-0 justify-center ${
                 tab === t.id ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
               }`}
             >
@@ -280,7 +280,7 @@ function OverviewTab({ stats, orders, storeBundles }: { stats?: StoreStats; orde
                 <div className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide ${NETWORK_COLORS[o.bundleNetwork] ?? "bg-gray-100 text-gray-800"}`}>{NETWORK_LABELS[o.bundleNetwork] ?? o.bundleNetwork}</div>
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-semibold text-foreground truncate">{o.bundleData} — {o.customerPhone}</div>
-                  <div className="text-xs text-muted-foreground">{new Date(o.createdAt).toLocaleString("en-GH", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true })}</div>
+                  <div className="text-xs text-muted-foreground truncate">{new Date(o.createdAt).toLocaleString("en-GH", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true })}</div>
                 </div>
                 <div className="text-right shrink-0">
                   <div className="text-sm font-bold text-foreground">GH₵{o.sellingPrice.toFixed(2)}</div>
@@ -511,7 +511,7 @@ function OrdersTab({ orders }: { orders: any[] }) {
           </p>
         </div>
         <Input placeholder="Filter by phone…" value={phoneFilter} onChange={e => setPhoneFilter(e.target.value)}
-          className="h-8 w-40 text-sm font-mono" />
+          className="h-8 w-full sm:w-40 text-sm font-mono" />
         <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
           className="h-8 rounded-lg border border-border bg-background px-2 text-xs">
           <option value="all">All status</option>
@@ -522,9 +522,9 @@ function OrdersTab({ orders }: { orders: any[] }) {
           <option value="failed">Failed</option>
         </select>
         <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
-          className="h-8 rounded-lg border border-border bg-background px-2 text-xs" title="From date" />
+          className="h-8 w-full sm:w-auto rounded-lg border border-border bg-background px-2 text-xs" title="From date" />
         <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
-          className="h-8 rounded-lg border border-border bg-background px-2 text-xs" title="To date" />
+          className="h-8 w-full sm:w-auto rounded-lg border border-border bg-background px-2 text-xs" title="To date" />
         <div className="flex gap-1.5">
           {!isToday && (
             <button onClick={() => { setDateFrom(todayStr); setDateTo(todayStr); }}
