@@ -71,7 +71,7 @@ app.use(
     store: new PgStore({
       pool,
       tableName: "sessions",
-      createTableIfMissing: false,
+      createTableIfMissing: true,
     }),
     secret: sessionSecret,
     resave: false,
