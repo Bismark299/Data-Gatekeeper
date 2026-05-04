@@ -34,6 +34,18 @@ if (!ADMIN_PASSWORD) {
 const client = new Client({ connectionString: DATABASE_URL });
 await client.connect();
 
+// Ensure sessions table exists (connect-pg-simple cannot auto-create it when bundled)
+await client.query(`
+  CREATE TABLE IF NOT EXISTS sessions (
+    sid  varchar      NOT NULL COLLATE "default",
+    sess json         NOT NULL,
+    expire timestamp(6) NOT NULL,
+    CONSTRAINT sessions_pkey PRIMARY KEY (sid) NOT DEFERRABLE INITIALLY IMMEDIATE
+  ) WITH (OIDS=FALSE);
+  CREATE INDEX IF NOT EXISTS IDX_sessions_expire ON sessions (expire);
+`);
+console.log('✅  sessions table ensured');
+
 const passwordHash = await bcrypt.hash(ADMIN_PASSWORD, 12);
 
 await client.query(
