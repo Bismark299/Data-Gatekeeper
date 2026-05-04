@@ -6,6 +6,8 @@ import cookieParser from "cookie-parser";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import connectPg from "connect-pg-simple";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { pool } from "@workspace/db";
 import router from "./routes";
 import { logger } from "./lib/logger";
@@ -124,5 +126,19 @@ app.use("/api/cart/checkout", orderLimiter);
 app.use("/api", apiLimiter);
 
 app.use("/api", router);
+
+// ── Serve React frontend (production) ─────────────────────────────────────────
+// In production the frontend is built into artifacts/data-bundle/dist/public.
+// All non-API requests are served the SPA index.html.
+if (process.env.NODE_ENV === "production") {
+  const __dirname = path.dirname(fileURLToPath(import.meta.url));
+  const frontendDist = path.resolve(__dirname, "../../data-bundle/dist/public");
+
+  app.use(express.static(frontendDist));
+
+  app.get("*", (_req, res) => {
+    res.sendFile(path.join(frontendDist, "index.html"));
+  });
+}
 
 export default app;
