@@ -17,7 +17,13 @@
 
 import { eq, and, isNotNull, isNull } from "drizzle-orm";
 import { sql } from "drizzle-orm";
+import { Agent, fetch as undiciFetch } from "undici";
 import { db, settingsTable, ordersTable, storeOrdersTable, bundlesTable, storesTable } from "@workspace/db";
+
+// Force IPv4 to avoid IPv6 connectivity issues on cloud platforms (e.g. Render)
+const ipv4Agent = new Agent({ connect: { family: 4 } });
+const mcbisFetch: typeof globalThis.fetch = (input, init) =>
+  undiciFetch(input as Parameters<typeof undiciFetch>[0], { ...init, dispatcher: ipv4Agent }) as unknown as ReturnType<typeof globalThis.fetch>;
 
 const MCBIS_BASE = process.env.DATAHUB_API_URL ?? "https://datahub.mcbissolution.com/api/v1";
 
@@ -53,10 +59,13 @@ export async function getMcbisSettings(): Promise<{ enabled: boolean; apiKey: st
 // ─── Raw API calls ────────────────────────────────────────────────────────────
 
 export async function mcbisGetBalance(apiKey: string): Promise<number> {
-  const res = await fetch(`${MCBIS_BASE}/walletBalance`, {
+  const res = await mcbisFetch(`${MCBIS_BASE}/walletBalance`, {
     headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
   });
-  if (!res.ok) throw new Error(`McbisSolution HTTP ${res.status}`);
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`McbisSolution HTTP ${res.status}: ${body}`);
+  }
   const data = await res.json() as { data: { walletBalance: string } };
   return parseFloat(data.data.walletBalance);
 }
@@ -68,7 +77,7 @@ export async function mcbisPlaceOrder(opts: {
   receiver: string;
   amountGb: number;
 }): Promise<{ accepted: boolean; status: string; message: string }> {
-  const res = await fetch(`${MCBIS_BASE}/placeOrder`, {
+  const res = await mcbisFetch(`${MCBIS_BASE}/placeOrder`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${opts.apiKey}`,
@@ -96,7 +105,7 @@ export async function mcbisPlaceOrder(opts: {
 }
 
 export async function mcbisCheckStatus(apiKey: string, reference: string): Promise<string> {
-  const res = await fetch(`${MCBIS_BASE}/checkOrderStatus/${encodeURIComponent(reference)}`, {
+  const res = await mcbisFetch(`${MCBIS_BASE}/checkOrderStatus/${encodeURIComponent(reference)}`, {
     headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
   });
   if (!res.ok) throw new Error(`McbisSolution HTTP ${res.status}`);
