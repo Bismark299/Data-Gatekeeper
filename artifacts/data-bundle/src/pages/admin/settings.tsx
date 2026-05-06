@@ -277,8 +277,8 @@ function AdminSettingsContent() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
       }).then(r => r.json()),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["adminSettings"] });
+    onSuccess: (saved: Record<string, string>) => {
+      queryClient.setQueryData(["adminSettings"], saved);
       toast({ title: "Settings saved successfully" });
       setDirty(false);
     },
