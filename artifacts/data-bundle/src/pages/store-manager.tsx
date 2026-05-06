@@ -15,7 +15,7 @@ import {
   Store as StoreIcon, TrendingUp, ShoppingBag, Wallet, Copy, Check,
   Plus, Trash2, Edit2, ExternalLink, Loader2, X, Package, Settings,
   BarChart3, ListOrdered, ArrowDownToLine, CheckCircle2, Clock, AlertCircle,
-  Sparkles, Globe, PiggyBank, Zap,
+  Sparkles, Globe, PiggyBank, Zap, List,
 } from "lucide-react";
 
 const COLOR_THEMES = [
@@ -302,6 +302,168 @@ function OverviewTab({ stats, orders, storeBundles }: { stats?: StoreStats; orde
   );
 }
 
+// ─── Bulk Order Modal ─────────────────────────────────────────────────────────
+function BulkOrderModal({
+  network,
+  onClose,
+  gbOptions,
+}: {
+  network: string;
+  onClose: () => void;
+  gbOptions: number[];
+}) {
+  const qc = useQueryClient();
+  const [text, setText] = useState("");
+  const [result, setResult] = useState<{ processed: number; skipped: { phone: string; gb: number; reason: string }[]; totalCost: number } | null>(null);
+  const [error, setError] = useState("");
+
+  // Parse textarea lines into items
+  type ParsedLine = { phone: string; gb: number; valid: boolean; reason?: string };
+  const lines: ParsedLine[] = text
+    .split("\n")
+    .map(l => l.trim())
+    .filter(l => l.length > 0)
+    .map(l => {
+      const parts = l.split(/\s+/);
+      if (parts.length < 2) return { phone: l, gb: 0, valid: false, reason: "Missing GB size" };
+      const phone = parts[0];
+      const gb = parseInt(parts[1], 10);
+      if (!/^\d{7,15}$/.test(phone)) return { phone, gb, valid: false, reason: "Invalid phone number" };
+      if (isNaN(gb) || gb <= 0) return { phone, gb, valid: false, reason: "Invalid GB size" };
+      if (!gbOptions.includes(gb)) return { phone, gb, valid: false, reason: `No ${gb}GB bundle in your store` };
+      return { phone, gb, valid: true };
+    });
+
+  const validLines = lines.filter(l => l.valid);
+  const invalidLines = lines.filter(l => !l.valid);
+
+  const bulk = useMutation({
+    mutationFn: () => storeApi.bulkOrder({
+      network,
+      items: validLines.map(l => ({ phone: l.phone, gb: l.gb })),
+    }),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["myStoreOrders"] });
+      qc.invalidateQueries({ queryKey: ["myStoreStats"] });
+      setResult({ processed: data.processed, skipped: data.skipped, totalCost: data.totalCost });
+      setError("");
+    },
+    onError: (e) => setError((e as Error).message),
+  });
+
+  const networkLabel = NETWORK_LABELS[network] ?? network.toUpperCase();
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+      <div className="bg-background border border-border rounded-2xl shadow-xl w-full max-w-lg flex flex-col max-h-[90vh]">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border shrink-0">
+          <div>
+            <h2 className="font-bold text-foreground text-base">Bulk Order — {networkLabel}</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">One entry per line: <span className="font-mono">phone number  GB</span></p>
+          </div>
+          <button onClick={onClose} className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-muted transition-colors">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="p-5 overflow-y-auto flex-1 space-y-4">
+          {!result ? (
+            <>
+              <div className="bg-muted/50 rounded-xl px-3 py-2 text-xs text-muted-foreground font-mono space-y-0.5">
+                <div>0244123456 1</div>
+                <div>0277987654 2</div>
+                <div>0555546229 5</div>
+              </div>
+
+              <Textarea
+                placeholder={"0244123456 1\n0277987654 2\n0555546229 5"}
+                value={text}
+                onChange={e => { setText(e.target.value); setError(""); }}
+                rows={8}
+                className="font-mono text-sm resize-none"
+              />
+
+              {/* Live preview */}
+              {lines.length > 0 && (
+                <div className="rounded-xl border border-border divide-y divide-border overflow-hidden text-xs">
+                  {lines.map((l, i) => (
+                    <div key={i} className={`flex items-center gap-2 px-3 py-2 ${l.valid ? "bg-emerald-50/50 dark:bg-emerald-900/10" : "bg-red-50/50 dark:bg-red-900/10"}`}>
+                      {l.valid
+                        ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                        : <AlertCircle className="w-3.5 h-3.5 text-red-500 shrink-0" />}
+                      <span className="font-mono flex-1">{l.phone}</span>
+                      <span className="font-mono text-muted-foreground">{l.gb > 0 ? `${l.gb}GB` : "—"}</span>
+                      {!l.valid && <span className="text-red-500 ml-1">{l.reason}</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Summary bar */}
+              {validLines.length > 0 && (
+                <div className="flex items-center justify-between bg-muted rounded-xl px-4 py-2.5 text-sm">
+                  <span className="text-muted-foreground">
+                    <span className="font-bold text-foreground">{validLines.length}</span> valid
+                    {invalidLines.length > 0 && <> · <span className="text-red-500 font-bold">{invalidLines.length}</span> skipped</>}
+                  </span>
+                  <span className="font-semibold text-foreground">Cost will be deducted from profit balance</span>
+                </div>
+              )}
+
+              {error && (
+                <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-red-50 border border-red-200 text-red-700 text-sm dark:bg-red-900/10 dark:border-red-800 dark:text-red-400">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  {error}
+                </div>
+              )}
+            </>
+          ) : (
+            /* Result screen */
+            <div className="space-y-4">
+              <div className="rounded-xl border border-emerald-300 bg-emerald-50 dark:bg-emerald-900/10 p-4 text-center">
+                <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto mb-2" />
+                <p className="font-bold text-emerald-700 dark:text-emerald-400 text-lg">{result.processed} order{result.processed !== 1 ? "s" : ""} submitted</p>
+                <p className="text-xs text-emerald-600 mt-1">GH₵{result.totalCost.toFixed(2)} deducted from your profit balance</p>
+              </div>
+              {result.skipped.length > 0 && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 dark:bg-amber-900/10 p-4">
+                  <p className="text-xs font-bold text-amber-700 dark:text-amber-400 mb-2">{result.skipped.length} line{result.skipped.length !== 1 ? "s" : ""} skipped:</p>
+                  <div className="space-y-1">
+                    {result.skipped.map((s, i) => (
+                      <div key={i} className="text-xs font-mono text-amber-700 dark:text-amber-400">{s.phone} {s.gb}GB — {s.reason}</div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="px-5 py-4 border-t border-border shrink-0 flex gap-2">
+          {!result ? (
+            <>
+              <Button variant="outline" onClick={onClose} className="flex-1">Cancel</Button>
+              <Button
+                onClick={() => bulk.mutate()}
+                disabled={validLines.length === 0 || bulk.isPending}
+                className="flex-1 gap-2"
+              >
+                {bulk.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <List className="w-4 h-4" />}
+                {bulk.isPending ? "Submitting…" : `Submit ${validLines.length} Order${validLines.length !== 1 ? "s" : ""}`}
+              </Button>
+            </>
+          ) : (
+            <Button onClick={onClose} className="flex-1">Done</Button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Bundles Tab ──────────────────────────────────────────────────────────────
 type Network = "mtn" | "telecel" | "at-ishare" | "at-bigtime";
 const ALL_NETWORKS: Network[] = ["mtn", "telecel", "at-ishare", "at-bigtime"];
@@ -319,6 +481,7 @@ function BundlesTab({ storeBundles, store: _store, userRole: _userRole }: { stor
   const qc = useQueryClient();
   const [editingBundleId, setEditingBundleId] = useState<number | null>(null);
   const [editPrice, setEditPrice] = useState("");
+  const [bulkNetwork, setBulkNetwork] = useState<string | null>(null);
 
   // Load ALL system bundles always — no network filter
   const { data: allBundles = [], isLoading } = useListBundles({}, { query: { staleTime: 60_000 } });
@@ -357,8 +520,27 @@ function BundlesTab({ storeBundles, store: _store, userRole: _userRole }: { stor
 
   const isSaving = addBundle.isPending || updateBundle.isPending;
 
+  // GB sizes available in store for each network (for bulk order validation)
+  const networkGbOptions = (network: string): number[] => {
+    const options: number[] = [];
+    for (const b of allBundles as any[]) {
+      if (b.network !== network) continue;
+      if (!storeBundleMap.has(b.id)) continue;
+      const m = (b.dataAmount as string).match(/^(\d+)\s*GB$/i);
+      if (m) options.push(parseInt(m[1], 10));
+    }
+    return [...new Set(options)].sort((a, b) => a - b);
+  };
+
   return (
     <div className="space-y-6">
+      {bulkNetwork && (
+        <BulkOrderModal
+          network={bulkNetwork}
+          gbOptions={networkGbOptions(bulkNetwork)}
+          onClose={() => setBulkNetwork(null)}
+        />
+      )}
       <div>
         <h3 className="font-bold text-foreground text-lg">Your Packages</h3>
         <p className="text-xs text-muted-foreground mt-0.5">
@@ -471,6 +653,16 @@ function BundlesTab({ storeBundles, store: _store, userRole: _userRole }: { stor
                       })}
                     </tbody>
                   </table>
+                </div>
+                {/* Bulk order footer */}
+                <div className="px-4 py-3 border-t border-border flex items-center justify-between bg-muted/30">
+                  <span className="text-xs text-muted-foreground">Send data to multiple numbers at once</span>
+                  <button
+                    onClick={() => setBulkNetwork(network)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors text-xs font-semibold"
+                  >
+                    <List className="w-3.5 h-3.5" /> Bulk Order
+                  </button>
                 </div>
               </div>
             );

@@ -1,4 +1,5 @@
 import { Link } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import {
   useListMyOrders,
   useGetMe,
@@ -11,7 +12,9 @@ import { Button } from "@/components/ui/button";
 import {
   ShoppingCart, Wallet, CheckCircle2, Clock, TrendingUp,
   Phone, ArrowRight, Wifi, Package, AlertCircle,
+  Store, PiggyBank, Zap, BarChart3,
 } from "lucide-react";
+import { storeApi, type Store as StoreType, type StoreStats } from "@/lib/storeApi";
 
 const STATUS_COLORS: Record<string, string> = {
   pending:    "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400",
@@ -49,6 +52,27 @@ function DashboardContent() {
   const { data: orders, isLoading } = useListMyOrders({ refetchInterval: 10000, staleTime: 0 } as any);
   const { data: wallet } = useGetWalletBalance();
 
+  // Store data — only fetched if user has a store
+  const { data: myStore } = useQuery<StoreType | null>({
+    queryKey: ["myStore"],
+    queryFn: storeApi.getMyStore,
+    staleTime: 30000,
+  });
+  const { data: storeStats } = useQuery<StoreStats>({
+    queryKey: ["myStoreStats"],
+    queryFn: storeApi.getStats,
+    enabled: !!myStore,
+    refetchInterval: 10000,
+    staleTime: 0,
+  });
+  const { data: storeOrders = [] } = useQuery({
+    queryKey: ["myStoreOrders"],
+    queryFn: storeApi.getOrders,
+    enabled: !!myStore,
+    refetchInterval: 10000,
+    staleTime: 0,
+  });
+
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
 
@@ -59,6 +83,14 @@ function DashboardContent() {
   const totalSpent    = completed.reduce((s, o) => s + o.price, 0);
   const lastOrder     = orders?.[0];
   const recentOrders  = orders?.slice(0, 5) ?? [];
+
+  // Store today stats
+  const storeTodayOrders = (storeOrders as any[]).filter(o => new Date(o.createdAt) >= todayStart);
+  const storeTodayCompleted = storeTodayOrders.filter(o => o.status === "completed");
+  const storeTodayPending   = storeTodayOrders.filter(o => o.status === "pending" || o.status === "processing");
+  const storeTodayRevenue   = storeTodayCompleted.reduce((s: number, o: any) => s + Number(o.sellingPrice), 0);
+  const storeTodayProfit    = storeTodayCompleted.reduce((s: number, o: any) => s + Number(o.profit), 0);
+  const recentStoreOrders   = (storeOrders as any[]).slice(0, 5);
 
   const initials = user?.name
     ? user.name.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2)
@@ -267,6 +299,99 @@ function DashboardContent() {
             </div>
           )}
         </div>
+
+        {/* ── Store section (only if user has a store) ── */}
+        {myStore && (
+          <div className="space-y-4">
+
+            {/* Store header */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Store className="w-5 h-5 text-primary" />
+                <h2 className="font-bold text-foreground text-lg">{myStore.name}</h2>
+                <span className="text-xs text-muted-foreground font-mono">/s/{myStore.slug}</span>
+              </div>
+              <Link href="/store">
+                <Button variant="outline" size="sm" className="gap-1.5 text-xs">
+                  <BarChart3 className="w-3.5 h-3.5" /> Manage Store
+                </Button>
+              </Link>
+            </div>
+
+            {/* Store stat cards */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+              {[
+                { label: "Profit Balance", value: `GH₵${(storeStats?.profitBalance ?? myStore.profitBalance).toFixed(2)}`, icon: PiggyBank,    color: "bg-emerald-500/10 text-emerald-600", sub: "Available to withdraw", href: "/store" },
+                { label: "Today's Sales",  value: storeTodayOrders.length,                                                   icon: ShoppingCart, color: "bg-blue-500/10 text-blue-600",       sub: "Store orders today",   href: "/store" },
+                { label: "Completed",      value: storeTodayCompleted.length,                                                icon: CheckCircle2, color: "bg-green-500/10 text-green-600",     sub: "Today",                href: "/store" },
+                { label: "Pending",        value: storeTodayPending.length,                                                  icon: Clock,        color: "bg-yellow-500/10 text-yellow-600",   sub: "Awaiting completion",  href: "/store" },
+                { label: "Today Revenue",  value: `GH₵${storeTodayRevenue.toFixed(2)}`,                                     icon: TrendingUp,   color: "bg-purple-500/10 text-purple-600",   sub: "Completed sales",      href: "/store" },
+                { label: "Today Profit",   value: `GH₵${storeTodayProfit.toFixed(2)}`,                                      icon: Zap,          color: "bg-amber-500/10 text-amber-600",     sub: "Your earnings today",  href: "/store" },
+              ].map(card => (
+                <Link href={card.href} key={card.label}>
+                  <div className="bg-card border border-border rounded-2xl p-4 flex flex-col gap-3 hover:shadow-md hover:-translate-y-0.5 transition-all cursor-pointer h-full">
+                    <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${card.color}`}>
+                      <card.icon className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="text-lg font-extrabold text-foreground leading-tight">{card.value}</div>
+                      <div className="text-xs font-semibold text-foreground mt-0.5">{card.label}</div>
+                      <div className="text-xs text-muted-foreground mt-0.5">{card.sub}</div>
+                    </div>
+                  </div>
+                </Link>
+              ))}
+            </div>
+
+            {/* Recent store orders */}
+            {recentStoreOrders.length > 0 && (
+              <div className="bg-card border border-border rounded-2xl overflow-hidden">
+                <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+                  <h2 className="font-semibold text-foreground">Recent Store Orders</h2>
+                  <Link href="/store">
+                    <Button variant="ghost" size="sm" className="gap-1 text-primary text-xs">
+                      View all <ArrowRight className="w-3 h-3" />
+                    </Button>
+                  </Link>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-border bg-muted/30">
+                        <th className="text-left px-6 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wide">Bundle</th>
+                        <th className="text-left px-6 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wide">Phone</th>
+                        <th className="text-left px-6 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wide">Revenue</th>
+                        <th className="text-left px-6 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wide">Profit</th>
+                        <th className="text-left px-6 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wide">Status</th>
+                        <th className="text-left px-6 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wide">Date</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {recentStoreOrders.map((o: any) => (
+                        <tr key={o.id} className="hover:bg-muted/20 transition-colors">
+                          <td className="px-6 py-3 font-medium text-foreground">{o.bundleData}</td>
+                          <td className="px-6 py-3 text-muted-foreground">{o.customerPhone}</td>
+                          <td className="px-6 py-3 font-bold text-foreground">GH₵{Number(o.sellingPrice).toFixed(2)}</td>
+                          <td className="px-6 py-3 text-emerald-600 font-semibold">+GH₵{Number(o.profit).toFixed(2)}</td>
+                          <td className="px-6 py-3">
+                            <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold capitalize ${STATUS_COLORS[o.status] ?? "bg-gray-100 text-gray-700"}`}>
+                              {STATUS_ICONS[o.status]}
+                              {o.status}
+                            </span>
+                          </td>
+                          <td className="px-6 py-3 text-muted-foreground text-xs">
+                            {new Date(o.createdAt).toLocaleDateString("en-GH", { day: "numeric", month: "short", year: "numeric" })}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+          </div>
+        )}
 
       </div>
     </div>

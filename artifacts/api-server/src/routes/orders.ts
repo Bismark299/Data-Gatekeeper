@@ -1,5 +1,7 @@
 import { Router, type IRouter } from "express";
 import { eq, and, desc } from "drizzle-orm";
+import { sql } from "drizzle-orm";
+import { z } from "zod";
 import { db, ordersTable, bundlesTable, walletsTable, walletLedgerTable, usersTable } from "@workspace/db";
 import {
   CreateOrderBody,
@@ -7,6 +9,7 @@ import {
 } from "@workspace/api-zod";
 import { requireAuth, requireAdmin } from "../middlewares/auth";
 import { getOrCreateWallet, insertLedgerEntry } from "./wallet";
+import { dispatchToMcbis } from "../lib/mcbis";
 
 const router: IRouter = Router();
 
@@ -194,6 +197,157 @@ router.post("/orders/purchase", requireAuth, async (req, res): Promise<void> => 
   }
 
   res.status(201).json(formatOrder(order));
+
+  // Auto-dispatch MTN orders to McbisSolution (fire-and-forget after response)
+  dispatchToMcbis({
+    orderId:    order.id,
+    network:    bundle.network,
+    phone:      order.phoneNumber,
+    bundleData: order.bundleData,
+  }).then(async (outcome) => {
+    if (outcome.dispatched) {
+      // Accepted by McbisSolution → mark processing and store reference for polling
+      await db.update(ordersTable)
+        .set({ status: "processing", mcbisReference: outcome.reference })
+        .where(eq(ordersTable.id, order.id));
+    }
+    // dispatched=false → leave as "pending" (admin handles manually)
+  }).catch(() => {/* non-fatal */});
+});
+
+// ─── BULK ORDER ──────────────────────────────────────────────────────────────
+
+const BulkOrderBody = z.object({
+  items: z.array(z.object({
+    phone: z.string().regex(/^\d{10}$/, "Phone must be exactly 10 digits"),
+    gb: z.number().int().positive().max(100),
+  })).min(1).max(50),
+  network: z.string().min(1),
+});
+
+router.post("/orders/bulk", requireAuth, async (req, res): Promise<void> => {
+  const parsed = BulkOrderBody.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "Invalid bulk order data", details: parsed.error.issues }); return; }
+
+  const userId = req.session.userId!;
+
+  // 1. Load user role for pricing
+  const [currentUser] = await db.select({ role: usersTable.role }).from(usersTable).where(eq(usersTable.id, userId));
+  const userRole = currentUser?.role ?? "agent";
+
+  // 2. Load admin bundles for this network
+  const networkBundles = await db
+    .select()
+    .from(bundlesTable)
+    .where(and(eq(bundlesTable.isActive, true), eq(bundlesTable.network, parsed.data.network)));
+
+  // 3. Build GB → bundle map
+  const gbMap = new Map<number, typeof bundlesTable.$inferSelect>();
+  for (const b of networkBundles) {
+    const m = b.dataAmount.match(/^(\d+)\s*GB$/i);
+    if (m) { const gb = parseInt(m[1], 10); if (!gbMap.has(gb)) gbMap.set(gb, b); }
+  }
+
+  // 4. Resolve items — skip unmatched GB sizes
+  const skipped: Array<{ phone: string; gb: number; reason: string }> = [];
+  const resolved: Array<{ phone: string; bundle: typeof bundlesTable.$inferSelect; price: number }> = [];
+
+  for (const item of parsed.data.items) {
+    const b = gbMap.get(item.gb);
+    if (!b) {
+      skipped.push({ phone: item.phone, gb: item.gb, reason: `No ${item.gb}GB bundle available` });
+      continue;
+    }
+    const rawPrice = userRole === "dealer" ? b.dealerPrice : userRole === "agent" ? b.agentPrice : b.price;
+    if (rawPrice == null) {
+      skipped.push({ phone: item.phone, gb: item.gb, reason: `Bundle not priced for ${userRole}` });
+      continue;
+    }
+    resolved.push({ phone: item.phone, bundle: b, price: parseFloat(rawPrice) });
+  }
+
+  if (resolved.length === 0) {
+    res.status(400).json({ error: "No valid orders to process.", skipped }); return;
+  }
+
+  const totalCost = resolved.reduce((s, i) => s + i.price, 0);
+
+  await getOrCreateWallet(userId);
+
+  type OrderRow = typeof ordersTable.$inferSelect;
+  let inserted: OrderRow[] = [];
+
+  try {
+    inserted = await db.transaction(async (tx) => {
+      const [wallet] = await tx
+        .select()
+        .from(walletsTable)
+        .where(eq(walletsTable.userId, userId))
+        .for("update");
+
+      const balance = parseFloat(wallet?.balance ?? "0");
+      if (balance < totalCost) {
+        throw Object.assign(
+          new Error(`Insufficient wallet balance. Need GH₵${totalCost.toFixed(2)}, have GH₵${balance.toFixed(2)}`),
+          { status: 400 }
+        );
+      }
+
+      await tx
+        .update(walletsTable)
+        .set({ balance: sql`balance - ${totalCost.toFixed(2)}::numeric` })
+        .where(eq(walletsTable.userId, userId));
+
+      await insertLedgerEntry(
+        tx, userId, -totalCost, "debit", "bulk_order",
+        `BULK-${userId}-${Date.now()}`,
+        `Bulk order: ${resolved.length} item(s) on ${parsed.data.network.toUpperCase()}`,
+      );
+
+      const rows = await tx.insert(ordersTable).values(
+        resolved.map(item => ({
+          userId,
+          bundleId: item.bundle.id,
+          bundleName: item.bundle.name,
+          bundleData: item.bundle.dataAmount,
+          price: item.price.toFixed(2),
+          buyingCost: item.bundle.price,
+          status: "pending" as const,
+          phoneNumber: item.phone,
+        }))
+      ).returning();
+
+      return rows;
+    });
+  } catch (err: unknown) {
+    const e = err as { message?: string; status?: number };
+    res.status(e.status ?? 500).json({ error: e.message ?? "Bulk order failed" }); return;
+  }
+
+  res.status(201).json({
+    processed: inserted.length,
+    skipped,
+    totalCost: +totalCost.toFixed(2),
+    orders: inserted.map(o => formatOrder(o, parsed.data.network)),
+  });
+
+  // Auto-dispatch MTN bulk orders to McbisSolution (fire-and-forget)
+  for (let i = 0; i < inserted.length; i++) {
+    const order   = inserted[i];
+    const network = resolved[i].bundle.network;
+    dispatchToMcbis({
+      orderId:    order.id,
+      network,
+      phone:      order.phoneNumber,
+      bundleData: order.bundleData,
+    }).then(async (outcome) => {
+      if (outcome.dispatched) {
+        await db.update(ordersTable)
+          .set({ status: "processing", mcbisReference: outcome.reference })
+          .where(eq(ordersTable.id, order.id));
+      }
+    }).catch(() => {/* non-fatal */});
+  }
 });
 
 router.get("/orders/:id", requireAuth, async (req, res): Promise<void> => {

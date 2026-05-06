@@ -7,6 +7,9 @@ import {
   db, usersTable, bundlesTable, ordersTable, walletsTable, depositsTable,
   storesTable, storeOrdersTable, settingsTable, walletLedgerTable,
 } from "@workspace/db";
+import {
+  getMcbisSettings, mcbisGetBalance, dispatchToMcbis,
+} from "../lib/mcbis";
 import { creditWallet, insertLedgerEntry } from "./wallet";
 import {
   AdminListUsersQueryParams,
@@ -266,7 +269,7 @@ router.patch("/admin/orders/:id/status", requireAdmin, async (req, res): Promise
     return;
   }
 
-  const validStatuses = ["pending", "processing", "completed", "failed"];
+  const validStatuses = ["pending", "paid", "processing", "completed", "failed"];
   if (!validStatuses.includes(parsed.data.status)) {
     res.status(400).json({ error: "Invalid status value" });
     return;
@@ -327,7 +330,7 @@ router.post("/admin/orders/bulk-status", requireAdmin, async (req, res): Promise
     res.status(400).json({ error: "ids (array) and status (string) are required" });
     return;
   }
-  const VALID_STATUSES = ["pending", "processing", "completed", "failed"] as const;
+  const VALID_STATUSES = ["pending", "paid", "processing", "completed", "failed"] as const;
   if (!VALID_STATUSES.includes(status as typeof VALID_STATUSES[number])) {
     res.status(400).json({ error: `Invalid status. Must be one of: ${VALID_STATUSES.join(", ")}` });
     return;
@@ -1169,5 +1172,103 @@ router.put("/admin/settings", requireAdmin, async (req, res): Promise<void> => {
 
 // ── Store orders (admin) ──────────────────────────────────────────────────────
 // (store order complete / reject / store order list handled in stores.ts admin section)
+
+// ── McbisSolution ─────────────────────────────────────────────────────────────
+
+/** GET /admin/mcbis/balance — fetch live wallet balance from McbisSolution */
+router.get("/admin/mcbis/balance", requireAdmin, async (_req, res): Promise<void> => {
+  const { apiKey } = await getMcbisSettings();
+  if (!apiKey) {
+    res.status(400).json({ error: "McbisSolution API key not configured" });
+    return;
+  }
+  try {
+    const balance = await mcbisGetBalance(apiKey);
+    res.json({ balance });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : "Failed to fetch balance";
+    res.status(502).json({ error: msg });
+  }
+});
+
+/** POST /admin/mcbis/dispatch/:orderId — manually dispatch a platform order */
+router.post("/admin/mcbis/dispatch/:orderId", requireAdmin, async (req, res): Promise<void> => {
+  const orderId = Number(req.params.orderId);
+  if (isNaN(orderId)) { res.status(400).json({ error: "Invalid order ID" }); return; }
+
+  const [row] = await db
+    .select({ order: ordersTable, network: bundlesTable.network })
+    .from(ordersTable)
+    .leftJoin(bundlesTable, eq(bundlesTable.id, ordersTable.bundleId))
+    .where(eq(ordersTable.id, orderId));
+
+  if (!row) { res.status(404).json({ error: "Order not found" }); return; }
+
+  // Guard: prevent double-dispatch — already sent to McbisSolution
+  if (row.order.mcbisReference) {
+    res.status(409).json({ error: "Order already dispatched to McbisSolution", reference: row.order.mcbisReference, status: row.order.status });
+    return;
+  }
+  // Guard: only dispatch pending orders (not completed/failed/cancelled)
+  if (row.order.status !== "pending") {
+    res.status(409).json({ error: `Cannot dispatch order with status "${row.order.status}"` });
+    return;
+  }
+
+  const outcome = await dispatchToMcbis({
+    orderId,
+    network:    row.network ?? "",
+    phone:      row.order.phoneNumber,
+    bundleData: row.order.bundleData,
+  });
+
+  if (outcome.dispatched) {
+    await db.update(ordersTable)
+      .set({ status: "processing", mcbisReference: outcome.reference })
+      .where(eq(ordersTable.id, orderId));
+  }
+
+  res.json({ dispatched: outcome.dispatched, reason: outcome.dispatched ? undefined : (outcome as { reason: string }).reason, orderId });
+});
+
+/** POST /admin/mcbis/dispatch-store/:orderId — manually dispatch a store order */
+router.post("/admin/mcbis/dispatch-store/:orderId", requireAdmin, async (req, res): Promise<void> => {
+  const orderId = Number(req.params.orderId);
+  if (isNaN(orderId)) { res.status(400).json({ error: "Invalid order ID" }); return; }
+
+  const [storeOrder] = await db
+    .select()
+    .from(storeOrdersTable)
+    .where(eq(storeOrdersTable.id, orderId));
+
+  if (!storeOrder) { res.status(404).json({ error: "Store order not found" }); return; }
+
+  // Guard: prevent double-dispatch — already sent to McbisSolution
+  if (storeOrder.mcbisReference) {
+    res.status(409).json({ error: "Order already dispatched to McbisSolution", reference: storeOrder.mcbisReference, status: storeOrder.status });
+    return;
+  }
+  // Guard: only dispatch orders awaiting fulfillment (pending = unpaid/non-MTN, paid = payment confirmed)
+  if (storeOrder.status !== "pending" && storeOrder.status !== "paid") {
+    res.status(409).json({ error: `Cannot dispatch order with status "${storeOrder.status}"` });
+    return;
+  }
+
+  const outcome = await dispatchToMcbis({
+    orderId,
+    network:      storeOrder.bundleNetwork,
+    phone:        storeOrder.customerPhone,
+    bundleData:   storeOrder.bundleData,
+    isStoreOrder: true,
+  });
+
+  if (outcome.dispatched) {
+    await db.update(storeOrdersTable)
+      .set({ status: "processing", mcbisReference: outcome.reference })
+      .where(eq(storeOrdersTable.id, orderId));
+  }
+
+  res.json({ dispatched: outcome.dispatched, reason: outcome.dispatched ? undefined : (outcome as { reason: string }).reason, orderId });
+});
 
 export default router;

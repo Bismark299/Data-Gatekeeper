@@ -69,6 +69,8 @@ export const storeApi = {
     request<{ ok: boolean }>("POST", "/stores/my/momo-details", data),
   deleteMomoDetails: () =>
     request<{ ok: boolean }>("DELETE", "/stores/my/momo-details"),
+  bulkOrder: (data: { items: { phone: string; gb: number }[]; network: string }) =>
+    request<{ processed: number; skipped: { phone: string; gb: number; reason: string }[]; totalCost: number; orders: unknown[] }>("POST", "/orders/bulk", data),
   // Public
   getPublicStore: (slug: string) => request<PublicStore>("GET", `/s/${slug}`),
   checkout: (slug: string, data: { storeBundleId: number; customerPhone: string; customerEmail: string }) =>

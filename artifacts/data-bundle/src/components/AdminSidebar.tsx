@@ -1,9 +1,10 @@
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
+import { useQuery } from "@tanstack/react-query";
 import {
   LayoutDashboard, Package, Users, ShoppingCart, LogOut, Wifi, ChevronRight, X,
-  Wallet, ArrowDownCircle, BarChart3, Store, Settings,
+  Wallet, ArrowDownCircle, BarChart3, Store, Settings, Zap, Loader2,
 } from "lucide-react";
 
 const navItems = [
@@ -27,6 +28,19 @@ export function AdminSidebar({ open, onClose }: AdminSidebarProps) {
   const [location] = useLocation();
   const { user, signOut } = useAuth();
 
+  const { data: mcbisBalance, isLoading: balanceLoading } = useQuery<number | null>({
+    queryKey: ["mcbis-balance-sidebar"],
+    queryFn: async () => {
+      const r = await fetch("/api/admin/mcbis/balance", { credentials: "include" });
+      if (!r.ok) return null;
+      const d = await r.json() as { balance?: number };
+      return d.balance ?? null;
+    },
+    refetchInterval: 30_000,
+    staleTime: 0,
+    retry: false,
+  });
+
   const SidebarContent = () => (
     <div className="flex flex-col h-full bg-sidebar text-sidebar-foreground">
       <div className="flex items-center justify-between px-6 py-5 border-b border-sidebar-border">
@@ -45,6 +59,24 @@ export function AdminSidebar({ open, onClose }: AdminSidebarProps) {
 
       <div className="px-4 py-3 border-b border-sidebar-border">
         <div className="text-xs font-semibold text-sidebar-foreground/40 uppercase tracking-wider mb-1">Admin Panel</div>
+      </div>
+
+      {/* McbisSolution live wallet balance */}
+      <div className="mx-3 mt-3 mb-1 rounded-xl bg-sidebar-accent/50 border border-sidebar-border px-3 py-2.5 flex items-center gap-2.5">
+        <div className="w-7 h-7 rounded-lg bg-sky-500/15 flex items-center justify-center shrink-0">
+          <Zap className="w-3.5 h-3.5 text-sky-500" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="text-[10px] font-semibold text-sidebar-foreground/40 uppercase tracking-wider leading-none mb-0.5">McbisSolution</div>
+          {balanceLoading ? (
+            <Loader2 className="w-3.5 h-3.5 animate-spin text-sidebar-foreground/40" />
+          ) : mcbisBalance == null ? (
+            <div className="text-xs text-sidebar-foreground/40">Unavailable</div>
+          ) : (
+            <div className="text-sm font-bold text-sky-500">GH₵{mcbisBalance.toFixed(2)}</div>
+          )}
+        </div>
+        <div className="w-1.5 h-1.5 rounded-full bg-sky-400 shrink-0" title="Live" />
       </div>
 
       <nav className="flex-1 px-3 py-4 space-y-1">

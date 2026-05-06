@@ -28,13 +28,14 @@ const PAGE_SIZE = 10;
 
 const STATUS_COLORS: Record<string, string> = {
   pending:    "bg-amber-100 text-amber-800 dark:bg-amber-900/20 dark:text-amber-400",
+  paid:       "bg-violet-100 text-violet-800 dark:bg-violet-900/20 dark:text-violet-400",
   processing: "bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400",
   completed:  "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-400",
   failed:     "bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400",
 };
 
 const STATUS_DOT: Record<string, string> = {
-  pending: "bg-amber-400", processing: "bg-blue-400",
+  pending: "bg-amber-400", paid: "bg-violet-400", processing: "bg-blue-400",
   completed: "bg-emerald-400", failed: "bg-red-400",
 };
 
@@ -175,13 +176,20 @@ function AdminDashboardContent() {
   const handleCompleteAll = async () => {
     setCompleting(true);
     try {
-      const res = await fetch("/api/admin/orders/complete-processing", {
-        method: "POST", credentials: "include",
-        headers: { "Content-Type": "application/json" },
-      });
-      const json = await res.json();
-      toast({ title: `Completed ${json.updated} processing orders` });
-      refetchOrders(); refetchStats();
+      const processingStoreOrders = (Array.isArray(storeOrders) ? storeOrders : []).filter((o: any) => o.status === "processing");
+      const [platformRes] = await Promise.all([
+        fetch("/api/admin/orders/complete-processing", {
+          method: "POST", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+        }),
+        ...processingStoreOrders.map((o: any) =>
+          fetch(`/api/admin/store-orders/${o.id}/complete`, { method: "PATCH", credentials: "include" })
+        ),
+      ]);
+      const json = await platformRes.json();
+      const total = json.updated + processingStoreOrders.length;
+      toast({ title: `Completed ${total} processing order${total !== 1 ? "s" : ""}` });
+      refetchOrders(); refetchStats(); refetchStoreOrders();
     } catch {
       toast({ title: "Error completing orders", variant: "destructive" });
     } finally {
@@ -190,13 +198,22 @@ function AdminDashboardContent() {
   };
 
   const networkPendingCounts = useMemo(() => {
-    const src = allOrders ?? [];
+    type NormOrder = { id: number; phoneNumber: string; bundleData: string; status: string; network: string; isStore: boolean };
+    const platform: NormOrder[] = (allOrders ?? []).map(o => ({
+      id: o.id, phoneNumber: o.phoneNumber, bundleData: o.bundleData ?? "",
+      status: o.status, network: (o as any).network ?? "", isStore: false,
+    }));
+    const store: NormOrder[] = (Array.isArray(storeOrders) ? storeOrders : []).map((o: any) => ({
+      id: o.id, phoneNumber: o.customerPhone, bundleData: o.bundleData ?? "",
+      status: o.status, network: o.bundleNetwork ?? "", isStore: true,
+    }));
+    const all = [...platform, ...store];
     return NETWORKS.map(n => ({
       ...n,
-      count: src.filter(o => o.status === "pending" && (o as { network?: string }).network === n.value).length,
-      orders: src.filter(o => o.status === "pending" && (o as { network?: string }).network === n.value),
+      count: all.filter(o => o.status === "pending" && o.network === n.value).length,
+      orders: all.filter(o => o.status === "pending" && o.network === n.value),
     }));
-  }, [allOrders]);
+  }, [allOrders, storeOrders]);
 
   const handleNetworkCopy = async (network: typeof networkPendingCounts[number]) => {
     if (network.count === 0) return;
@@ -210,14 +227,19 @@ function AdminDashboardContent() {
     try {
       await navigator.clipboard.writeText(text);
       toast({ title: `Copied ${network.count} ${network.label} pending orders` });
-      const ids = network.orders.map(o => o.id);
-      await fetch("/api/admin/orders/bulk-status", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids, status: "processing" }),
-        credentials: "include",
-      });
-      invalidateOrders(); refetchStats();
+      const platformIds = network.orders.filter(o => !(o as any).isStore).map(o => o.id);
+      const storeIds    = network.orders.filter(o =>  (o as any).isStore).map(o => o.id);
+      const tasks: Promise<any>[] = [];
+      if (platformIds.length > 0) tasks.push(fetch("/api/admin/orders/bulk-status", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: platformIds, status: "processing" }), credentials: "include",
+      }));
+      if (storeIds.length > 0) tasks.push(fetch("/api/admin/store-orders/bulk-status", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: storeIds, status: "processing" }), credentials: "include",
+      }));
+      await Promise.all(tasks);
+      invalidateOrders(); refetchStats(); refetchStoreOrders();
     } catch {
       toast({ title: "Copy failed", variant: "destructive" });
     }
@@ -248,18 +270,20 @@ function AdminDashboardContent() {
 
   const totalOrderCount = dayOrders.length + dayStoreOrders.length;
   const totalCompleted  = dayCompleted.length + dayStoreOrders.filter((o: any) => o.status === "completed").length;
-  const totalPending    = dayPending.length   + dayStoreOrders.filter((o: any) => o.status === "pending").length;
+  // "paid" = payment confirmed, awaiting dispatch — counts alongside pending for admin attention
+  const storePendingCount = dayStoreOrders.filter((o: any) => o.status === "pending" || o.status === "paid").length;
+  const totalPending    = dayPending.length + storePendingCount;
   const totalProcessing = dayProcessing.length + dayStoreOrders.filter((o: any) => o.status === "processing").length;
   const totalFailed     = dayFailed.length    + dayStoreOrders.filter((o: any) => o.status === "failed" || o.status === "cancelled").length;
 
   const statCards = useMemo(() => stats ? [
     { icon: Wallet,       label: "Wallet Balance",  value: `GH₵${((stats as { totalWalletBalance?: number }).totalWalletBalance ?? 0).toFixed(2)}`, sub: "Total user wallet funds",              colorClass: "text-emerald-600", bgClass: "bg-emerald-100 dark:bg-emerald-900/20", accent: true },
     { icon: ShoppingCart, label: "Total Orders",    value: totalOrderCount, moneyValue: sumPrice(dayOrders), sub: `${dayOrders.length} direct · ${dayStoreOrders.length} store`, colorClass: "text-violet-600",  bgClass: "bg-violet-100 dark:bg-violet-900/20" },
-    { icon: Clock,        label: "Pending",         value: totalPending,    sub: `${dayPending.length} direct · ${dayStoreOrders.filter((o: any) => o.status === "pending").length} store`,   colorClass: "text-amber-600",   bgClass: "bg-amber-100 dark:bg-amber-900/20",   pulse: totalPending > 0 },
+    { icon: Clock,        label: "Pending",         value: totalPending,    sub: `${dayPending.length} direct · ${storePendingCount} store`,   colorClass: "text-amber-600",   bgClass: "bg-amber-100 dark:bg-amber-900/20",   pulse: totalPending > 0 },
     { icon: CheckCircle2, label: "Completed",       value: totalCompleted,  moneyValue: sumPrice(dayCompleted), sub: `${dayCompleted.length} direct · ${dayStoreOrders.filter((o: any) => o.status === "completed").length} store`, colorClass: "text-teal-600",    bgClass: "bg-teal-100 dark:bg-teal-900/20" },
     { icon: Zap,          label: "Processing",      value: totalProcessing, sub: `${dayProcessing.length} direct · ${dayStoreOrders.filter((o: any) => o.status === "processing").length} store`, colorClass: "text-sky-600", bgClass: "bg-sky-100 dark:bg-sky-900/20", pulse: totalProcessing > 0 },
     { icon: AlertCircle,  label: "Failed",          value: totalFailed,     sub: `${dayFailed.length} direct · ${dayStoreOrders.filter((o: any) => o.status === "failed" || o.status === "cancelled").length} store`, colorClass: "text-red-600",     bgClass: "bg-red-100 dark:bg-red-900/20" },
-  ] : [], [stats, dayOrders, dayStoreOrders, dayPending, dayCompleted, dayProcessing, dayFailed, totalOrderCount, totalCompleted, totalPending, totalProcessing, totalFailed, dateFrom, dateTo]);
+  ] : [], [stats, dayOrders, dayStoreOrders, dayPending, dayCompleted, dayProcessing, dayFailed, totalOrderCount, totalCompleted, totalPending, storePendingCount, totalProcessing, totalFailed, dateFrom, dateTo]);
 
   const pendingDeposits = useMemo(() => (deposits ?? []).filter(d => d.status === "pending"), [deposits]);
 

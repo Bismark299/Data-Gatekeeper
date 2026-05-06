@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/select";
 import {
   Menu, ShoppingCart, Search, X, Download, ChevronLeft, ChevronRight,
-  ArrowUpDown, ArrowUp, ArrowDown, RefreshCw, Filter, Copy,
+  ArrowUpDown, ArrowUp, ArrowDown, RefreshCw, Filter, Copy, Loader2,
   CheckCircle2, XCircle, Banknote, Zap, AlertCircle, Store, Clock,
   DollarSign, TrendingUp,
 } from "lucide-react";
@@ -25,6 +25,7 @@ import {
 // ─── constants ────────────────────────────────────────────────────────────────
 const STATUS_COLORS: Record<string, string> = {
   pending:    "bg-amber-100 text-amber-800 dark:bg-amber-900/20 dark:text-amber-400",
+  paid:       "bg-violet-100 text-violet-800 dark:bg-violet-900/20 dark:text-violet-400",
   processing: "bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400",
   completed:  "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-400",
   failed:     "bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400",
@@ -32,7 +33,7 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 const STATUS_DOT: Record<string, string> = {
-  pending: "bg-amber-400", processing: "bg-blue-400",
+  pending: "bg-amber-400", paid: "bg-violet-400", processing: "bg-blue-400",
   completed: "bg-emerald-400", failed: "bg-red-400", cancelled: "bg-gray-400",
 };
 
@@ -126,13 +127,21 @@ function AdminOrdersContent() {
   const handleCompleteAll = async () => {
     setCompleting(true);
     try {
-      const res = await fetch("/api/admin/orders/complete-processing", {
-        method: "POST", credentials: "include",
-        headers: { "Content-Type": "application/json" },
-      });
-      const json = await res.json();
-      toast({ title: `Completed ${json.updated} processing orders` });
+      const processingStoreOrders = (Array.isArray(storeOrders) ? storeOrders : []).filter((o: any) => o.status === "processing");
+      const [platformRes] = await Promise.all([
+        fetch("/api/admin/orders/complete-processing", {
+          method: "POST", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+        }),
+        ...processingStoreOrders.map((o: any) =>
+          fetch(`/api/admin/store-orders/${o.id}/complete`, { method: "PATCH", credentials: "include" })
+        ),
+      ]);
+      const json = await platformRes.json();
+      const total = json.updated + processingStoreOrders.length;
+      toast({ title: `Completed ${total} processing order${total !== 1 ? "s" : ""}` });
       invalidate();
+      refetchStoreOrders();
     } catch {
       toast({ title: "Error completing orders", variant: "destructive" });
     } finally {
@@ -140,11 +149,10 @@ function AdminOrdersContent() {
     }
   };
 
-  // ── Store Orders ──
+  // ── Store Orders (always fetched so network pending counts include them) ──
   const { data: storeOrders, isLoading: storeOrdersLoading, refetch: refetchStoreOrders } = useQuery<any[]>({
     queryKey: ["adminStoreOrders"],
     queryFn: () => fetch("/api/admin/store-orders", { credentials: "include" }).then(r => r.json()),
-    enabled: pageView === "store",
   });
 
   const [actioningId, setActioningId] = useState<number | null>(null);
@@ -169,6 +177,7 @@ function AdminOrdersContent() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error);
       toast({ title: `Store order #${id} completed — profit credited` });
+      invalidate();
       refetchStoreOrders();
     } catch (e: unknown) {
       toast({ title: (e as Error).message || "Error completing order", variant: "destructive" });
@@ -182,6 +191,7 @@ function AdminOrdersContent() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error);
       toast({ title: `Store order #${id} cancelled` });
+      invalidate();
       refetchStoreOrders();
     } catch (e: unknown) {
       toast({ title: (e as Error).message || "Error cancelling order", variant: "destructive" });
@@ -197,15 +207,32 @@ function AdminOrdersContent() {
   const clearFilters = () => { setPhoneSearch(""); setOrderIdSearch(""); setDateFrom(todayStr); setDateTo(todayStr); setStatusTab("all"); setPage(1); };
   const hasFilters = phoneSearch || orderIdSearch || dateFrom !== todayStr || dateTo !== todayStr || statusTab !== "all";
 
-  // ── network pending counts ──
+  // ── network pending counts (platform + store orders combined) ──
   const networkPendingCounts = useMemo(() => {
-    const src = allOrders ?? [];
+    type NormalOrder = { id: number; phoneNumber: string; bundleData: string; status: string; network: string; isStore?: boolean };
+    const platform: NormalOrder[] = (allOrders ?? []).map(o => ({
+      id: o.id,
+      phoneNumber: o.phoneNumber,
+      bundleData: o.bundleData ?? "",
+      status: o.status,
+      network: (o as any).network ?? "",
+      isStore: false,
+    }));
+    const store: NormalOrder[] = (Array.isArray(storeOrders) ? storeOrders : []).map(o => ({
+      id: o.id,
+      phoneNumber: o.customerPhone,
+      bundleData: o.bundleData ?? "",
+      status: o.status,
+      network: o.bundleNetwork ?? "",
+      isStore: true,
+    }));
+    const all = [...platform, ...store];
     return NETWORKS.map(n => ({
       ...n,
-      count: src.filter(o => o.status === "pending" && (o as { network?: string }).network === n.value).length,
-      orders: src.filter(o => o.status === "pending" && (o as { network?: string }).network === n.value),
+      count: all.filter(o => o.status === "pending" && o.network === n.value).length,
+      orders: all.filter(o => o.status === "pending" && o.network === n.value),
     }));
-  }, [allOrders]);
+  }, [allOrders, storeOrders]);
 
   const handleNetworkCopy = async (network: typeof networkPendingCounts[number]) => {
     if (network.count === 0) return;
@@ -214,14 +241,28 @@ function AdminOrdersContent() {
     try {
       await navigator.clipboard.writeText(text);
       toast({ title: `Copied ${network.count} ${network.label} pending orders` });
-      const ids = network.orders.map(o => o.id);
-      await fetch("/api/admin/orders/bulk-status", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids, status: "processing" }),
-        credentials: "include",
-      });
+      const platformIds = network.orders.filter(o => !o.isStore).map(o => o.id);
+      const storeIds    = network.orders.filter(o =>  o.isStore).map(o => o.id);
+      const tasks: Promise<any>[] = [];
+      if (platformIds.length > 0) {
+        tasks.push(fetch("/api/admin/orders/bulk-status", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ids: platformIds, status: "processing" }),
+          credentials: "include",
+        }));
+      }
+      if (storeIds.length > 0) {
+        tasks.push(fetch("/api/admin/store-orders/bulk-status", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ids: storeIds, status: "processing" }),
+          credentials: "include",
+        }));
+      }
+      await Promise.all(tasks);
       invalidate();
+      refetchStoreOrders();
     } catch {
       toast({ title: "Copy failed", variant: "destructive" });
     }
@@ -235,15 +276,32 @@ function AdminOrdersContent() {
     return src;
   }, [allOrders, dateFrom, dateTo]);
 
+  // ── combined platform + store day orders for unified stat cards ──
+  const combinedDayStats = useMemo(() => {
+    type NormOrder = { status: string; amount: number };
+    const platform: NormOrder[] = dayOrders.map(o => ({ status: o.status, amount: Number(o.price) }));
+    const storeDay: NormOrder[] = (Array.isArray(storeOrders) ? storeOrders : [])
+      .filter((o: any) => {
+        const d = new Date(o.createdAt);
+        if (dateFrom && d < new Date(dateFrom)) return false;
+        if (dateTo) { const to = new Date(dateTo); to.setHours(23, 59, 59, 999); if (d > to) return false; }
+        return true;
+      })
+      .map((o: any) => ({ status: o.status, amount: Number(o.sellingPrice) }));
+    return [...platform, ...storeDay];
+  }, [dayOrders, storeOrders, dateFrom, dateTo]);
+
+  const combinedProcessingCount = combinedDayStats.filter(o => o.status === "processing").length;
+
   // ── stat cards ──
   const statCards = useMemo(() => [
-    { icon: ShoppingCart, label: "Total Orders",   value: dayOrders.length,                                        sub: dateFrom === dateTo ? `For ${dateFrom}` : `${dateFrom} → ${dateTo}`, colorClass: "text-violet-600",  bgClass: "bg-violet-100 dark:bg-violet-900/20" },
-    { icon: Clock,        label: "Pending",         value: dayOrders.filter(o => o.status === "pending").length,    sub: "Awaiting processing",    colorClass: "text-amber-600",   bgClass: "bg-amber-100 dark:bg-amber-900/20",   pulse: dayOrders.filter(o => o.status === "pending").length > 0 },
-    { icon: Zap,          label: "Processing",      value: dayOrders.filter(o => o.status === "processing").length, sub: "Being processed",        colorClass: "text-sky-600",     bgClass: "bg-sky-100 dark:bg-sky-900/20",       pulse: dayOrders.filter(o => o.status === "processing").length > 0 },
-    { icon: CheckCircle2, label: "Completed",       value: dayOrders.filter(o => o.status === "completed").length,  sub: "Successfully fulfilled", colorClass: "text-emerald-600", bgClass: "bg-emerald-100 dark:bg-emerald-900/20" },
-    { icon: AlertCircle,  label: "Failed/Cancelled",value: dayOrders.filter(o => o.status === "failed" || o.status === "cancelled").length, sub: "Failed or cancelled", colorClass: "text-red-600", bgClass: "bg-red-100 dark:bg-red-900/20" },
-    { icon: DollarSign,   label: "Revenue",         value: `GH₵${dayOrders.filter(o => o.status === "completed").reduce((s, o) => s + Number(o.price), 0).toFixed(2)}`, sub: "Completed orders value", colorClass: "text-teal-600", bgClass: "bg-teal-100 dark:bg-teal-900/20", accent: true },
-  ], [dayOrders, dateFrom, dateTo]);
+    { icon: ShoppingCart, label: "Total Orders",    value: combinedDayStats.length,                                                    sub: dateFrom === dateTo ? `For ${dateFrom}` : `${dateFrom} → ${dateTo}`, colorClass: "text-violet-600",  bgClass: "bg-violet-100 dark:bg-violet-900/20" },
+    { icon: Clock,        label: "Pending",          value: combinedDayStats.filter(o => o.status === "pending").length,               sub: "Awaiting processing",    colorClass: "text-amber-600",   bgClass: "bg-amber-100 dark:bg-amber-900/20",   pulse: combinedDayStats.filter(o => o.status === "pending").length > 0 },
+    { icon: Zap,          label: "Processing",       value: combinedDayStats.filter(o => o.status === "processing").length,            sub: "Being processed",        colorClass: "text-sky-600",     bgClass: "bg-sky-100 dark:bg-sky-900/20",       pulse: combinedDayStats.filter(o => o.status === "processing").length > 0 },
+    { icon: CheckCircle2, label: "Completed",        value: combinedDayStats.filter(o => o.status === "completed").length,             sub: "Successfully fulfilled", colorClass: "text-emerald-600", bgClass: "bg-emerald-100 dark:bg-emerald-900/20" },
+    { icon: AlertCircle,  label: "Failed/Cancelled", value: combinedDayStats.filter(o => o.status === "failed" || o.status === "cancelled").length, sub: "Failed or cancelled", colorClass: "text-red-600", bgClass: "bg-red-100 dark:bg-red-900/20" },
+    { icon: DollarSign,   label: "Revenue",          value: `GH₵${combinedDayStats.filter(o => o.status === "completed").reduce((s, o) => s + o.amount, 0).toFixed(2)}`, sub: "Completed orders value", colorClass: "text-teal-600", bgClass: "bg-teal-100 dark:bg-teal-900/20", accent: true },
+  ], [combinedDayStats, dateFrom, dateTo]);
 
   // ── status counts ──
   const statusCounts = useMemo(() => {
@@ -508,11 +566,7 @@ function AdminOrdersContent() {
             </div>
           )}
 
-          {/* ─── PLATFORM ORDERS VIEW ─── */}
-          {pageView === "platform" && (
-          <>
-
-          {/* ─── Date picker row + Stat cards ─── */}
+          {/* ─── Date picker row + Stat cards (always visible) ─── */}
           <div className="space-y-3">
             {/* Date controls */}
             <div className="flex items-center gap-3 flex-wrap">
@@ -579,7 +633,23 @@ function AdminOrdersContent() {
                 {n.count > 0 && <Copy className="w-3 h-3 opacity-70" />}
               </button>
             ))}
+            {combinedProcessingCount > 0 && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleCompleteAll}
+                disabled={completing}
+                className="ml-auto gap-1.5 text-xs"
+              >
+                {completing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                Complete all processing ({combinedProcessingCount})
+              </Button>
+            )}
           </div>
+
+          {/* ─── PLATFORM ORDERS VIEW ─── */}
+          {pageView === "platform" && (
+          <>
 
           {/* ─── Filter bar ─── */}
           {filtersOpen && (

@@ -15,6 +15,7 @@ export const ordersTable = pgTable("orders", {
   buyingCost: numeric("buying_cost", { precision: 10, scale: 2 }),
   status: text("status").notNull().default("pending"),
   phoneNumber: text("phone_number").notNull(),
+  mcbisReference: text("mcbis_reference"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
 }, (t) => [

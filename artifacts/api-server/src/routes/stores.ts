@@ -4,9 +4,10 @@ import {
   bundlesTable, usersTable,
 } from "@workspace/db";
 import { requireAuth } from "../middlewares/auth";
-import { eq, desc, and, sql } from "drizzle-orm";
+import { eq, desc, and, sql, inArray } from "drizzle-orm";
 import { z } from "zod";
 import crypto from "crypto";
+import { dispatchToMcbis } from "../lib/mcbis";
 
 const router = Router();
 
@@ -339,6 +340,23 @@ router.post("/stores/my/withdraw", requireAuth, async (req, res) => {
 
       if (!locked) throw Object.assign(new Error("No store found"), { status: 404 });
 
+      // Block if a pending withdrawal already exists for this store
+      const [pendingW] = await tx
+        .select({ id: storeWithdrawalsTable.id })
+        .from(storeWithdrawalsTable)
+        .where(
+          and(
+            eq(storeWithdrawalsTable.storeId, locked.id),
+            eq(storeWithdrawalsTable.status, "pending")
+          )
+        );
+      if (pendingW) {
+        throw Object.assign(
+          new Error("You already have a pending withdrawal request. Please wait for it to be processed before submitting a new one."),
+          { status: 409 }
+        );
+      }
+
       const profit = parseFloat(locked.profitBalance);
       const totalDeduction = parsed.data.amount + WITHDRAWAL_FEE;
 
@@ -633,7 +651,7 @@ router.post("/s/:slug/verify", async (req, res) => {
     return;
   }
 
-  // Atomically transition to "processing" — FOR UPDATE prevents two concurrent
+  // Atomically transition to "paid" — FOR UPDATE prevents two concurrent
   // successful verifications from both writing, ensuring exactly-once transition.
   const updated = await db.transaction(async (tx) => {
     const [locked] = await tx
@@ -643,11 +661,12 @@ router.post("/s/:slug/verify", async (req, res) => {
       .for("update");
 
     if (!locked) return null;
-    if (locked.status === "completed" || locked.status === "processing") return locked;
+    // Any status other than "pending" means payment was already handled
+    if (locked.status !== "pending") return locked;
 
     const [u] = await tx
       .update(storeOrdersTable)
-      .set({ status: "processing" })
+      .set({ status: "paid" })
       .where(eq(storeOrdersTable.id, locked.id))
       .returning();
     return u;
@@ -655,6 +674,25 @@ router.post("/s/:slug/verify", async (req, res) => {
 
   if (!updated) { res.status(404).json({ error: "Order not found" }); return; }
   res.json(formatStoreOrder(updated));
+
+  // Dispatch only for freshly-paid orders (status just became "paid")
+  if (updated.status === "paid" && !updated.mcbisReference) {
+    dispatchToMcbis({
+      orderId:      updated.id,
+      network:      updated.bundleNetwork,
+      phone:        updated.customerPhone,
+      bundleData:   updated.bundleData,
+      isStoreOrder: true,
+    }).then(async (outcome) => {
+      if (outcome.dispatched) {
+        // Payment confirmed + McbisSolution accepted → now truly "processing"
+        await db.update(storeOrdersTable)
+          .set({ status: "processing", mcbisReference: outcome.reference })
+          .where(eq(storeOrdersTable.id, updated.id));
+      }
+      // not dispatched → stays "paid"; poller will retry every 30 s
+    }).catch(() => {/* non-fatal */});
+  }
 });
 
 // ─── PAYSTACK WEBHOOK (store orders) ─────────────────────────────────────────
@@ -668,12 +706,31 @@ router.post("/s/paystack/webhook", async (req, res) => {
   if (event !== "charge.success" || !data.reference.startsWith("STORE-")) { res.sendStatus(200); return; }
 
   const [storeOrder] = await db.select().from(storeOrdersTable).where(eq(storeOrdersTable.paystackReference, data.reference));
-  if (!storeOrder || storeOrder.status === "completed" || storeOrder.status === "processing") { res.sendStatus(200); return; }
-
-  // Payment confirmed via webhook — move to processing for admin to fulfil
-  await db.update(storeOrdersTable).set({ status: "processing" }).where(eq(storeOrdersTable.id, storeOrder.id));
+  // Skip if payment already handled (any status past "pending")
+  if (!storeOrder || storeOrder.status !== "pending") { res.sendStatus(200); return; }
 
   res.sendStatus(200);
+
+  // Mark payment confirmed before dispatching (idempotency marker)
+  await db.update(storeOrdersTable)
+    .set({ status: "paid" })
+    .where(eq(storeOrdersTable.id, storeOrder.id));
+
+  // Dispatch to McbisSolution — on success transitions to "processing"
+  dispatchToMcbis({
+    orderId:      storeOrder.id,
+    network:      storeOrder.bundleNetwork,
+    phone:        storeOrder.customerPhone,
+    bundleData:   storeOrder.bundleData,
+    isStoreOrder: true,
+  }).then(async (outcome) => {
+    if (outcome.dispatched) {
+      await db.update(storeOrdersTable)
+        .set({ status: "processing", mcbisReference: outcome.reference })
+        .where(eq(storeOrdersTable.id, storeOrder.id));
+    }
+    // not dispatched → stays "paid"; poller will retry
+  }).catch(() => {/* non-fatal */});
 });
 
 // Admin: list all stores
@@ -847,6 +904,46 @@ router.patch("/admin/store-orders/:id/cancel", requireAuth, async (req, res) => 
   await db.update(storeOrdersTable).set({ status: "cancelled" }).where(eq(storeOrdersTable.id, id));
   const [updated] = await db.select().from(storeOrdersTable).where(eq(storeOrdersTable.id, id));
   res.json(formatStoreOrder(updated));
+});
+
+router.post("/admin/store-orders/bulk-status", requireAuth, async (req, res) => {
+  if (req.session.userRole !== "admin") { res.status(403).json({ error: "Forbidden" }); return; }
+  const { ids, status } = req.body as { ids?: unknown; status?: unknown };
+  if (!Array.isArray(ids) || ids.length === 0 || typeof status !== "string") {
+    res.status(400).json({ error: "ids (array) and status (string) are required" }); return;
+  }
+  const numIds = ids.map(Number).filter(n => !isNaN(n));
+  if (numIds.length === 0) { res.status(400).json({ error: "No valid IDs" }); return; }
+  const VALID = ["pending", "processing", "completed", "failed", "cancelled"];
+  if (!VALID.includes(status)) { res.status(400).json({ error: "Invalid status" }); return; }
+
+  if (status === "completed") {
+    // Must credit profit per-order atomically — cannot use a single bulk UPDATE
+    let updatedCount = 0;
+    for (const id of numIds) {
+      try {
+        await db.transaction(async (tx) => {
+          const [locked] = await tx
+            .select()
+            .from(storeOrdersTable)
+            .where(eq(storeOrdersTable.id, id))
+            .for("update");
+          if (!locked || locked.status === "completed") return;
+          await tx.update(storeOrdersTable).set({ status: "completed" }).where(eq(storeOrdersTable.id, id));
+          const profit = parseFloat(locked.profit);
+          await tx.update(storesTable)
+            .set({ profitBalance: sql`profit_balance + ${profit.toFixed(2)}::numeric` })
+            .where(eq(storesTable.id, locked.storeId));
+          updatedCount++;
+        });
+      } catch { /* skip failed rows */ }
+    }
+    res.json({ updated: updatedCount });
+    return;
+  }
+
+  await db.update(storeOrdersTable).set({ status }).where(inArray(storeOrdersTable.id, numIds));
+  res.json({ updated: numIds.length });
 });
 
 // ─── ADMIN: WITHDRAWAL APPROVE / REJECT ──────────────────────────────────────

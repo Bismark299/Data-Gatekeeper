@@ -10,6 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   Menu, Settings, Save, RefreshCw, Globe, CreditCard, Phone,
   Mail, Shield, Info, CheckCircle2, AlertCircle, Building2,
+  Zap, Wifi, Loader2,
 } from "lucide-react";
 
 export default function AdminSettings() {
@@ -36,6 +37,7 @@ const DEFAULTS: Record<string, string> = {
   store_enabled:       "true",
   order_auto_complete: "false",
   footer_note:         "© 2025 DataBundle GH. All rights reserved.",
+  mcbis_enabled:       "false",
 };
 
 type Section = {
@@ -141,6 +143,108 @@ function SettingField({
         placeholder={DEFAULTS[field.key] ?? ""}
       />
       {field.hint && <p className="text-[11px] text-muted-foreground">{field.hint}</p>}
+    </div>
+  );
+}
+
+function McbisSolutionSection({
+  enabled,
+  onToggle,
+}: {
+  enabled: boolean;
+  onToggle: (v: boolean) => void;
+}) {
+  const [balanceState, setBalanceState] = useState<"idle" | "loading" | "ok" | "error">("idle");
+  const [balance, setBalance] = useState<number | null>(null);
+  const { toast } = useToast();
+
+  const checkBalance = async () => {
+    setBalanceState("loading");
+    try {
+      const res = await fetch("/api/admin/mcbis/balance", { credentials: "include" });
+      const data = await res.json() as { balance?: number; error?: string };
+      if (!res.ok) throw new Error(data.error ?? "Failed");
+      setBalance(data.balance ?? null);
+      setBalanceState("ok");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Failed to fetch balance";
+      toast({ title: msg, variant: "destructive" });
+      setBalanceState("error");
+    }
+  };
+
+  return (
+    <div className="bg-card border border-border rounded-2xl p-5 space-y-5">
+      {/* Header */}
+      <div className="flex items-start gap-3 pb-4 border-b border-border">
+        <div className="w-8 h-8 rounded-lg bg-purple-500/10 flex items-center justify-center shrink-0">
+          <Zap className="w-4 h-4 text-purple-500" />
+        </div>
+        <div className="flex-1">
+          <div className="flex items-center gap-2">
+            <h2 className="font-semibold text-foreground text-sm">McbisSolution Auto-Fulfillment</h2>
+            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${enabled ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400" : "bg-muted text-muted-foreground"}`}>
+              {enabled ? "ENABLED" : "DISABLED"}
+            </span>
+          </div>
+          <p className="text-xs text-muted-foreground">Automatically send MTN orders to McbisSolution for instant fulfillment</p>
+        </div>
+      </div>
+
+      {/* Toggle row */}
+      <div className="flex items-center justify-between bg-muted/30 rounded-xl px-4 py-3">
+        <div>
+          <div className="text-sm font-semibold text-foreground">Enable Auto-Fulfillment</div>
+          <div className="text-xs text-muted-foreground">MTN orders are sent to McbisSolution immediately after payment</div>
+        </div>
+        <button
+          type="button"
+          onClick={() => onToggle(!enabled)}
+          className={`relative w-11 h-6 rounded-full transition-colors focus:outline-none ${enabled ? "bg-emerald-500" : "bg-muted-foreground/30"}`}
+          aria-label="Toggle McbisSolution"
+        >
+          <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${enabled ? "translate-x-5" : "translate-x-0"}`} />
+        </button>
+      </div>
+
+      {/* Network coverage + balance */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center gap-2">
+          <Wifi className="w-3.5 h-3.5 text-yellow-500" />
+          <span className="text-xs text-muted-foreground">Coverage: <span className="font-semibold text-foreground">MTN only</span></span>
+          <span className="text-[10px] bg-yellow-100 text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-400 px-2 py-0.5 rounded-full font-medium">Telecel &amp; AT coming soon</span>
+        </div>
+        <div className="flex items-center gap-2">
+          {balanceState === "ok" && balance !== null && (
+            <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+              Wallet: GH₵{balance.toFixed(2)}
+            </span>
+          )}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={checkBalance}
+            disabled={balanceState === "loading"}
+            className="gap-1.5 h-7 text-xs"
+          >
+            {balanceState === "loading"
+              ? <Loader2 className="w-3 h-3 animate-spin" />
+              : <RefreshCw className="w-3 h-3" />}
+            Check Balance
+          </Button>
+        </div>
+      </div>
+
+      {/* Info */}
+      <div className="flex items-start gap-2.5 px-3.5 py-2.5 rounded-xl bg-purple-50 dark:bg-purple-900/10 border border-purple-200 dark:border-purple-800">
+        <Info className="w-3.5 h-3.5 text-purple-500 shrink-0 mt-0.5" />
+        <p className="text-[11px] text-purple-700 dark:text-purple-400">
+          When enabled, new MTN orders are auto-dispatched to McbisSolution after purchase/payment confirmation.
+          Orders that succeed immediately are marked <strong>completed</strong>; pending ones become <strong>processing</strong>.
+          Non-MTN orders and failed dispatches are not affected — admin handles them manually.
+        </p>
+      </div>
     </div>
   );
 }
@@ -295,6 +399,12 @@ function AdminSettingsContent() {
                   </div>
                 </div>
               ))}
+
+              {/* McbisSolution Integration */}
+              <McbisSolutionSection
+                enabled={local.mcbis_enabled === "true"}
+                onToggle={v => handleChange("mcbis_enabled", v ? "true" : "false")}
+              />
 
               {/* Info box */}
               <div className="flex items-start gap-3 px-4 py-3 rounded-xl bg-blue-50 dark:bg-blue-900/10 border border-blue-200 dark:border-blue-800">
