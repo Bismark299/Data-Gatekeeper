@@ -270,19 +270,23 @@ function AdminSettingsContent() {
   }, [settings]);
 
   const saveMutation = useMutation({
-    mutationFn: (data: Record<string, string>) =>
-      fetch("/api/admin/settings", {
+    mutationFn: async (data: Record<string, string>) => {
+      const r = await fetch("/api/admin/settings", {
         method: "PUT",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
-      }).then(r => r.json()),
+      });
+      const json = await r.json() as Record<string, string>;
+      if (!r.ok) throw new Error((json as { error?: string }).error ?? "Failed to save");
+      return json;
+    },
     onSuccess: (saved: Record<string, string>) => {
       queryClient.setQueryData(["adminSettings"], saved);
       toast({ title: "Settings saved successfully" });
       setDirty(false);
     },
-    onError: () => toast({ title: "Failed to save settings", variant: "destructive" }),
+    onError: (e: unknown) => toast({ title: e instanceof Error ? e.message : "Failed to save settings", variant: "destructive" }),
   });
 
   const handleChange = (key: string, value: string) => {
