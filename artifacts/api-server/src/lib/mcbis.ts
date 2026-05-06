@@ -11,15 +11,15 @@
  *   mcbis_enabled  — "true" | "false"
  *
  * Env vars (set on server, never stored in DB):
- *   MCBIS_API_KEY   — Bearer token for McbisSolution API
- *   MCBIS_BASE_URL  — Base URL for McbisSolution API (default: https://datahub.mcbissolution.com/api/v1)
+ *   DATAHUB_API_TOKEN — Bearer token for McbisSolution API
+ *   DATAHUB_API_URL   — Base URL for McbisSolution API (default: https://datahub.mcbissolution.com/api/v1)
  */
 
 import { eq, and, isNotNull, isNull } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { db, settingsTable, ordersTable, storeOrdersTable, bundlesTable, storesTable } from "@workspace/db";
 
-const MCBIS_BASE = process.env.MCBIS_BASE_URL ?? "https://datahub.mcbissolution.com/api/v1";
+const MCBIS_BASE = process.env.DATAHUB_API_URL ?? "https://datahub.mcbissolution.com/api/v1";
 
 // Maps internal network slugs → McbisSolution network keys
 const NETWORK_MAP: Record<string, string> = {
@@ -46,7 +46,7 @@ export function parseGb(dataAmount: string): number {
 export async function getMcbisSettings(): Promise<{ enabled: boolean; apiKey: string }> {
   const [row] = await db.select({ value: settingsTable.value }).from(settingsTable).where(eq(settingsTable.key, "mcbis_enabled"));
   const enabled = row?.value === "true";
-  const apiKey  = process.env.MCBIS_API_KEY ?? "";
+  const apiKey  = process.env.DATAHUB_API_TOKEN ?? "";
   return { enabled, apiKey };
 }
 
