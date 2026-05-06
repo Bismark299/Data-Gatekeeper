@@ -25,9 +25,9 @@ app.use(
       directives: {
         defaultSrc:  ["'self'"],
         scriptSrc:   ["'self'"],
-        styleSrc:    ["'self'", "'unsafe-inline'"],   // Tailwind/shadcn inline styles
+        styleSrc:    ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
         imgSrc:      ["'self'", "data:", "https:"],
-        fontSrc:     ["'self'", "data:"],
+        fontSrc:     ["'self'", "data:", "https://fonts.gstatic.com"],
         connectSrc:  ["'self'", "https://api.paystack.co"],
         frameSrc:    ["'self'", "https://*.paystack.co"],
         objectSrc:   ["'none'"],
