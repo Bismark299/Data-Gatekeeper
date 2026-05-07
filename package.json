@@ -8,6 +8,16 @@
     "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
   },
   "private": true,
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@swc/core",
+      "@tailwindcss/oxide",
+      "esbuild",
+      "lightningcss",
+      "msw",
+      "unrs-resolver"
+    ]
+  },
   "devDependencies": {
     "prettier": "^3.8.1",
     "typescript": "~5.9.2"
