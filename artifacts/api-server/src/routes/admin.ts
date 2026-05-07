@@ -557,7 +557,7 @@ router.get("/admin/deposits", requireAdmin, async (req, res): Promise<void> => {
       createdAt: depositsTable.createdAt,
     })
     .from(depositsTable)
-    .innerJoin(usersTable, eq(depositsTable.userId, usersTable.id));
+    .leftJoin(usersTable, eq(depositsTable.userId, usersTable.id));
 
   const rows = conditions.length > 0
     ? await baseQuery.where(and(...conditions)).orderBy(desc(depositsTable.createdAt)).limit(500)
