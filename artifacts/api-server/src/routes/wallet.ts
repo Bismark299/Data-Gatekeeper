@@ -492,6 +492,12 @@ router.post("/sms-webhook", async (req, res) => {
     amount = amountMatch ? parseFloat(amountMatch[1].replace(/,/g, "")) : 0;
   }
 
+  // Parse sender name from SMS text for display in admin console
+  // MTN Ghana format: "You have received GHS X from FIRSTNAME LASTNAME. Your balance..."
+  const senderMatch = smsText.match(/from\s+([A-Za-z][A-Za-z ]+?)(?=\.\s|\s+Your|\s+Balance|\s+Trans)/i);
+  const parsedSender = senderMatch ? senderMatch[1].trim() : (body.sender ?? "");
+  const senderPrefix = parsedSender ? `Sender: ${parsedSender}. ` : "";
+
   // Use pre-parsed reference from app if provided (whatever agent code the customer typed)
   // Fallback: scan the raw SMS text for a standalone word that could be an agent code
   let depositCode: string | null = null;
@@ -538,7 +544,7 @@ router.post("/sms-webhook", async (req, res) => {
       status: "unmatched",
       method: "momo",
       reference,
-      note: `Unmatched MoMo SMS — no agent code. Raw: ${smsText.slice(0, 120)}`,
+      note: `${senderPrefix}Unmatched MoMo SMS — no agent code. Raw: ${smsText.slice(0, 200)}`,
     });
     res.json({ success: true, matched: false, message: "Stored for manual claim" });
     return;
@@ -553,7 +559,7 @@ router.post("/sms-webhook", async (req, res) => {
       status: "unmatched",
       method: "momo",
       reference,
-      note: `Unmatched MoMo SMS — unknown agent code ${depositCode}. Raw: ${smsText.slice(0, 120)}`,
+      note: `${senderPrefix}Unmatched MoMo SMS — unknown agent code ${depositCode}. Raw: ${smsText.slice(0, 200)}`,
     });
     res.json({ success: true, matched: false, message: "Stored for manual claim" });
     return;
@@ -566,7 +572,7 @@ router.post("/sms-webhook", async (req, res) => {
       status: "completed",
       method: "momo",
       reference,
-      note: `Auto-credited from MoMo SMS (ref: ${depositCode})`,
+      note: `${senderPrefix}Auto-credited from MoMo SMS (ref: ${depositCode}). Raw: ${smsText.slice(0, 200)}`,
     });
     await creditWallet(user.id, amount, tx, {
       source: "momo",

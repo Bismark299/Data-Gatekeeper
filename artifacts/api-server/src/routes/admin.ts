@@ -655,11 +655,17 @@ router.post("/admin/deposits/:id/reject", requireAdmin, async (req, res): Promis
 const MOMO_PREFIX = "MOMO-SMS-EXT-";
 
 // Helper: extract sender name from stored note
-// Note format: "... Raw: You have received GHS 30.00 from DOMINIC ABOAGYE..."
+// Extracts sender name from the deposit note.
+// New format: "Sender: DOMINIC ABOAGYE. ... Raw: ..."
+// Legacy format: "... Raw: You have received GHS 30.00 from DOMINIC ABOAGYE..."
 function parseSenderFromNote(note: string | null): string {
   if (!note) return "";
+  // Prefer the explicit Sender: prefix written by the webhook
+  const prefixMatch = note.match(/^Sender:\s+([^.]+)\./i);
+  if (prefixMatch) return prefixMatch[1].trim();
+  // Fallback: search the raw SMS text
   const raw = note.includes("Raw:") ? note.split("Raw:")[1] ?? "" : note;
-  const m = raw.match(/from\s+([A-Z][A-Z\s]+?)(?:\.|,|\d|on\s|\.|\s{2}|$)/i);
+  const m = raw.match(/from\s+([A-Za-z][A-Za-z ]+?)(?=\.\s|\s+Your|\s+Balance|\s+Trans|\d|,|\s{2}|$)/i);
   return m ? m[1].trim() : "";
 }
 
