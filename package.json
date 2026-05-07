@@ -3,7 +3,6 @@
   "version": "0.0.0",
   "license": "MIT",
   "scripts": {
-    "preinstall": "node -e \"if(!process.env.npm_config_user_agent?.startsWith('pnpm')){process.stderr.write('Use pnpm instead\\n');process.exit(1)}\"",
     "build": "pnpm run typecheck && pnpm -r --if-present run build",
     "typecheck:libs": "tsc --build",
     "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
@@ -12,10 +11,5 @@
   "devDependencies": {
     "prettier": "^3.8.1",
     "typescript": "~5.9.2"
-  },
-  "dependencies": {
-    "@rollup/rollup-win32-x64-msvc": "^4.60.2",
-    "@tailwindcss/oxide-win32-x64-msvc": "^4.2.4",
-    "lightningcss-win32-x64-msvc": "^1.32.0"
   }
 }
