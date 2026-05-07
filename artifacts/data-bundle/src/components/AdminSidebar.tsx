@@ -28,12 +28,12 @@ export function AdminSidebar({ open, onClose }: AdminSidebarProps) {
   const [location] = useLocation();
   const { user, signOut } = useAuth();
 
-  const { data: mcbisBalance, isLoading: balanceLoading } = useQuery<number | null>({
+  const { data: mcbisBalance, isLoading: balanceLoading, error: balanceError } = useQuery<number | null>({
     queryKey: ["mcbis-balance-sidebar"],
     queryFn: async () => {
       const r = await fetch("/api/admin/mcbis/balance", { credentials: "include" });
-      if (!r.ok) return null;
-      const d = await r.json() as { balance?: number };
+      const d = await r.json() as { balance?: number; error?: string };
+      if (!r.ok) throw new Error(d.error ?? `HTTP ${r.status}`);
       return d.balance ?? null;
     },
     refetchInterval: 30_000,
@@ -70,6 +70,8 @@ export function AdminSidebar({ open, onClose }: AdminSidebarProps) {
           <div className="text-[10px] font-semibold text-sidebar-foreground/40 uppercase tracking-wider leading-none mb-0.5">McbisSolution</div>
           {balanceLoading ? (
             <Loader2 className="w-3.5 h-3.5 animate-spin text-sidebar-foreground/40" />
+          ) : balanceError ? (
+            <div className="text-xs text-red-400" title={(balanceError as Error).message}>Error: {(balanceError as Error).message.slice(0, 40)}</div>
           ) : mcbisBalance == null ? (
             <div className="text-xs text-sidebar-foreground/40">Unavailable</div>
           ) : (

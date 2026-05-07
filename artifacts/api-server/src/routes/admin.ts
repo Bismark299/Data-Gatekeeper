@@ -10,6 +10,7 @@ import {
 import {
   getMcbisSettings, mcbisGetBalance, dispatchToMcbis,
 } from "../lib/mcbis";
+import { logger } from "../lib/logger";
 import { creditWallet, insertLedgerEntry } from "./wallet";
 import {
   AdminListUsersQueryParams,
@@ -1187,6 +1188,7 @@ router.get("/admin/mcbis/balance", requireAdmin, async (_req, res): Promise<void
     res.json({ balance });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "Failed to fetch balance";
+    logger.error({ err: e }, `mcbis balance error: ${msg}`);
     res.status(502).json({ error: msg });
   }
 });

@@ -22,8 +22,20 @@ import { db, settingsTable, ordersTable, storeOrdersTable, bundlesTable, storesT
 
 // Force IPv4 to avoid IPv6 connectivity issues on cloud platforms (e.g. Render)
 const ipv4Agent = new Agent({ connect: { family: 4 } });
+
+// Headers sent with every McbisSolution request.
+// A realistic User-Agent is required to pass Cloudflare bot-protection on their CDN.
+const MCBIS_BASE_HEADERS: Record<string, string> = {
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+  "Accept": "application/json",
+};
+
 const mcbisFetch: typeof globalThis.fetch = (input, init) =>
-  undiciFetch(input as Parameters<typeof undiciFetch>[0], { ...init, dispatcher: ipv4Agent }) as unknown as ReturnType<typeof globalThis.fetch>;
+  undiciFetch(input as Parameters<typeof undiciFetch>[0], {
+    ...init,
+    headers: { ...MCBIS_BASE_HEADERS, ...(init?.headers as Record<string, string> | undefined) },
+    dispatcher: ipv4Agent,
+  }) as unknown as ReturnType<typeof globalThis.fetch>;
 
 const MCBIS_BASE = process.env.DATAHUB_API_URL ?? "https://datahub.mcbissolution.com/api/v1";
 
@@ -60,7 +72,7 @@ export async function getMcbisSettings(): Promise<{ enabled: boolean; apiKey: st
 
 export async function mcbisGetBalance(apiKey: string): Promise<number> {
   const res = await mcbisFetch(`${MCBIS_BASE}/walletBalance`, {
-    headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
+    headers: { Authorization: `Bearer ${apiKey}` },
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
@@ -82,7 +94,6 @@ export async function mcbisPlaceOrder(opts: {
     headers: {
       Authorization: `Bearer ${opts.apiKey}`,
       "Content-Type": "application/json",
-      Accept: "application/json",
     },
     body: JSON.stringify({
       network:   opts.network,
@@ -106,7 +117,7 @@ export async function mcbisPlaceOrder(opts: {
 
 export async function mcbisCheckStatus(apiKey: string, reference: string): Promise<string> {
   const res = await mcbisFetch(`${MCBIS_BASE}/checkOrderStatus/${encodeURIComponent(reference)}`, {
-    headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
+    headers: { Authorization: `Bearer ${apiKey}` },
   });
   if (!res.ok) throw new Error(`McbisSolution HTTP ${res.status}`);
   // Response: { data: { status: "success", order: { status: "pending"|"success"|"failed", ... } } }
