@@ -29,18 +29,25 @@ export function AdminSidebar({ open, onClose }: AdminSidebarProps) {
   const [location] = useLocation();
   const { user, signOut } = useAuth();
 
-  const { data: mcbisBalance, isLoading: balanceLoading, error: balanceError } = useQuery<number | null>({
+  const { data: mcbisData, isLoading: balanceLoading } = useQuery<{ balance: number | null; configured: boolean }>({
     queryKey: ["mcbis-balance-sidebar"],
     queryFn: async () => {
       const r = await fetch("/api/admin/mcbis/balance", { credentials: "include" });
       const d = await r.json() as { balance?: number; error?: string };
+      // 400 "not configured" = key deleted; treat as success so polling stops
+      if (r.status === 400 && d.error?.includes("not configured")) {
+        return { balance: null, configured: false };
+      }
       if (!r.ok) throw new Error(d.error ?? `HTTP ${r.status}`);
-      return d.balance ?? null;
+      return { balance: d.balance ?? null, configured: true };
     },
-    refetchInterval: 30_000,
+    // only poll when the key is actually configured
+    refetchInterval: (query) => query.state.data?.configured === false ? false : 30_000,
     staleTime: 0,
     retry: false,
   });
+  const mcbisBalance = mcbisData?.balance ?? null;
+  const mcbisConfigured = mcbisData?.configured !== false;
 
   const SidebarContent = () => (
     <div className="flex flex-col h-full bg-sidebar text-sidebar-foreground">
@@ -62,7 +69,8 @@ export function AdminSidebar({ open, onClose }: AdminSidebarProps) {
         <div className="text-xs font-semibold text-sidebar-foreground/40 uppercase tracking-wider mb-1">Admin Panel</div>
       </div>
 
-      {/* McbisSolution live wallet balance */}
+      {/* McbisSolution live wallet balance — only shown when API key is set */}
+      {mcbisConfigured && (
       <div className="mx-3 mt-3 mb-1 rounded-xl bg-sidebar-accent/50 border border-sidebar-border px-3 py-2.5 flex items-center gap-2.5">
         <div className="w-7 h-7 rounded-lg bg-sky-500/15 flex items-center justify-center shrink-0">
           <Zap className="w-3.5 h-3.5 text-sky-500" />
@@ -71,8 +79,6 @@ export function AdminSidebar({ open, onClose }: AdminSidebarProps) {
           <div className="text-[10px] font-semibold text-sidebar-foreground/40 uppercase tracking-wider leading-none mb-0.5">McbisSolution</div>
           {balanceLoading ? (
             <Loader2 className="w-3.5 h-3.5 animate-spin text-sidebar-foreground/40" />
-          ) : balanceError ? (
-            <div className="text-xs text-red-400" title={(balanceError as Error).message}>Error: {(balanceError as Error).message.slice(0, 40)}</div>
           ) : mcbisBalance == null ? (
             <div className="text-xs text-sidebar-foreground/40">Unavailable</div>
           ) : (
@@ -81,6 +87,7 @@ export function AdminSidebar({ open, onClose }: AdminSidebarProps) {
         </div>
         <div className="w-1.5 h-1.5 rounded-full bg-sky-400 shrink-0" title="Live" />
       </div>
+      )}
 
       <nav className="flex-1 px-3 py-4 space-y-1">
         {navItems.map((item) => {
