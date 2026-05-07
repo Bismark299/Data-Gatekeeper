@@ -131,6 +131,24 @@ function CheckoutDialog({
               </div>
             </div>
 
+            {bundle && (() => {
+              const fee = +(bundle.sellingPrice * 0.02).toFixed(2);
+              const total = +(bundle.sellingPrice + fee).toFixed(2);
+              return (
+                <div className="rounded-xl border border-border bg-muted/40 px-3 py-2 space-y-1 text-sm">
+                  <div className="flex justify-between text-muted-foreground">
+                    <span>Bundle price</span><span>GH₵{bundle.sellingPrice.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-muted-foreground">
+                    <span>Processing fee (2%)</span><span>GH₵{fee.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between font-semibold text-foreground border-t border-border pt-1 mt-1">
+                    <span>Total charged</span><span>GH₵{total.toFixed(2)}</span>
+                  </div>
+                </div>
+              );
+            })()}
+
             {errMsg && (
               <div className="flex items-start gap-2 px-3 py-2.5 rounded-xl bg-red-50 border border-red-200 dark:bg-red-900/10 dark:border-red-800">
                 <XCircle className="w-4 h-4 text-red-500 mt-0.5 shrink-0" />
@@ -154,7 +172,7 @@ function CheckoutDialog({
           >
             {checkout.isPending
               ? <><Loader2 className="w-4 h-4 animate-spin" /> Redirecting…</>
-              : <><Zap className="w-4 h-4" /> Pay GH₵{bundle?.sellingPrice.toFixed(2)}</>}
+              : <><Zap className="w-4 h-4" /> Pay GH₵{bundle ? (bundle.sellingPrice * 1.02).toFixed(2) : ""}</>}
           </Button>
         </DialogFooter>
       </DialogContent>

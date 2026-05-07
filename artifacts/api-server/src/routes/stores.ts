@@ -531,6 +531,9 @@ router.post("/s/:slug/checkout", async (req, res) => {
   const sb = sbRow.store_bundles;
   const bundle = sbRow.bundles;
   const sellingPrice = parseFloat(sb.sellingPrice);
+  const PAYSTACK_FEE_RATE = 0.02; // 2% Paystack processing fee passed to customer
+  const feeGhs = parseFloat((sellingPrice * PAYSTACK_FEE_RATE).toFixed(2));
+  const chargedPrice = parseFloat((sellingPrice + feeGhs).toFixed(2));
   const basePrice = parseFloat(bundle.price); // platform's buying cost from telecom
 
   // Determine store owner's role to pick the correct agent/dealer cost
@@ -574,7 +577,7 @@ router.post("/s/:slug/checkout", async (req, res) => {
     },
     body: JSON.stringify({
       email: parsed.data.customerEmail,
-      amount: Math.round(sellingPrice * 100),
+      amount: Math.round(chargedPrice * 100),
       reference,
       callback_url: callbackUrl,
       metadata: {
