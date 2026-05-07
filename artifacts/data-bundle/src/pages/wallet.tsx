@@ -263,6 +263,9 @@ function WalletContent() {
                   <div className="text-xl font-bold tracking-wider text-foreground">
                     {momoInfo?.momoNumber ?? "—"}
                   </div>
+                  {momoInfo?.momoName && (
+                    <div className="text-xs text-muted-foreground mt-0.5">{momoInfo.momoName}</div>
+                  )}
                 </div>
                 <Button size="sm" variant="ghost" onClick={() => copyToClipboard(momoInfo?.momoNumber ?? "", "Number")}>
                   <Copy className="w-3.5 h-3.5" />

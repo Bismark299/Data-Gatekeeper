@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { db, walletsTable, depositsTable, usersTable, walletLedgerTable } from "@workspace/db";
+import { db, walletsTable, depositsTable, usersTable, walletLedgerTable, settingsTable } from "@workspace/db";
 import { requireAuth, requireAdmin } from "../middlewares/auth";
 import { eq, desc, and } from "drizzle-orm";
 import { sql } from "drizzle-orm";
@@ -580,9 +580,15 @@ router.post("/sms-webhook", async (req, res) => {
 
 router.get("/momo-info", requireAuth, async (req, res) => {
   const userId = req.session.userId!;
-  const [user] = await db.select().from(usersTable).where(eq(usersTable.id, userId));
+  const [user, numRow, nameRow] = await Promise.all([
+    db.select().from(usersTable).where(eq(usersTable.id, userId)).then(r => r[0]),
+    db.select().from(settingsTable).where(eq(settingsTable.key, "momo_number")).then(r => r[0]),
+    db.select().from(settingsTable).where(eq(settingsTable.key, "momo_name")).then(r => r[0]),
+  ]);
   const referenceCode = user?.depositCode ?? `BT-${String(userId).padStart(6, "0")}`;
-  res.json({ momoNumber: MOMO_NUMBER, referenceCode });
+  const momoNumber = numRow?.value || MOMO_NUMBER;
+  const momoName = nameRow?.value || "";
+  res.json({ momoNumber, momoName, referenceCode });
 });
 
 export { router as walletRouter, getOrCreateWallet, creditWallet, insertLedgerEntry };

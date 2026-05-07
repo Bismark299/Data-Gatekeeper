@@ -28,6 +28,8 @@ const DEFAULTS: Record<string, string> = {
   support_phone:       "0500000000",
   support_whatsapp:    "0500000000",
   currency:            "GHS",
+  momo_number:         "",
+  momo_name:           "",
   min_deposit:         "5",
   max_deposit:         "5000",
   min_wallet_balance:  "0",
@@ -77,6 +79,8 @@ const SECTIONS: Section[] = [
     title: "Payment Settings",
     description: "Deposit limits and payment configuration",
     fields: [
+      { key: "momo_number", label: "MoMo Deposit Number", hint: "Phone number agents/users send money to (e.g. 0244123456)" },
+      { key: "momo_name",   label: "MoMo Account Name",  hint: "Name shown on the deposit instructions" },
       { key: "currency",           label: "Currency",        hint: "ISO currency code (e.g. GHS)" },
       { key: "min_deposit",        label: "Min Deposit (GH₵)", type: "number" },
       { key: "max_deposit",        label: "Max Deposit (GH₵)", type: "number" },
