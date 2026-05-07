@@ -37,7 +37,7 @@ const DEFAULTS: Record<string, string> = {
   store_enabled:       "true",
   order_auto_complete: "false",
   footer_note:         "© 2025 DataBundle GH. All rights reserved.",
-  mcbis_enabled:       "false",
+  mcbis_enabled:       "true",
 };
 
 type Section = {
@@ -407,7 +407,11 @@ function AdminSettingsContent() {
               {/* McbisSolution Integration */}
               <McbisSolutionSection
                 enabled={local.mcbis_enabled === "true"}
-                onToggle={v => handleChange("mcbis_enabled", v ? "true" : "false")}
+                onToggle={v => {
+                  const updated = { ...local, mcbis_enabled: v ? "true" : "false" };
+                  setLocal(updated);
+                  saveMutation.mutate(updated);
+                }}
               />
 
               {/* Info box */}
