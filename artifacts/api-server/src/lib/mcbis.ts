@@ -22,7 +22,7 @@ import axios from "axios";
 import { db, settingsTable, ordersTable, storeOrdersTable, bundlesTable, storesTable } from "@workspace/db";
 
 const mcbisAxios = axios.create({
-  timeout: 45_000, // 45-second hard limit per request
+  timeout: 15_000, // 15-second hard limit per request
   headers: {
     "Accept": "application/json",
     "Content-Type": "application/json",
@@ -270,12 +270,12 @@ export function startMcbisPoller(): void {
   if (_pollerStarted) return;
   _pollerStarted = true;
 
-  const INTERVAL_MS           = 30_000;  // 30 s between cycles
+  const INTERVAL_MS           = 10_000;  // 10 s between cycles
   const STATUS_CHECK_CAP      = 30;      // max checkOrderStatus calls per cycle
   const RETRY_CAP             = 5;       // max new dispatch attempts per cycle
   const STATUS_DELAY_MS       = 100;     // ms between status-check calls
   const DISPATCH_DELAY_MS     = 500;     // ms between dispatch calls
-  const GRACE_PERIOD_MS       = 5 * 60 * 1000;        // 5 min — don't retry brand-new orders
+  const GRACE_PERIOD_MS       = 30 * 1000;             // 30 s — don't retry brand-new orders
   const MAX_PROCESSING_AGE_MS = 24 * 60 * 60 * 1000;  // 24 h — auto-fail stale orders
 
   const poll = async () => {
@@ -358,7 +358,12 @@ export function startMcbisPoller(): void {
         await sleep(STATUS_DELAY_MS);
       }
 
-      // ── 3. Retry pending platform MTN orders (cap 5, 500 ms apart, 5-min grace) ──
+      // ── 3. Retry pending platform MTN orders (cap 5, 500 ms apart, 30 s grace) ──
+      // Pre-check balance once — skip all dispatches if wallet is empty
+      let mcbisBalance = 0;
+      try { mcbisBalance = await mcbisGetBalance(apiKey); } catch { /* assume non-zero so we still try */ mcbisBalance = 1; }
+
+      if (mcbisBalance > 0) { // only attempt dispatch when there's balance
       const pendingPlatform = await db
         .select({
           id:         ordersTable.id,
@@ -398,7 +403,7 @@ export function startMcbisPoller(): void {
         await sleep(DISPATCH_DELAY_MS);
       }
 
-      // ── 4. Retry paid store MTN orders (cap 5, 500 ms apart, 5-min grace) ──
+      // ── 4. Retry paid store MTN orders (cap 5, 500 ms apart, 30 s grace) ──
       const paidStore = await db
         .select({
           id:         storeOrdersTable.id,
@@ -436,6 +441,7 @@ export function startMcbisPoller(): void {
         } catch { /* retry next cycle */ }
         await sleep(DISPATCH_DELAY_MS);
       }
+      } // end mcbisBalance > 0 guard
     } catch { /* top-level guard */ }
     finally { _pollRunning = false; }
   };
