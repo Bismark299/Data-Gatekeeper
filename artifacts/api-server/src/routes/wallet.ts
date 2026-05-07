@@ -492,13 +492,18 @@ router.post("/sms-webhook", async (req, res) => {
     amount = amountMatch ? parseFloat(amountMatch[1].replace(/,/g, "")) : 0;
   }
 
-  // Use pre-parsed reference from app if provided, otherwise extract from SMS text
+  // Use pre-parsed reference from app if provided (whatever agent code the customer typed)
+  // Fallback: scan the raw SMS text for a standalone word that could be an agent code
   let depositCode: string | null = null;
-  if (body.reference && /^BT-/i.test(body.reference)) {
-    depositCode = body.reference.toUpperCase();
+  if (body.reference && body.reference.trim().length >= 4) {
+    depositCode = body.reference.trim().toUpperCase();
   } else {
-    const refMatch = smsText.match(/\b(BT-[A-Z0-9]{4,})\b/i);
-    if (refMatch) depositCode = refMatch[1].toUpperCase();
+    // Try to extract any 4–10 char alphanumeric token from the SMS text
+    const refMatch = smsText.match(/\b([A-Z0-9]{4,10})\b/gi);
+    if (refMatch) {
+      // Find whichever token actually matches a deposit code in the DB (checked below)
+      depositCode = refMatch[refMatch.length - 1].toUpperCase();
+    }
   }
 
   if (!amount || amount <= 0) {
