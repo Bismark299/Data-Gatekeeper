@@ -396,17 +396,50 @@ router.post("/momo/claim", requireAuth, async (req, res) => {
 
   const userId = req.session.userId!;
   const { amount, transactionId } = parsed.data;
+  const webhookRef = `MOMO-SMS-EXT-${transactionId}`;
 
-  const existing = await db
-    .select()
-    .from(depositsTable)
-    .where(eq(depositsTable.reference, transactionId));
+  // Check for existing records:
+  //  - direct: user manually submitted this txId before
+  //  - webhook: android app forwarded this SMS (may be unmatched or already credited)
+  const [existingDirect, existingWebhook] = await Promise.all([
+    db.select().from(depositsTable).where(eq(depositsTable.reference, transactionId)),
+    db.select().from(depositsTable).where(eq(depositsTable.reference, webhookRef)),
+  ]);
 
-  if (existing.length > 0) {
+  // Already submitted manually before
+  if (existingDirect.length > 0) {
     res.status(400).json({ error: "This transaction ID has already been submitted" });
     return;
   }
 
+  // Webhook captured this transaction
+  if (existingWebhook.length > 0) {
+    const existing = existingWebhook[0];
+
+    // Already credited to someone — cannot claim again
+    if (existing.status === "completed" || existing.userId !== null) {
+      res.status(400).json({ error: "This transaction was already credited to an account" });
+      return;
+    }
+
+    // Stored as unmatched — credit it now to this user
+    const creditAmount = Number(existing.amount);
+    await db.transaction(async (tx) => {
+      await tx.update(depositsTable)
+        .set({ userId, status: "completed", note: `Claimed by user — wallet credited GH₵${creditAmount.toFixed(2)}`, updatedAt: new Date() })
+        .where(eq(depositsTable.reference, webhookRef));
+      await creditWallet(userId, creditAmount, tx, {
+        source: "momo",
+        reference: transactionId,
+        note: `MoMo claim GH₵${creditAmount.toFixed(2)} (txId: ${transactionId})`,
+      });
+    });
+
+    res.json({ message: `GH₵${creditAmount.toFixed(2)} credited to your wallet.` });
+    return;
+  }
+
+  // No webhook record — create pending claim for admin to verify
   await db.insert(depositsTable).values({
     userId,
     amount: amount.toFixed(2),
@@ -417,8 +450,7 @@ router.post("/momo/claim", requireAuth, async (req, res) => {
   });
 
   res.json({
-    message:
-      "Claim submitted. Your deposit will be reviewed and credited within a few minutes.",
+    message: "Claim submitted. Your deposit will be reviewed and credited within a few minutes.",
   });
 });
 
@@ -437,7 +469,10 @@ router.post("/sms-webhook", async (req, res) => {
     return;
   }
 
-  const body = req.body as { from?: string; text?: string; sender?: string; message?: string; id?: string };
+  const body = req.body as {
+    from?: string; text?: string; sender?: string; message?: string; id?: string;
+    amount?: string | number; reference?: string; receivedAt?: number;
+  };
 
   // Require a unique external message ID for deduplication — without it we cannot
   // safely guarantee idempotency, so we silently ignore the message.
@@ -448,18 +483,25 @@ router.post("/sms-webhook", async (req, res) => {
 
   const smsText = body.text ?? body.message ?? "";
 
-  const amountMatch = smsText.match(/GH[SC]?\s*([\d,]+\.?\d*)/i);
-  const refMatch = smsText.match(/\b(BT-[A-Z0-9]{6})\b/i);
-
-  if (!amountMatch || !refMatch) {
-    res.sendStatus(200);
-    return;
+  // Use pre-parsed amount from app if provided, otherwise extract from SMS text
+  let amount: number;
+  if (body.amount && Number(body.amount) > 0) {
+    amount = Number(body.amount);
+  } else {
+    const amountMatch = smsText.match(/GH[SC]?\s*([\d,]+\.?\d*)/i);
+    amount = amountMatch ? parseFloat(amountMatch[1].replace(/,/g, "")) : 0;
   }
 
-  const amount = parseFloat(amountMatch[1].replace(/,/g, ""));
-  const depositCode = refMatch[1].toUpperCase();
+  // Use pre-parsed reference from app if provided, otherwise extract from SMS text
+  let depositCode: string | null = null;
+  if (body.reference && /^BT-/i.test(body.reference)) {
+    depositCode = body.reference.toUpperCase();
+  } else {
+    const refMatch = smsText.match(/\b(BT-[A-Z0-9]{4,})\b/i);
+    if (refMatch) depositCode = refMatch[1].toUpperCase();
+  }
 
-  if (!amount || !depositCode) {
+  if (!amount || amount <= 0) {
     res.sendStatus(200);
     return;
   }
@@ -470,22 +512,45 @@ router.post("/sms-webhook", async (req, res) => {
     return;
   }
 
-  const [user] = await db.select().from(usersTable).where(eq(usersTable.depositCode, depositCode));
-  if (!user) {
-    res.sendStatus(200);
-    return;
-  }
-
-  // Use only the external SMS message ID as dedup key — no time-window fallback
   const reference = `MOMO-SMS-EXT-${body.id}`;
 
+  // Check for duplicate by the external transaction ID
   const [existing] = await db
     .select()
     .from(depositsTable)
     .where(eq(depositsTable.reference, reference));
 
   if (existing) {
-    res.sendStatus(200);
+    res.json({ success: true, duplicate: true, message: "Already processed" });
+    return;
+  }
+
+  // If no deposit code found, store as unmatched — user can claim later with transactionId
+  if (!depositCode) {
+    await db.insert(depositsTable).values({
+      userId: null,
+      amount: amount.toFixed(2),
+      status: "unmatched",
+      method: "momo",
+      reference,
+      note: `Unmatched MoMo SMS — no agent code. Raw: ${smsText.slice(0, 120)}`,
+    });
+    res.json({ success: true, matched: false, message: "Stored for manual claim" });
+    return;
+  }
+
+  const [user] = await db.select().from(usersTable).where(eq(usersTable.depositCode, depositCode));
+  if (!user) {
+    // Agent code present but no matching user — also store unmatched
+    await db.insert(depositsTable).values({
+      userId: null,
+      amount: amount.toFixed(2),
+      status: "unmatched",
+      method: "momo",
+      reference,
+      note: `Unmatched MoMo SMS — unknown agent code ${depositCode}. Raw: ${smsText.slice(0, 120)}`,
+    });
+    res.json({ success: true, matched: false, message: "Stored for manual claim" });
     return;
   }
 
@@ -505,7 +570,7 @@ router.post("/sms-webhook", async (req, res) => {
     });
   });
 
-  res.sendStatus(200);
+  res.json({ success: true, matched: true, message: `GH₵${amount.toFixed(2)} credited to ${user.username}` });
 });
 
 router.get("/momo-info", requireAuth, async (req, res) => {

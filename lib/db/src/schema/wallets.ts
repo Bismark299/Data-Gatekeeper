@@ -12,7 +12,7 @@ export const walletsTable = pgTable("wallets", {
 
 export const depositsTable = pgTable("deposits", {
   id: serial("id").primaryKey(),
-  userId: integer("user_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
+  userId: integer("user_id").references(() => usersTable.id, { onDelete: "cascade" }),
   amount: numeric("amount", { precision: 10, scale: 2 }).notNull(),
   status: text("status").notNull().default("pending"),
   method: text("method").notNull().default("manual"),
