@@ -384,13 +384,13 @@ router.post("/paystack/webhook", async (req, res) => {
 });
 
 const MomoClaimBodySchema = z.object({
-  amount: z.number().positive(),
+  amount: z.number().positive().optional(),
   transactionId: z.string().min(3),
 });
 router.post("/momo/claim", requireAuth, async (req, res) => {
   const parsed = MomoClaimBodySchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: "Amount and transaction ID are required" });
+    res.status(400).json({ error: "Transaction ID is required" });
     return;
   }
 
@@ -442,7 +442,7 @@ router.post("/momo/claim", requireAuth, async (req, res) => {
   // No webhook record — create pending claim for admin to verify
   await db.insert(depositsTable).values({
     userId,
-    amount: amount.toFixed(2),
+    amount: amount != null ? amount.toFixed(2) : "0.00",
     status: "pending",
     method: "momo",
     reference: transactionId,

@@ -650,6 +650,93 @@ router.post("/admin/deposits/:id/reject", requireAdmin, async (req, res): Promis
   });
 });
 
+// ── MoMo SMS Deposits ─────────────────────────────────────────────────────────
+
+const MOMO_PREFIX = "MOMO-SMS-EXT-";
+
+// Helper: extract sender name from stored note
+// Note format: "... Raw: You have received GHS 30.00 from DOMINIC ABOAGYE..."
+function parseSenderFromNote(note: string | null): string {
+  if (!note) return "";
+  const raw = note.includes("Raw:") ? note.split("Raw:")[1] ?? "" : note;
+  const m = raw.match(/from\s+([A-Z][A-Z\s]+?)(?:\.|,|\d|on\s|\.|\s{2}|$)/i);
+  return m ? m[1].trim() : "";
+}
+
+router.get("/admin/momo-deposits", requireAdmin, async (req, res): Promise<void> => {
+  const rows = await db
+    .select({
+      id:        depositsTable.id,
+      userId:    depositsTable.userId,
+      amount:    depositsTable.amount,
+      status:    depositsTable.status,
+      reference: depositsTable.reference,
+      note:      depositsTable.note,
+      createdAt: depositsTable.createdAt,
+      userName:  usersTable.name,
+      userEmail: usersTable.email,
+      userDepositCode: usersTable.depositCode,
+    })
+    .from(depositsTable)
+    .leftJoin(usersTable, eq(depositsTable.userId, usersTable.id))
+    .where(sql`${depositsTable.reference} LIKE ${MOMO_PREFIX + "%"}`)
+    .orderBy(desc(depositsTable.createdAt))
+    .limit(1000);
+
+  res.json(rows.map(d => {
+    const txId = d.reference?.startsWith(MOMO_PREFIX)
+      ? d.reference.slice(MOMO_PREFIX.length)
+      : d.reference ?? "";
+    // Try to extract agent code from note (e.g. "unknown agent code XYZAB")
+    const agentMatch = d.note?.match(/agent code\s+([A-Z0-9]{4,10})/i);
+    const agentCode = agentMatch ? agentMatch[1] : null;
+    return {
+      id:        d.id,
+      userId:    d.userId,
+      txId,
+      amount:    parseFloat(d.amount),
+      status:    d.status,
+      sender:    parseSenderFromNote(d.note),
+      agentCode,
+      userName:  d.userName ?? null,
+      userEmail: d.userEmail ?? null,
+      depositCode: d.userDepositCode ?? null,
+      note:      d.note,
+      createdAt: d.createdAt.toISOString(),
+    };
+  }));
+});
+
+router.post("/admin/momo-deposits/:id/assign", requireAdmin, async (req, res): Promise<void> => {
+  const id = parseInt(String(req.params.id), 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid deposit ID" }); return; }
+
+  const { userId } = req.body as { userId?: number };
+  if (!userId || isNaN(userId)) { res.status(400).json({ error: "userId is required" }); return; }
+
+  const [deposit] = await db.select().from(depositsTable).where(eq(depositsTable.id, id));
+  if (!deposit) { res.status(404).json({ error: "Deposit not found" }); return; }
+  if (deposit.status === "completed") { res.status(400).json({ error: "Already credited" }); return; }
+
+  const [user] = await db.select().from(usersTable).where(and(eq(usersTable.id, userId), isNull(usersTable.deletedAt)));
+  if (!user) { res.status(404).json({ error: "User not found" }); return; }
+
+  const amount = parseFloat(deposit.amount);
+
+  await db.transaction(async (tx) => {
+    await tx.update(depositsTable)
+      .set({ userId, status: "completed", note: `Assigned by admin to ${user.name}` })
+      .where(eq(depositsTable.id, id));
+    await creditWallet(userId, amount, tx, {
+      source: "momo",
+      reference: deposit.reference ?? `ASSIGN-${id}`,
+      note: `Admin-assigned MoMo deposit GH₵${amount.toFixed(2)}`,
+    });
+  });
+
+  res.json({ success: true, message: `GH₵${amount.toFixed(2)} credited to ${user.name}` });
+});
+
 // ── Stats / Revenue ───────────────────────────────────────────────────────────
 
 router.get("/admin/stats", requireAdmin, async (req, res): Promise<void> => {

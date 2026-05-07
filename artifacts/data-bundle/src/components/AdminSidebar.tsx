@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { useQuery } from "@tanstack/react-query";
 import {
   LayoutDashboard, Package, Users, ShoppingCart, LogOut, Wifi, ChevronRight, X,
-  Wallet, ArrowDownCircle, BarChart3, Store, Settings, Zap, Loader2,
+  Wallet, ArrowDownCircle, BarChart3, Store, Settings, Zap, Loader2, Smartphone,
 } from "lucide-react";
 
 const navItems = [
@@ -15,6 +15,7 @@ const navItems = [
   { href: "/admin/stores",    icon: Store,           label: "Stores" },
   { href: "/admin/wallets",   icon: Wallet,          label: "Wallets" },
   { href: "/admin/deposits",  icon: ArrowDownCircle, label: "Deposits" },
+  { href: "/admin/momo",      icon: Smartphone,      label: "MoMo Transactions" },
   { href: "/admin/stats",     icon: BarChart3,       label: "Statistics" },
   { href: "/admin/settings",  icon: Settings,        label: "Settings" },
 ];

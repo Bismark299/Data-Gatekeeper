@@ -38,9 +38,7 @@ export default function WalletPage() {
 
 function WalletContent() {
   const [paystackAmount, setPaystackAmount] = useState("");
-  const [claimAmount, setClaimAmount]       = useState("");
   const [claimTxId, setClaimTxId]           = useState("");
-  const [showClaim, setShowClaim]           = useState(false);
   const [pendingRef, setPendingRef]         = useState("");
   const [showVerifyDialog, setShowVerifyDialog] = useState(false);
   const [autoVerifying, setAutoVerifying]   = useState(false);
@@ -114,14 +112,12 @@ function WalletContent() {
   };
 
   const handleMomoClaim = () => {
-    const num = parseFloat(claimAmount);
-    if (!num || num < 1) { toast({ title: "Enter a valid amount", variant: "destructive" }); return; }
     if (!claimTxId.trim()) { toast({ title: "Enter the transaction ID", variant: "destructive" }); return; }
-    claimMomo.mutate({ data: { amount: num, transactionId: claimTxId.trim() } }, {
+    claimMomo.mutate({ data: { transactionId: claimTxId.trim() } }, {
       onSuccess: (res) => {
         toast({ title: "Claim submitted", description: res.message });
         invalidate();
-        setClaimAmount(""); setClaimTxId(""); setShowClaim(false);
+        setClaimTxId("");
       },
       onError: (e: unknown) => toast({ title: (e as { message?: string })?.message ?? "Claim failed", variant: "destructive" }),
     });
@@ -251,11 +247,12 @@ function WalletContent() {
                 <Smartphone className="w-5 h-5 text-yellow-600" />
               </div>
               <div>
-                <h2 className="font-bold text-foreground">Send MoMo Directly</h2>
-                <p className="text-xs text-muted-foreground mt-0.5">Auto-credited within minutes</p>
+                <h2 className="font-bold text-foreground">Mobile Money (MoMo)</h2>
+                <p className="text-xs text-muted-foreground mt-0.5">Send directly — wallet credited automatically</p>
               </div>
             </div>
 
+            {/* Payment details */}
             <div className="rounded-xl border border-border overflow-hidden divide-y divide-border">
               <div className="flex items-center justify-between px-4 py-3 bg-muted/40">
                 <div>
@@ -284,40 +281,61 @@ function WalletContent() {
               </div>
             </div>
 
-            <p className="text-xs text-muted-foreground leading-relaxed">
-              Send any amount to the number above using <strong>{momoInfo?.referenceCode ?? "your code"}</strong> as the reference. Your wallet is credited automatically.
-            </p>
+            {/* Step-by-step guidelines */}
+            <div className="rounded-xl bg-muted/40 border border-border px-4 py-4 space-y-3">
+              <div className="text-xs font-bold text-foreground uppercase tracking-wide">How to deposit via MoMo</div>
+              <ol className="space-y-2.5 text-xs text-muted-foreground">
+                <li className="flex gap-2.5">
+                  <span className="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-[10px] font-bold shrink-0 mt-px">1</span>
+                  <span>Open your MTN Mobile Money app or dial <strong className="text-foreground">*170#</strong>.</span>
+                </li>
+                <li className="flex gap-2.5">
+                  <span className="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-[10px] font-bold shrink-0 mt-px">2</span>
+                  <span>Select <strong className="text-foreground">Transfer Money → To MoMo Number</strong>, then enter the number above.</span>
+                </li>
+                <li className="flex gap-2.5">
+                  <span className="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-[10px] font-bold shrink-0 mt-px">3</span>
+                  <span>Enter the amount you wish to deposit.</span>
+                </li>
+                <li className="flex gap-2.5">
+                  <span className="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-[10px] font-bold shrink-0 mt-px">4</span>
+                  <span>When prompted for a reference / note, enter your code: <strong className="text-primary font-mono">{momoInfo?.referenceCode ?? "…"}</strong>. This ensures instant automatic crediting.</span>
+                </li>
+                <li className="flex gap-2.5">
+                  <span className="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-[10px] font-bold shrink-0 mt-px">5</span>
+                  <span>Confirm the transaction and your wallet will be credited <strong className="text-foreground">within minutes</strong>.</span>
+                </li>
+              </ol>
+              <div className="flex items-start gap-2 pt-1 border-t border-border mt-1">
+                <CheckCircle2 className="w-3.5 h-3.5 text-green-500 mt-0.5 shrink-0" />
+                <p className="text-[11px] text-muted-foreground leading-relaxed">
+                  Deposits are processed automatically once your reference code is detected. If you are sending on behalf of a customer, always use your own reference code.
+                </p>
+              </div>
+            </div>
 
-            {/* Manual claim toggle */}
-            {!showClaim ? (
-              <button
-                className="text-xs text-primary font-semibold underline underline-offset-2 self-start"
-                onClick={() => setShowClaim(true)}
-                data-testid="button-claim-manually"
-              >
-                Forgot the reference? Claim manually
-              </button>
-            ) : (
-              <div className="space-y-3 border-t border-border pt-4">
-                <div className="text-xs font-semibold text-foreground">Manual Claim</div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="space-y-1">
-                    <Label className="text-xs">Amount (GH₵)</Label>
-                    <Input type="number" min="1" placeholder="50" value={claimAmount} onChange={e => setClaimAmount(e.target.value)} className="h-8 text-xs" data-testid="input-claim-amount" />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">Transaction ID</Label>
-                    <Input placeholder="MP24…" value={claimTxId} onChange={e => setClaimTxId(e.target.value)} className="h-8 text-xs" data-testid="input-claim-txid" />
-                  </div>
-                </div>
+            {/* Claim section — always visible */}
+            <div className="rounded-xl border border-dashed border-border px-4 py-4 space-y-3">
+              <div>
+                <div className="text-xs font-bold text-foreground">Didn't include your reference code?</div>
+                <div className="text-[11px] text-muted-foreground mt-0.5">Enter the MoMo transaction ID from your SMS receipt and we'll match the payment to your account.</div>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Transaction ID</Label>
                 <div className="flex gap-2">
-                  <Button variant="outline" size="sm" className="flex-1" onClick={() => setShowClaim(false)}>Cancel</Button>
-                  <Button size="sm" className="flex-1" onClick={handleMomoClaim} disabled={claimMomo.isPending} data-testid="button-submit-claim">
-                    {claimMomo.isPending ? "Submitting…" : "Submit Claim"}
+                  <Input
+                    placeholder="e.g. MP250507123456"
+                    value={claimTxId}
+                    onChange={e => setClaimTxId(e.target.value)}
+                    className="h-9 text-sm font-mono"
+                    data-testid="input-claim-txid"
+                  />
+                  <Button size="sm" className="shrink-0 h-9 px-4" onClick={handleMomoClaim} disabled={claimMomo.isPending || !claimTxId.trim()} data-testid="button-submit-claim">
+                    {claimMomo.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Claim"}
                   </Button>
                 </div>
               </div>
-            )}
+            </div>
           </div>
         </div>
 
