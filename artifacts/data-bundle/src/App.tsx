@@ -49,11 +49,11 @@ function Router() {
       <Route path="/">{() => <Redirect to="/dashboard" />}</Route>
       <Route path="/login" component={Login} />
       <Route path="/register" component={Register} />
-      <Route path="/bundles" component={Bundles} />
-      <Route path="/dashboard" component={Dashboard} />
-      <Route path="/orders" component={Orders} />
-      <Route path="/wallet" component={WalletPage} />
-      <Route path="/profile" component={Profile} />
+      <Route path="/bundles">{() => <ProtectedRoute><Bundles /></ProtectedRoute>}</Route>
+      <Route path="/dashboard">{() => <ProtectedRoute><Dashboard /></ProtectedRoute>}</Route>
+      <Route path="/orders">{() => <ProtectedRoute><Orders /></ProtectedRoute>}</Route>
+      <Route path="/wallet">{() => <ProtectedRoute><WalletPage /></ProtectedRoute>}</Route>
+      <Route path="/profile">{() => <ProtectedRoute><Profile /></ProtectedRoute>}</Route>
       <Route path="/admin">{() => <ProtectedRoute adminOnly><AdminDashboard /></ProtectedRoute>}</Route>
       <Route path="/admin/bundles">{() => <ProtectedRoute adminOnly><AdminBundles /></ProtectedRoute>}</Route>
       <Route path="/admin/users">{() => <ProtectedRoute adminOnly><AdminUsers /></ProtectedRoute>}</Route>
@@ -65,8 +65,8 @@ function Router() {
       <Route path="/admin/agents/:userId">{(params) => <ProtectedRoute adminOnly><AdminAgentDetail /></ProtectedRoute>}</Route>
       <Route path="/admin/settings">{() => <ProtectedRoute adminOnly><AdminSettings /></ProtectedRoute>}</Route>
       <Route path="/admin/momo">{() => <ProtectedRoute adminOnly><AdminMomo /></ProtectedRoute>}</Route>
-      <Route path="/shop" component={Shop} />
-      <Route path="/store-manager" component={StoreManager} />
+      <Route path="/shop">{() => <ProtectedRoute><Shop /></ProtectedRoute>}</Route>
+      <Route path="/store-manager">{() => <ProtectedRoute><StoreManager /></ProtectedRoute>}</Route>
       <Route path="/s/:slug" component={PublicStore} />
       <Route component={NotFound} />
     </Switch>
