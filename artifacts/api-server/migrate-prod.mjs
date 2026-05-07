@@ -29,5 +29,12 @@ await pool.query(`
 `);
 console.log("✓ momo_number and momo_name rows seeded");
 
+// Seed mcbis_auto_sync = "true" (default ON; set to "false" in admin settings to disable poller)
+await pool.query(`
+  INSERT INTO settings (key, value) VALUES ('mcbis_auto_sync', 'true')
+  ON CONFLICT (key) DO NOTHING
+`);
+console.log("✓ mcbis_auto_sync row seeded");
+
 await pool.end();
 console.log("✓ Migration complete");

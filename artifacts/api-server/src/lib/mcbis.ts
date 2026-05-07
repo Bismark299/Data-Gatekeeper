@@ -8,25 +8,54 @@
  *  - Background poller runs every 30 s, checks "processing" orders, marks "completed" when McbisSolution confirms
  *
  * Settings keys in DB:
- *   mcbis_enabled  — "true" | "false"
+ *   mcbis_enabled   — "true" | "false"
+ *   mcbis_auto_sync — "true" | "false"  (default true; toggle to stop poller without redeploy)
  *
  * Env vars (set on server, never stored in DB):
  *   DATAHUB_API_TOKEN — Bearer token for McbisSolution API
  *   DATAHUB_API_URL   — Base URL for McbisSolution API (default: https://datahub.mcbissolution.com/api/v1)
  */
 
-import { eq, and, isNotNull, isNull } from "drizzle-orm";
+import { eq, and, isNotNull, isNull, inArray, lt } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import axios from "axios";
 import { db, settingsTable, ordersTable, storeOrdersTable, bundlesTable, storesTable } from "@workspace/db";
 
 const mcbisAxios = axios.create({
+  timeout: 45_000, // 45-second hard limit per request
   headers: {
     "Accept": "application/json",
     "Content-Type": "application/json",
     "User-Agent": "KemDataplus/1.0",
   },
 });
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+
+/**
+ * Retries a flaky network call up to MAX_RETRIES times on connection-level
+ * errors (timeout, reset). Waits 1 s then 2 s between attempts.
+ */
+async function apiRequest<T>(fn: () => Promise<T>): Promise<T> {
+  const MAX_RETRIES = 2;
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      return await fn();
+    } catch (err: any) {
+      lastErr = err;
+      const retryable = ["ECONNABORTED", "ECONNRESET", "ETIMEDOUT"].includes(err?.code ?? "");
+      if (retryable && attempt < MAX_RETRIES) {
+        await sleep((attempt + 1) * 1_000); // 1 s, then 2 s
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastErr;
+}
 
 const MCBIS_BASE = process.env.DATAHUB_API_URL ?? "https://datahub.mcbissolution.com/api/v1";
 
@@ -52,19 +81,25 @@ export function parseGb(dataAmount: string): number {
 
 // ─── Settings helpers ─────────────────────────────────────────────────────────
 
-export async function getMcbisSettings(): Promise<{ enabled: boolean; apiKey: string }> {
-  const [row] = await db.select({ value: settingsTable.value }).from(settingsTable).where(eq(settingsTable.key, "mcbis_enabled"));
-  const enabled = row?.value === "true";
-  const apiKey  = process.env.DATAHUB_API_TOKEN ?? "";
-  return { enabled, apiKey };
+export async function getMcbisSettings(): Promise<{ enabled: boolean; autoSync: boolean; apiKey: string }> {
+  const [enabledRow, autoSyncRow] = await Promise.all([
+    db.select({ value: settingsTable.value }).from(settingsTable).where(eq(settingsTable.key, "mcbis_enabled")).then(r => r[0]),
+    db.select({ value: settingsTable.value }).from(settingsTable).where(eq(settingsTable.key, "mcbis_auto_sync")).then(r => r[0]),
+  ]);
+  const enabled   = enabledRow?.value === "true";
+  const autoSync  = autoSyncRow?.value !== "false"; // default ON unless explicitly set to "false"
+  const apiKey    = process.env.DATAHUB_API_TOKEN ?? "";
+  return { enabled, autoSync, apiKey };
 }
 
 // ─── Raw API calls ────────────────────────────────────────────────────────────
 
 export async function mcbisGetBalance(apiKey: string): Promise<number> {
-  const { data } = await mcbisAxios.get<{ data: { walletBalance: string } }>(
-    `${MCBIS_BASE}/walletBalance`,
-    { headers: { Authorization: `Bearer ${apiKey}` } },
+  const { data } = await apiRequest(() =>
+    mcbisAxios.get<{ data: { walletBalance: string } }>(
+      `${MCBIS_BASE}/walletBalance`,
+      { headers: { Authorization: `Bearer ${apiKey}` } },
+    )
   );
   return parseFloat(data.data.walletBalance);
 }
@@ -76,15 +111,17 @@ export async function mcbisPlaceOrder(opts: {
   receiver: string;
   amountGb: number;
 }): Promise<{ accepted: boolean; status: string; message: string }> {
-  const { data, status: httpStatus } = await mcbisAxios.post<Record<string, unknown>>(
-    `${MCBIS_BASE}/placeOrder`,
-    {
-      network:   opts.network,
-      reference: opts.reference,
-      receiver:  opts.receiver,
-      amount:    opts.amountGb,
-    },
-    { headers: { Authorization: `Bearer ${opts.apiKey}` } },
+  const { data, status: httpStatus } = await apiRequest(() =>
+    mcbisAxios.post<Record<string, unknown>>(
+      `${MCBIS_BASE}/placeOrder`,
+      {
+        network:   opts.network,
+        reference: opts.reference,
+        receiver:  opts.receiver,
+        amount:    opts.amountGb,
+      },
+      { headers: { Authorization: `Bearer ${opts.apiKey}` } },
+    )
   );
 
   const inner   = data.data as Record<string, unknown> | undefined;
@@ -102,9 +139,11 @@ export async function mcbisCheckStatus(apiKey: string, reference: string): Promi
   // Response: { data: { status: "success", order: { status: "pending"|"success"|"failed", ... } } }
   // data.status is the API response status (always "success" if request worked).
   // data.order.status is the actual fulfillment status we need.
-  const { data } = await mcbisAxios.get<{ data: { order?: { status?: string } } }>(
-    `${MCBIS_BASE}/checkOrderStatus/${encodeURIComponent(reference)}`,
-    { headers: { Authorization: `Bearer ${apiKey}` } },
+  const { data } = await apiRequest(() =>
+    mcbisAxios.get<{ data: { order?: { status?: string } } }>(
+      `${MCBIS_BASE}/checkOrderStatus/${encodeURIComponent(reference)}`,
+      { headers: { Authorization: `Bearer ${apiKey}` } },
+    )
   );
   return String(data.data?.order?.status ?? "");
 }
@@ -144,40 +183,53 @@ export async function dispatchToMcbis(opts: {
   const amountGb = parseGb(opts.bundleData);
   if (amountGb <= 0) return { dispatched: false, reason: "bad_data" };
 
-  // ── Guard: verify order is still pending and not already dispatched ──────────
-  if (opts.isStoreOrder) {
-    const [row] = await db
-      .select({ status: storeOrdersTable.status, ref: storeOrdersTable.mcbisReference })
-      .from(storeOrdersTable)
-      .where(eq(storeOrdersTable.id, opts.orderId));
-    // Only allow dispatch from "pending" (pre-payment) or "paid" (payment confirmed, awaiting dispatch)
-    if (!row || row.ref || (row.status !== "pending" && row.status !== "paid")) {
-      return { dispatched: false, reason: "already_dispatched" };
-    }
-  } else {
-    const [row] = await db
-      .select({ status: ordersTable.status, ref: ordersTable.mcbisReference })
-      .from(ordersTable)
-      .where(eq(ordersTable.id, opts.orderId));
-    if (!row || row.ref || row.status !== "pending") {
-      return { dispatched: false, reason: "already_dispatched" };
-    }
-  }
+  const prefix   = opts.isStoreOrder ? "SO" : "PO";
+  const lockRef  = `LOCK-${prefix}-${opts.orderId}`;
+  const finalRef = `${prefix}-${opts.orderId}-${Date.now()}`;
 
-  const prefix    = opts.isStoreOrder ? "SO" : "PO";
-  const reference = `${prefix}-${opts.orderId}-${Date.now()}`;
+  // ── Atomic lock: write a temp ref before calling API ────────────────────────
+  // Two concurrent callers (poller + admin) race on a single UPDATE.
+  // The loser gets 0 rows back and returns immediately — no double-send.
+  let locked = false;
+  if (opts.isStoreOrder) {
+    const rows = await db.update(storeOrdersTable)
+      .set({ mcbisReference: lockRef })
+      .where(and(
+        eq(storeOrdersTable.id, opts.orderId),
+        isNull(storeOrdersTable.mcbisReference),
+        inArray(storeOrdersTable.status, ["pending", "paid"]),
+      ))
+      .returning({ id: storeOrdersTable.id });
+    locked = rows.length > 0;
+  } else {
+    const rows = await db.update(ordersTable)
+      .set({ mcbisReference: lockRef })
+      .where(and(
+        eq(ordersTable.id, opts.orderId),
+        isNull(ordersTable.mcbisReference),
+        eq(ordersTable.status, "pending"),
+      ))
+      .returning({ id: ordersTable.id });
+    locked = rows.length > 0;
+  }
+  if (!locked) return { dispatched: false, reason: "already_dispatched" };
 
   try {
     const result = await mcbisPlaceOrder({
       apiKey,
       network:   mcbisNetwork,
-      reference,
+      reference: finalRef,
       receiver:  opts.phone,
       amountGb,
     });
 
     if (!result.accepted) {
-      // Detect insufficient wallet balance — order stays pending for retry
+      // Release lock so the order can be retried
+      if (opts.isStoreOrder) {
+        await db.update(storeOrdersTable).set({ mcbisReference: null }).where(eq(storeOrdersTable.id, opts.orderId));
+      } else {
+        await db.update(ordersTable).set({ mcbisReference: null }).where(eq(ordersTable.id, opts.orderId));
+      }
       const msg = result.message.toLowerCase();
       if (msg.includes("insufficient") || msg.includes("balance") || msg.includes("fund") || msg.includes("wallet")) {
         return { dispatched: false, reason: "insufficient_funds" };
@@ -185,8 +237,14 @@ export async function dispatchToMcbis(opts: {
       return { dispatched: false, reason: "api_error" };
     }
 
-    return { dispatched: true, reference };
+    return { dispatched: true, reference: finalRef };
   } catch {
+    // Release lock on exception so the order can be retried
+    if (opts.isStoreOrder) {
+      await db.update(storeOrdersTable).set({ mcbisReference: null }).where(eq(storeOrdersTable.id, opts.orderId));
+    } else {
+      await db.update(ordersTable).set({ mcbisReference: null }).where(eq(ordersTable.id, opts.orderId));
+    }
     return { dispatched: false, reason: "api_error" };
   }
 }
@@ -194,62 +252,74 @@ export async function dispatchToMcbis(opts: {
 // ─── Background poller ────────────────────────────────────────────────────────
 
 let _pollerStarted = false;
+let _pollRunning   = false; // prevents overlapping cycles if a cycle takes longer than INTERVAL_MS
 
 /**
  * Start the background poller (idempotent — safe to call multiple times).
- * Every 60 seconds, checks up to STATUS_CHECK_CAP "processing" orders and
- * retries up to RETRY_CAP "pending" orders.
  *
- * Orders stuck in "processing" for more than MAX_PROCESSING_AGE_MS are
- * automatically marked "failed" to prevent indefinite polling.
+ * Protection summary:
+ *  1. 30-second interval — non-overlapping (cycle must finish before next starts)
+ *  2. autoSync toggle in DB (mcbis_auto_sync = "false" → zero requests sent)
+ *  3. Status checks: max 30 per cycle, 100 ms between each call
+ *  4. Retry dispatch: max 5 per cycle, 500 ms between each call, 5-min grace period
+ *  5. 45-second request timeout + 2 retries with back-off (in apiRequest())
+ *  6. Atomic lock in dispatchToMcbis() prevents concurrent double-send
+ *  7. Orders stuck >24 h in "processing" are auto-failed to stop indefinite polling
  */
 export function startMcbisPoller(): void {
   if (_pollerStarted) return;
   _pollerStarted = true;
 
-  const INTERVAL_MS = 60_000;          // 60 s between cycles (was 30 s)
-  const STATUS_CHECK_CAP = 10;         // max checkOrderStatus calls per cycle
-  const MAX_PROCESSING_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
+  const INTERVAL_MS           = 30_000;  // 30 s between cycles
+  const STATUS_CHECK_CAP      = 30;      // max checkOrderStatus calls per cycle
+  const RETRY_CAP             = 5;       // max new dispatch attempts per cycle
+  const STATUS_DELAY_MS       = 100;     // ms between status-check calls
+  const DISPATCH_DELAY_MS     = 500;     // ms between dispatch calls
+  const GRACE_PERIOD_MS       = 5 * 60 * 1000;        // 5 min — don't retry brand-new orders
+  const MAX_PROCESSING_AGE_MS = 24 * 60 * 60 * 1000;  // 24 h — auto-fail stale orders
 
   const poll = async () => {
+    if (_pollRunning) return; // skip if previous cycle still running
+    _pollRunning = true;
     try {
-      const { enabled, apiKey } = await getMcbisSettings();
-      if (!enabled || !apiKey) return;
+      const { enabled, autoSync, apiKey } = await getMcbisSettings();
+      if (!enabled || !autoSync || !apiKey) return; // toggle-gated
 
-      const staleThreshold = new Date(Date.now() - MAX_PROCESSING_AGE_MS);
+      const now             = Date.now();
+      const staleThreshold  = new Date(now - MAX_PROCESSING_AGE_MS);
+      const graceThreshold  = new Date(now - GRACE_PERIOD_MS);
 
-      // ── Platform orders ───────────────────────────────────────────────────
-      // Fetch oldest-first so recent orders are checked first; limit to cap
-      const platformOrders = await db
+      // ── 1. Check status of processing platform orders (cap 30, 100 ms apart) ──
+      const platformProcessing = await db
         .select({ id: ordersTable.id, ref: ordersTable.mcbisReference, createdAt: ordersTable.createdAt })
         .from(ordersTable)
         .where(and(
           eq(ordersTable.status, "processing"),
           isNotNull(ordersTable.mcbisReference),
+          // skip stale rows here — handled below after the fetch
         ))
         .orderBy(ordersTable.createdAt)
         .limit(STATUS_CHECK_CAP);
 
-      for (const o of platformOrders) {
+      for (const o of platformProcessing) {
         if (!o.ref) continue;
-        // Auto-fail orders stuck in processing for over 24 h — no point polling them
         if (o.createdAt < staleThreshold) {
           await db.update(ordersTable).set({ status: "failed" }).where(eq(ordersTable.id, o.id));
           continue;
         }
         try {
-          const mcbisStatus = await mcbisCheckStatus(apiKey, o.ref);
-          if (mcbisStatus === "success" || mcbisStatus === "completed") {
+          const s = await mcbisCheckStatus(apiKey, o.ref);
+          if (s === "success" || s === "completed") {
             await db.update(ordersTable).set({ status: "completed" }).where(eq(ordersTable.id, o.id));
-          } else if (mcbisStatus === "failed") {
+          } else if (s === "failed") {
             await db.update(ordersTable).set({ status: "failed" }).where(eq(ordersTable.id, o.id));
           }
-          // "pending" or unknown → leave as "processing", check again next cycle
-        } catch { /* network error — retry next cycle */ }
+        } catch { /* transient error — retry next cycle */ }
+        await sleep(STATUS_DELAY_MS);
       }
 
-      // ── Store orders ──────────────────────────────────────────────────────
-      const storeOrders = await db
+      // ── 2. Check status of processing store orders (cap 30, 100 ms apart) ──
+      const storeProcessing = await db
         .select({ id: storeOrdersTable.id, ref: storeOrdersTable.mcbisReference, createdAt: storeOrdersTable.createdAt })
         .from(storeOrdersTable)
         .where(and(
@@ -259,44 +329,43 @@ export function startMcbisPoller(): void {
         .orderBy(storeOrdersTable.createdAt)
         .limit(STATUS_CHECK_CAP);
 
-      for (const o of storeOrders) {
+      for (const o of storeProcessing) {
         if (!o.ref) continue;
-        // Auto-fail stale store orders too
         if (o.createdAt < staleThreshold) {
           await db.update(storeOrdersTable).set({ status: "failed" }).where(eq(storeOrdersTable.id, o.id));
           continue;
         }
         try {
-          const mcbisStatus = await mcbisCheckStatus(apiKey, o.ref);
-          if (mcbisStatus === "success" || mcbisStatus === "completed") {
-            // Credit profit atomically alongside the status change
+          const s = await mcbisCheckStatus(apiKey, o.ref);
+          if (s === "success" || s === "completed") {
             await db.transaction(async (tx) => {
               const [row] = await tx
                 .select({ profit: storeOrdersTable.profit, storeId: storeOrdersTable.storeId, status: storeOrdersTable.status })
                 .from(storeOrdersTable)
                 .where(eq(storeOrdersTable.id, o.id))
                 .for("update");
-              if (!row || row.status === "completed") return; // already done
+              if (!row || row.status === "completed") return;
               await tx.update(storeOrdersTable).set({ status: "completed" }).where(eq(storeOrdersTable.id, o.id));
               const profit = parseFloat(row.profit);
               await tx.update(storesTable)
                 .set({ profitBalance: sql`profit_balance + ${profit.toFixed(2)}::numeric` })
                 .where(eq(storesTable.id, row.storeId));
             });
-          } else if (mcbisStatus === "failed") {
+          } else if (s === "failed") {
             await db.update(storeOrdersTable).set({ status: "failed" }).where(eq(storeOrdersTable.id, o.id));
           }
-        } catch { /* retry next cycle */ }
+        } catch { /* transient error — retry next cycle */ }
+        await sleep(STATUS_DELAY_MS);
       }
 
-      // ── Retry: pending MTN platform orders with no mcbisReference (cap 5) ──
-      const RETRY_CAP = 5;
+      // ── 3. Retry pending platform MTN orders (cap 5, 500 ms apart, 5-min grace) ──
       const pendingPlatform = await db
         .select({
           id:         ordersTable.id,
           phone:      ordersTable.phoneNumber,
           bundleData: ordersTable.bundleData,
           network:    bundlesTable.network,
+          createdAt:  ordersTable.createdAt,
         })
         .from(ordersTable)
         .leftJoin(bundlesTable, eq(bundlesTable.id, ordersTable.bundleId))
@@ -304,7 +373,9 @@ export function startMcbisPoller(): void {
           eq(ordersTable.status, "pending"),
           isNull(ordersTable.mcbisReference),
           eq(bundlesTable.network, "mtn"),
+          lt(ordersTable.createdAt, graceThreshold), // 5-min grace: skip brand-new orders
         ))
+        .orderBy(ordersTable.createdAt)
         .limit(RETRY_CAP);
 
       for (const o of pendingPlatform) {
@@ -321,28 +392,29 @@ export function startMcbisPoller(): void {
               .set({ status: "processing", mcbisReference: outcome.reference })
               .where(eq(ordersTable.id, o.id));
           } else if (outcome.reason === "insufficient_funds") {
-            // Wallet still empty — stop retrying for this cycle to avoid hammering the API
-            break;
+            break; // wallet empty — no point trying more this cycle
           }
         } catch { /* retry next cycle */ }
+        await sleep(DISPATCH_DELAY_MS);
       }
 
-      // ── Retry: "paid" MTN store orders not yet dispatched (cap 5) ──────────
-      // "paid" = Paystack payment confirmed, awaiting McbisSolution dispatch.
-      // "pending" store orders are unpaid — never auto-dispatch those.
+      // ── 4. Retry paid store MTN orders (cap 5, 500 ms apart, 5-min grace) ──
       const paidStore = await db
         .select({
-          id:          storeOrdersTable.id,
-          phone:       storeOrdersTable.customerPhone,
-          bundleData:  storeOrdersTable.bundleData,
-          network:     storeOrdersTable.bundleNetwork,
+          id:         storeOrdersTable.id,
+          phone:      storeOrdersTable.customerPhone,
+          bundleData: storeOrdersTable.bundleData,
+          network:    storeOrdersTable.bundleNetwork,
+          createdAt:  storeOrdersTable.createdAt,
         })
         .from(storeOrdersTable)
         .where(and(
           eq(storeOrdersTable.status, "paid"),
           isNull(storeOrdersTable.mcbisReference),
           eq(storeOrdersTable.bundleNetwork, "mtn"),
+          lt(storeOrdersTable.createdAt, graceThreshold),
         ))
+        .orderBy(storeOrdersTable.createdAt)
         .limit(RETRY_CAP);
 
       for (const o of paidStore) {
@@ -362,12 +434,16 @@ export function startMcbisPoller(): void {
             break;
           }
         } catch { /* retry next cycle */ }
+        await sleep(DISPATCH_DELAY_MS);
       }
     } catch { /* top-level guard */ }
+    finally { _pollRunning = false; }
   };
 
-  // Run immediately on start, then on interval
-  poll();
-  setInterval(poll, INTERVAL_MS);
+  // First run after 5 s (let server finish startup), then every 30 s
+  setTimeout(() => {
+    poll();
+    setInterval(poll, INTERVAL_MS);
+  }, 5_000);
 }
 
