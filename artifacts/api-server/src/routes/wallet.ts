@@ -207,7 +207,10 @@ router.post("/paystack/initialize", requireAuth, async (req, res) => {
   }
 
   const amountGhs = parsed.data.amount;
-  const amountPesewas = Math.round(amountGhs * 100);
+  const PAYSTACK_FEE_RATE = 0.02; // 2% Paystack processing fee passed to customer
+  const feeGhs = parseFloat((amountGhs * PAYSTACK_FEE_RATE).toFixed(2));
+  const chargedGhs = parseFloat((amountGhs + feeGhs).toFixed(2));
+  const amountPesewas = Math.round(chargedGhs * 100); // what Paystack charges the customer
   const reference = `DB-PS-${userId}-${Date.now()}`;
 
   const appOrigin = process.env.APP_ORIGIN ?? "http://localhost:5173";
@@ -225,7 +228,7 @@ router.post("/paystack/initialize", requireAuth, async (req, res) => {
       currency: "GHS",
       reference,
       callback_url: callbackUrl,
-      metadata: { userId, amountGhs },
+      metadata: { userId, amountGhs, feeGhs, chargedGhs },
     }),
   });
 
@@ -246,12 +249,15 @@ router.post("/paystack/initialize", requireAuth, async (req, res) => {
     status: "pending",
     method: "paystack",
     reference,
-    note: "Awaiting payment confirmation",
+    note: `Awaiting payment confirmation (charged GH₵${chargedGhs.toFixed(2)} incl. 2% fee)`,
   });
 
   res.json({
     authorizationUrl: paystackData.data.authorization_url,
     reference: paystackData.data.reference,
+    amountGhs,
+    feeGhs,
+    chargedGhs,
   });
 });
 

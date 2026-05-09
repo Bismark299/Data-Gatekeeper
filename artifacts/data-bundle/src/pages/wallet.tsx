@@ -90,6 +90,12 @@ function WalletContent() {
     initPaystack.mutate({ data: { amount: num } }, {
       onSuccess: (data) => {
         setPendingRef(data.reference);
+        const fee = data.feeGhs?.toFixed(2) ?? (num * 0.02).toFixed(2);
+        const total = data.chargedGhs?.toFixed(2) ?? (num * 1.02).toFixed(2);
+        toast({
+          title: `Redirecting to Paystack…`,
+          description: `You will be charged GH₵${total} (includes GH₵${fee} processing fee)`,
+        });
         window.location.href = data.authorizationUrl;
       },
       onError: (e: unknown) => {
@@ -226,6 +232,15 @@ function WalletContent() {
               </div>
             </div>
 
+            {paystackAmount && parseFloat(paystackAmount) >= 1 && (
+              <div className="text-xs text-muted-foreground bg-muted/50 rounded-lg px-3 py-2">
+                2% processing fee applies · You will be charged{" "}
+                <span className="font-semibold text-foreground">
+                  GH₵{(parseFloat(paystackAmount) * 1.02).toFixed(2)}
+                </span>
+              </div>
+            )}
+
             <Button
               className="w-full mt-auto"
               onClick={handlePaystackPay}
@@ -235,7 +250,7 @@ function WalletContent() {
               {initPaystack.isPending ? (
                 <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Opening Paystack…</>
               ) : (
-                `Pay GH₵${paystackAmount || "0"} via Paystack`
+                `Pay GH₵${paystackAmount ? (parseFloat(paystackAmount) * 1.02).toFixed(2) : "0"} via Paystack`
               )}
             </Button>
           </div>

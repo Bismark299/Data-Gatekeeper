@@ -276,7 +276,6 @@ export function startMcbisPoller(): void {
   const STATUS_DELAY_MS       = 100;     // ms between status-check calls
   const DISPATCH_DELAY_MS     = 500;     // ms between dispatch calls
   const GRACE_PERIOD_MS       = 30 * 1000;             // 30 s — don't retry brand-new orders
-  const MAX_PROCESSING_AGE_MS = 24 * 60 * 60 * 1000;  // 24 h — auto-fail stale orders
 
   const poll = async () => {
     if (_pollRunning) return; // skip if previous cycle still running
@@ -286,27 +285,21 @@ export function startMcbisPoller(): void {
       if (!enabled || !autoSync || !apiKey) return; // toggle-gated
 
       const now             = Date.now();
-      const staleThreshold  = new Date(now - MAX_PROCESSING_AGE_MS);
       const graceThreshold  = new Date(now - GRACE_PERIOD_MS);
 
       // ── 1. Check status of processing platform orders (cap 30, 100 ms apart) ──
       const platformProcessing = await db
-        .select({ id: ordersTable.id, ref: ordersTable.mcbisReference, createdAt: ordersTable.createdAt })
+        .select({ id: ordersTable.id, ref: ordersTable.mcbisReference })
         .from(ordersTable)
         .where(and(
           eq(ordersTable.status, "processing"),
           isNotNull(ordersTable.mcbisReference),
-          // skip stale rows here — handled below after the fetch
         ))
         .orderBy(ordersTable.createdAt)
         .limit(STATUS_CHECK_CAP);
 
       for (const o of platformProcessing) {
         if (!o.ref) continue;
-        if (o.createdAt < staleThreshold) {
-          await db.update(ordersTable).set({ status: "failed" }).where(eq(ordersTable.id, o.id));
-          continue;
-        }
         try {
           const s = await mcbisCheckStatus(apiKey, o.ref);
           if (s === "success" || s === "completed") {
@@ -320,7 +313,7 @@ export function startMcbisPoller(): void {
 
       // ── 2. Check status of processing store orders (cap 30, 100 ms apart) ──
       const storeProcessing = await db
-        .select({ id: storeOrdersTable.id, ref: storeOrdersTable.mcbisReference, createdAt: storeOrdersTable.createdAt })
+        .select({ id: storeOrdersTable.id, ref: storeOrdersTable.mcbisReference })
         .from(storeOrdersTable)
         .where(and(
           eq(storeOrdersTable.status, "processing"),
@@ -331,10 +324,6 @@ export function startMcbisPoller(): void {
 
       for (const o of storeProcessing) {
         if (!o.ref) continue;
-        if (o.createdAt < staleThreshold) {
-          await db.update(storeOrdersTable).set({ status: "failed" }).where(eq(storeOrdersTable.id, o.id));
-          continue;
-        }
         try {
           const s = await mcbisCheckStatus(apiKey, o.ref);
           if (s === "success" || s === "completed") {

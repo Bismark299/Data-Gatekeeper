@@ -1311,9 +1311,21 @@ components:
           type: string
         reference:
           type: string
+        amountGhs:
+          type: number
+          description: Amount that will be credited to wallet
+        feeGhs:
+          type: number
+          description: 2% Paystack processing fee
+        chargedGhs:
+          type: number
+          description: Total amount charged to customer (amount + fee)
       required:
         - authorizationUrl
         - reference
+        - amountGhs
+        - feeGhs
+        - chargedGhs
 
     PaystackVerifyBody:
       type: object
