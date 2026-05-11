@@ -799,7 +799,7 @@ function AdminOrdersContent() {
                           </span>
                         </td>
                         <td className="hidden md:table-cell px-5 py-3.5">
-                          <Select defaultValue={order.status} onValueChange={v => handleStatusChange(order.id, v)}>>
+                          <Select defaultValue={order.status} onValueChange={v => handleStatusChange(order.id, v)}>
                             <SelectTrigger className="w-32 h-7 text-xs" data-testid={`select-status-${order.id}`}>
                               <SelectValue />
                             </SelectTrigger>
