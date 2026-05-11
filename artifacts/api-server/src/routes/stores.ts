@@ -518,6 +518,7 @@ const StoreCheckoutBody = z.object({
 }).transform(d => ({ ...d, customerEmail: d.customerEmail || undefined }));
 
 router.post("/s/:slug/checkout", async (req, res) => {
+  if (!PAYSTACK_SECRET) { res.status(503).json({ error: "Payment service is not configured" }); return; }
   const parsed = StoreCheckoutBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "Invalid checkout data", details: parsed.error.issues }); return; }
 
@@ -711,7 +712,7 @@ router.post("/s/:slug/verify", async (req, res) => {
 
 router.post("/s/paystack/webhook", async (req, res) => {
   const sig = req.headers["x-paystack-signature"] as string;
-  const hash = crypto.createHmac("sha512", PAYSTACK_SECRET).update(JSON.stringify(req.body)).digest("hex");
+  const hash = crypto.createHmac("sha512", PAYSTACK_SECRET).update(req.rawBody ?? Buffer.from(JSON.stringify(req.body))).digest("hex");
   if (hash !== sig) { res.status(401).json({ error: "Invalid signature" }); return; }
 
   const { event, data } = req.body as { event: string; data: { reference: string; status: string; amount: number } };

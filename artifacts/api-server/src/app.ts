@@ -74,7 +74,12 @@ app.use(
   }),
 );
 
-app.use(express.json({ limit: "1mb" }));
+// Capture the raw body buffer for webhook HMAC verification (Paystack signs raw bytes).
+// Must be set up before express.json() so the buffer is available in webhook handlers.
+app.use(express.json({
+  limit: "1mb",
+  verify: (req: express.Request, _res, buf) => { req.rawBody = buf; },
+}));
 app.use(express.urlencoded({ extended: true, limit: "1mb" }));
 app.use(cookieParser());
 

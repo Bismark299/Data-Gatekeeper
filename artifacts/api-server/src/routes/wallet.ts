@@ -309,6 +309,12 @@ router.post("/paystack/verify", requireAuth, async (req, res) => {
   };
 
   if (!verifyData.status || verifyData.data?.status !== "success") {
+    // Explicitly mark the deposit as failed so it doesn't stay "pending" forever
+    if (verifyData.data?.status === "failed" || verifyData.data?.status === "abandoned") {
+      await db.update(depositsTable)
+        .set({ status: "failed", note: "Payment cancelled or failed" })
+        .where(and(eq(depositsTable.id, deposit.id), eq(depositsTable.status, "pending")));
+    }
     res.status(400).json({ error: "Payment not successful yet. Please wait a moment and try again." });
     return;
   }
@@ -353,7 +359,7 @@ router.post("/paystack/webhook", async (req, res) => {
   }
   const hash = crypto
     .createHmac("sha512", PAYSTACK_SECRET)
-    .update(JSON.stringify(req.body))
+    .update(req.rawBody ?? Buffer.from(JSON.stringify(req.body)))
     .digest("hex");
   if (hash !== signature) {
     res.status(401).send("Invalid signature");
