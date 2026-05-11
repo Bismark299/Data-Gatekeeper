@@ -4,7 +4,7 @@ import {
   bundlesTable, usersTable,
 } from "@workspace/db";
 import { requireAuth } from "../middlewares/auth";
-import { eq, desc, and, sql, inArray } from "drizzle-orm";
+import { eq, desc, and, ne, sql, inArray } from "drizzle-orm";
 import { z } from "zod";
 import crypto from "crypto";
 import { dispatchToMcbis } from "../lib/mcbis";
@@ -218,7 +218,11 @@ router.get("/stores/my/orders", requireAuth, async (req, res) => {
   const [store] = await db.select().from(storesTable).where(eq(storesTable.userId, req.session.userId!));
   if (!store) { res.status(404).json({ error: "No store found" }); return; }
 
-  const orders = await db.select().from(storeOrdersTable).where(eq(storeOrdersTable.storeId, store.id)).orderBy(desc(storeOrdersTable.createdAt));
+  // Exclude bare "pending" orders — those are checkout initiations that were never paid.
+  // Only show orders that progressed past the payment step.
+  const orders = await db.select().from(storeOrdersTable)
+    .where(and(eq(storeOrdersTable.storeId, store.id), ne(storeOrdersTable.status, "pending")))
+    .orderBy(desc(storeOrdersTable.createdAt));
   res.json(orders.map(formatStoreOrder));
 });
 
@@ -231,7 +235,8 @@ router.get("/stores/my/stats", requireAuth, async (req, res) => {
   const totalSales = completed.length;
   const totalRevenue = completed.reduce((s, o) => s + parseFloat(o.sellingPrice), 0);
   const totalProfit = completed.reduce((s, o) => s + parseFloat(o.profit), 0);
-  const totalPending = orders.filter(o => o.status === "pending" || o.status === "processing").length;
+  // "pending" = not yet paid (abandoned checkout) — don't count those as pending sales
+  const totalPending = orders.filter(o => o.status === "processing" || o.status === "paid").length;
 
   res.json({
     totalSales,
@@ -650,6 +655,10 @@ router.post("/s/:slug/verify", async (req, res) => {
   const psData = await psRes.json() as { status: boolean; data?: { status: string; amount: number } };
 
   if (!psData.status || psData.data?.status !== "success") {
+    // Mark order as cancelled so it doesn't linger as "pending" in the owner's view
+    await db.update(storeOrdersTable)
+      .set({ status: "cancelled" })
+      .where(and(eq(storeOrdersTable.id, preCheck.id), eq(storeOrdersTable.status, "pending")));
     res.status(402).json({ error: "Payment not successful" });
     return;
   }
