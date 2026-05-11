@@ -39,7 +39,11 @@ const DEFAULTS: Record<string, string> = {
   store_enabled:       "true",
   order_auto_complete: "false",
   footer_note:         "© 2025 DataBundle GH. All rights reserved.",
-  mcbis_enabled:       "true",
+  mcbis_enabled:              "true",
+  network_mtn_enabled:         "true",
+  network_telecel_enabled:     "true",
+  "network_at-ishare_enabled": "true",
+  "network_at-bigtime_enabled": "true",
 };
 
 type Section = {
@@ -147,6 +151,72 @@ function SettingField({
         placeholder={DEFAULTS[field.key] ?? ""}
       />
       {field.hint && <p className="text-[11px] text-muted-foreground">{field.hint}</p>}
+    </div>
+  );
+}
+
+const NETWORK_CONFIG = [
+  { key: "network_mtn_enabled",         label: "MTN",      dot: "bg-yellow-400", badge: "MTN" },
+  { key: "network_telecel_enabled",     label: "Telecel",  dot: "bg-red-500",    badge: "Telecel" },
+  { key: "network_at-ishare_enabled",   label: "AT iShare",dot: "bg-blue-500",   badge: "AT iShare" },
+  { key: "network_at-bigtime_enabled",  label: "AT BigTime",dot: "bg-green-500", badge: "AT BigTime" },
+] as const;
+
+function NetworkSettingsSection({
+  local,
+  onToggle,
+}: {
+  local: Record<string, string>;
+  onToggle: (key: string, enabled: boolean) => void;
+}) {
+  return (
+    <div className="bg-card border border-border rounded-2xl p-5 space-y-5">
+      {/* Header */}
+      <div className="flex items-start gap-3 pb-4 border-b border-border">
+        <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center shrink-0">
+          <Wifi className="w-4 h-4 text-blue-500" />
+        </div>
+        <div className="flex-1">
+          <h2 className="font-semibold text-foreground text-sm">Network Settings</h2>
+          <p className="text-xs text-muted-foreground">Enable or disable networks across the platform. Disabled networks are hidden from agents and the public store.</p>
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        {NETWORK_CONFIG.map(({ key, label, dot }) => {
+          const enabled = (local[key] ?? "true") !== "false";
+          return (
+            <div key={key} className="flex items-center justify-between bg-muted/30 rounded-xl px-4 py-3">
+              <div className="flex items-center gap-3">
+                <div className={`w-2.5 h-2.5 rounded-full ${dot}`} />
+                <div>
+                  <div className="text-sm font-semibold text-foreground">{label}</div>
+                  <div className="text-xs text-muted-foreground">{enabled ? "Visible to agents and customers" : "Hidden from agents and customers"}</div>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                  enabled ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400" : "bg-muted text-muted-foreground"
+                }`}>
+                  {enabled ? "ON" : "OFF"}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onToggle(key, !enabled)}
+                  className={`relative w-11 h-6 rounded-full transition-colors focus:outline-none ${
+                    enabled ? "bg-emerald-500" : "bg-muted-foreground/30"
+                  }`}
+                  aria-label={`Toggle ${label}`}
+                >
+                  <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${
+                    enabled ? "translate-x-5" : "translate-x-0"
+                  }`} />
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -407,6 +477,16 @@ function AdminSettingsContent() {
                   </div>
                 </div>
               ))}
+
+              {/* Network Settings */}
+              <NetworkSettingsSection
+                local={local}
+                onToggle={(key, enabled) => {
+                  const updated = { ...local, [key]: enabled ? "true" : "false" };
+                  setLocal(updated);
+                  saveMutation.mutate(updated);
+                }}
+              />
 
               {/* McbisSolution Integration */}
               <McbisSolutionSection

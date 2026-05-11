@@ -1,5 +1,6 @@
 import express, { type Express } from "express";
 import cors from "cors";
+import compression from "compression";
 import pinoHttp from "pino-http";
 import session from "express-session";
 import cookieParser from "cookie-parser";
@@ -17,6 +18,9 @@ const PgStore = connectPg(session);
 const app: Express = express();
 
 app.set("trust proxy", 1);
+
+// Compress all API responses with gzip
+app.use(compression());
 
 // Security headers
 app.use(

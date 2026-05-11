@@ -172,9 +172,9 @@ function StoreDashboard({ store: initialStore }: { store: Store }) {
 
   const { data: storeData } = useQuery<Store | null>({ queryKey: ["myStore"], queryFn: storeApi.getMyStore, initialData: initialStore });
   const store: Store = (storeData ?? initialStore)!;
-  const { data: stats } = useQuery<StoreStats>({ queryKey: ["myStoreStats"], queryFn: storeApi.getStats, refetchInterval: 10000, staleTime: 0 });
+  const { data: stats } = useQuery<StoreStats>({ queryKey: ["myStoreStats"], queryFn: storeApi.getStats, refetchInterval: 30000, staleTime: 15_000 });
   const { data: storeBundles = [] } = useQuery<StoreBundle[]>({ queryKey: ["myStoreBundles"], queryFn: storeApi.getBundles, refetchInterval: 30000 });
-  const { data: orders = [] } = useQuery({ queryKey: ["myStoreOrders"], queryFn: storeApi.getOrders, refetchInterval: 10000, staleTime: 0 });
+  const { data: orders = [] } = useQuery({ queryKey: ["myStoreOrders"], queryFn: storeApi.getOrders, refetchInterval: 30000, staleTime: 15_000 });
   const { data: withdrawals = [] } = useQuery({ queryKey: ["myStoreWithdrawals"], queryFn: storeApi.getWithdrawals, refetchInterval: 30000 });
 
   const storeUrl = `${window.location.origin}/s/${store.slug}`;
@@ -654,17 +654,6 @@ function BundlesTab({ storeBundles, store: _store, userRole: _userRole }: { stor
                     </tbody>
                   </table>
                 </div>
-                {/* Bulk order footer */}
-                <div className="px-4 py-3 border-t border-border flex items-center justify-between bg-muted/30">
-                  <span className="text-xs text-muted-foreground">Send data to multiple numbers at once</span>
-                  <button
-                    onClick={() => setBulkNetwork(network)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors text-xs font-semibold"
-                  >
-                    <List className="w-3.5 h-3.5" /> Bulk Order
-                  </button>
-                </div>
-              </div>
             );
           })}
         </div>

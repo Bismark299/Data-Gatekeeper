@@ -242,7 +242,7 @@ function WalletContent() {
             )}
 
             <Button
-              className="w-full mt-auto"
+              className="w-full"
               onClick={handlePaystackPay}
               disabled={initPaystack.isPending || !paystackAmount}
               data-testid="button-paystack-pay"

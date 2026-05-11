@@ -121,13 +121,13 @@ function AdminDashboardContent() {
   const queryClient = useQueryClient();
 
   const { data: stats, isLoading: statsLoading, refetch: refetchStats } = useAdminGetStats({
-    refetchInterval: 5000,
-    staleTime: 0,
+    refetchInterval: 30000,
+    staleTime: 15_000,
   } as Parameters<typeof useAdminGetStats>[0]);
   const { data: deposits } = useAdminListDeposits({});
   const { data: allOrders, refetch: refetchOrders } = useAdminListOrders({}, {
-    refetchInterval: 5000,
-    staleTime: 0,
+    refetchInterval: 30000,
+    staleTime: 15_000,
   } as any);
   const updateStatus = useAdminUpdateOrderStatus();
 
@@ -344,8 +344,8 @@ function AdminDashboardContent() {
     <div className="flex h-screen bg-background overflow-hidden">
       <AdminSidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
-      <div className="flex-1 flex flex-col overflow-auto">
-        <header className="sticky top-0 z-20 bg-background/95 backdrop-blur border-b border-border px-6 py-4 flex items-center gap-3 flex-wrap">
+      <div className="flex-1 min-w-0 flex flex-col overflow-y-auto">
+        <header className="sticky top-0 z-20 bg-background/95 backdrop-blur border-b border-border px-3 sm:px-6 py-4 flex items-center gap-3 flex-wrap">
           <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setSidebarOpen(true)} data-testid="button-sidebar-toggle">
             <Menu className="w-5 h-5" />
           </Button>
@@ -374,7 +374,7 @@ function AdminDashboardContent() {
           </div>
         </header>
 
-        <main className="flex-1 p-6 space-y-6">
+        <main className="flex-1 p-3 sm:p-6 space-y-6">
 
           {/* Stat Cards */}
           {statsLoading ? (
@@ -510,8 +510,8 @@ function AdminDashboardContent() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-border bg-muted/20">
-                        {["#", "Store", "Agent", "Data", "Network", "Phone", "Revenue", "Sys. Profit", "Status", "Date", "Actions"].map(h => (
-                          <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
+                        {[["#","hidden sm:table-cell"],["Store",""],["Agent","hidden md:table-cell"],["Data",""],["Network","hidden sm:table-cell"],["Phone","hidden sm:table-cell"],["Revenue","hidden sm:table-cell"],["Sys. Profit","hidden sm:table-cell"],["Status",""],["Date","hidden sm:table-cell"],["Actions",""]].map(([h, cls]) => (
+                          <th key={h} className={`text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap ${cls}`}>{h}</th>
                         ))}
                       </tr>
                     </thead>
@@ -523,26 +523,26 @@ function AdminDashboardContent() {
                         const nConf = NETWORKS.find(n => n.value === o.bundleNetwork);
                         return (
                           <tr key={o.id} className="hover:bg-muted/20 transition-colors">
-                            <td className="px-4 py-3 font-mono text-xs text-muted-foreground">#{o.id}</td>
+                            <td className="hidden sm:table-cell px-4 py-3 font-mono text-xs text-muted-foreground">#{o.id}</td>
                             <td className="px-4 py-3">
                               <div className="text-xs font-semibold text-foreground">{o.storeName}</div>
                               <div className="text-[10px] text-muted-foreground font-mono">/{o.storeSlug}</div>
                             </td>
-                            <td className="px-4 py-3 text-xs text-foreground">{o.ownerName ?? "—"}</td>
+                            <td className="hidden md:table-cell px-4 py-3 text-xs text-foreground">{o.ownerName ?? "—"}</td>
                             <td className="px-4 py-3 font-bold text-foreground text-xs">{o.bundleData}</td>
-                            <td className="px-4 py-3">
+                            <td className="hidden sm:table-cell px-4 py-3">
                               {nConf ? <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${nConf.badge}`}>{nConf.label}</span>
                                 : <span className="text-xs text-muted-foreground">{o.bundleNetwork}</span>}
                             </td>
-                            <td className="px-4 py-3 font-mono text-xs">{o.customerPhone}</td>
-                            <td className="px-4 py-3 font-semibold text-xs">GH₵{o.sellingPrice.toFixed(2)}</td>
-                            <td className="px-4 py-3 font-semibold text-xs">
+                            <td className="hidden sm:table-cell px-4 py-3 font-mono text-xs">{o.customerPhone}</td>
+                            <td className="hidden sm:table-cell px-4 py-3 font-semibold text-xs">GH₵{o.sellingPrice.toFixed(2)}</td>
+                            <td className="hidden sm:table-cell px-4 py-3 font-semibold text-xs">
                               {o.systemProfit != null
                                 ? <span className="text-emerald-600">+GH₵{o.systemProfit.toFixed(2)}</span>
                                 : <span className="text-muted-foreground italic text-[10px]">—</span>}
                             </td>
                             <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${statusColor}`}>{o.status}</span></td>
-                            <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(o.createdAt)}</td>
+                            <td className="hidden sm:table-cell px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(o.createdAt)}</td>
                             <td className="px-4 py-3">
                               {canAct ? (
                                 <div className="flex items-center gap-1.5">
@@ -573,8 +573,8 @@ function AdminDashboardContent() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border bg-muted/20">
-                    {["Date", "Agent", "Order ID", "Phone", "Network", "Data", "Amount", "Status", "Update", "Actions"].map(h => (
-                      <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
+                    {([["Date","hidden sm:table-cell"],["Agent","hidden md:table-cell"],["Order ID","hidden sm:table-cell"],["Phone",""],["Network","hidden sm:table-cell"],["Data",""],["Amount",""],["Status",""],["Update","hidden md:table-cell"],["Actions",""]] as [string,string][]).map(([h,cls]) => (
+                      <th key={h} className={`text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap ${cls}`}>{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -588,11 +588,11 @@ function AdminDashboardContent() {
                     </tr>
                   ) : pagedOrders.map(order => (
                     <tr key={order.id} className="hover:bg-muted/20 transition-colors" data-testid={`row-order-${order.id}`}>
-                      <td className="px-5 py-3.5 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(order.createdAt)}</td>
-                      <td className="px-5 py-3.5 text-xs text-foreground">{(order as any).userName ?? "—"}</td>
-                      <td className="px-5 py-3.5 text-xs font-mono text-muted-foreground">#{order.id}</td>
+                      <td className="hidden sm:table-cell px-5 py-3.5 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(order.createdAt)}</td>
+                      <td className="hidden md:table-cell px-5 py-3.5 text-xs text-foreground">{(order as any).userName ?? "—"}</td>
+                      <td className="hidden sm:table-cell px-5 py-3.5 text-xs font-mono text-muted-foreground">#{order.id}</td>
                       <td className="px-5 py-3.5 font-mono text-xs text-muted-foreground">{order.phoneNumber}</td>
-                      <td className="px-5 py-3.5">
+                      <td className="hidden sm:table-cell px-5 py-3.5">
                         {(order as { network?: string | null }).network ? (
                           <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-bold ${
                             (order as { network?: string }).network === "mtn" ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400" :
@@ -605,14 +605,14 @@ function AdminDashboardContent() {
                         ) : <span className="text-muted-foreground/40 text-xs">—</span>}
                       </td>
                       <td className="px-5 py-3.5 font-bold text-foreground text-xs">{(order as { bundleData?: string }).bundleData ?? "—"}</td>
-                      <td className="px-5 py-3.5 font-bold text-foreground">GH₵{Number(order.price).toFixed(2)}</td>
+                      <td className="px-5 py-3.5 font-bold text-foreground text-xs">GH₵{Number(order.price).toFixed(2)}</td>
                       <td className="px-5 py-3.5">
                         <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold capitalize ${STATUS_COLORS[order.status]}`}>
                           <span className={`w-1.5 h-1.5 rounded-full ${STATUS_DOT[order.status]}`} />
                           {order.status}
                         </span>
                       </td>
-                      <td className="px-5 py-3.5">
+                      <td className="hidden md:table-cell px-5 py-3.5">
                         <Select defaultValue={order.status} onValueChange={v => handleStatusChange(order.id, v)}>
                           <SelectTrigger className="w-32 h-7 text-xs" data-testid={`select-status-${order.id}`}>
                             <SelectValue />

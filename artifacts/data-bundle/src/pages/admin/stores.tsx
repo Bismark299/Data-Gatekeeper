@@ -93,6 +93,19 @@ function AdminStoresContent() {
     } finally { setWithdrawalActionId(null); }
   };
 
+  const handleWithdrawalComplete = async (wId: number) => {
+    setWithdrawalActionId(wId);
+    try {
+      const res = await fetch(`/api/admin/stores/withdrawals/${wId}/complete`, { method: "PATCH", credentials: "include" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error);
+      toast({ title: `Withdrawal #${wId} marked as completed` });
+      refetchWithdrawals(); refetch();
+    } catch (e: unknown) {
+      toast({ title: (e as Error).message || "Error completing withdrawal", variant: "destructive" });
+    } finally { setWithdrawalActionId(null); }
+  };
+
   const handleWithdrawalReject = async (wId: number) => {
     setWithdrawalActionId(wId);
     try {
@@ -157,7 +170,7 @@ function AdminStoresContent() {
         </div>
       )}
 
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
         <header className="h-14 flex items-center gap-3 px-4 border-b border-border bg-background shrink-0">
           <button className="lg:hidden p-2 rounded-lg hover:bg-muted" onClick={() => setSidebarOpen(true)}>
             <Menu className="w-5 h-5" />
@@ -181,7 +194,7 @@ function AdminStoresContent() {
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto p-6">
+        <main className="flex-1 overflow-y-auto p-3 sm:p-6">
           {/* Store Detail View */}
           {selectedStoreId && selectedStore ? (
             <div className="max-w-5xl mx-auto space-y-6">
@@ -239,8 +252,8 @@ function AdminStoresContent() {
                       <table className="w-full text-sm">
                         <thead>
                           <tr className="border-b border-border bg-muted/20">
-                            {["#", "Data", "Network", "Phone", "Revenue", "Profit", "Status", "Date", "Actions"].map(h => (
-                              <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
+                            {([["#","hidden sm:table-cell"],["Data",""],["Network","hidden sm:table-cell"],["Phone",""],["Revenue","hidden sm:table-cell"],["Profit","hidden sm:table-cell"],["Status",""],["Date","hidden sm:table-cell"],["Actions",""]] as [string,string][]).map(([h,cls]) => (
+                              <th key={h} className={`text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap ${cls}`}>{h}</th>
                             ))}
                           </tr>
                         </thead>
@@ -250,22 +263,22 @@ function AdminStoresContent() {
                             const isActioning = actionId === o.id;
                             return (
                               <tr key={o.id} className="hover:bg-muted/20 transition-colors">
-                                <td className="px-4 py-3 font-mono text-xs text-muted-foreground">#{o.id}</td>
+                                <td className="hidden sm:table-cell px-4 py-3 font-mono text-xs text-muted-foreground">#{o.id}</td>
                                 <td className="px-4 py-3 font-bold text-xs">{o.bundleData}</td>
-                                <td className="px-4 py-3">
+                                <td className="hidden sm:table-cell px-4 py-3">
                                   <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${NETWORK_BADGE[o.bundleNetwork] ?? "bg-gray-100 text-gray-700"}`}>
                                     {NETWORK_LABEL[o.bundleNetwork] ?? o.bundleNetwork}
                                   </span>
                                 </td>
                                 <td className="px-4 py-3 font-mono text-xs">{o.customerPhone}</td>
-                                <td className="px-4 py-3 font-semibold text-xs">GH₵{o.sellingPrice.toFixed(2)}</td>
-                                <td className="px-4 py-3 text-emerald-600 font-semibold text-xs">+GH₵{o.profit.toFixed(2)}</td>
+                                <td className="hidden sm:table-cell px-4 py-3 font-semibold text-xs">GH₵{o.sellingPrice.toFixed(2)}</td>
+                                <td className="hidden sm:table-cell px-4 py-3 text-emerald-600 font-semibold text-xs">+GH₵{o.profit.toFixed(2)}</td>
                                 <td className="px-4 py-3">
                                   <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${STATUS_COLORS[o.status] ?? ""}`}>
                                     {o.status}
                                   </span>
                                 </td>
-                                <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(o.createdAt)}</td>
+                                <td className="hidden sm:table-cell px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(o.createdAt)}</td>
                                 <td className="px-4 py-3">
                                   {canAct ? (
                                     <div className="flex items-center gap-1">
@@ -302,8 +315,8 @@ function AdminStoresContent() {
                       <table className="w-full text-sm">
                         <thead>
                           <tr className="border-b border-border bg-muted/20">
-                            {["#", "Amount", "Method", "Account", "Account Name", "Status", "Ref", "Date", "Actions"].map(h => (
-                              <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
+                            {([["#","hidden sm:table-cell"],["Amount",""],["Method","hidden sm:table-cell"],["Account",""],["Account Name","hidden sm:table-cell"],["Status",""],["Ref","hidden sm:table-cell"],["Date","hidden sm:table-cell"],["Actions",""]] as [string,string][]).map(([h,cls]) => (
+                              <th key={h} className={`text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap ${cls}`}>{h}</th>
                             ))}
                           </tr>
                         </thead>
@@ -314,22 +327,22 @@ function AdminStoresContent() {
                             const networkKey = w.bankCode ?? w.momoNetwork;
                             return (
                             <tr key={w.id} className={`hover:bg-muted/20 transition-colors ${needsAction ? "bg-amber-50/40 dark:bg-amber-900/5" : ""}`}>
-                              <td className="px-4 py-3 font-mono text-xs text-muted-foreground">#{w.id}</td>
+                              <td className="hidden sm:table-cell px-4 py-3 font-mono text-xs text-muted-foreground">#{w.id}</td>
                               <td className="px-4 py-3 font-bold text-foreground">GH₵{w.amount.toFixed(2)}</td>
-                              <td className="px-4 py-3">
+                              <td className="hidden sm:table-cell px-4 py-3">
                                 <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${NETWORK_BADGE[networkKey] ?? "bg-gray-100 text-gray-700"}`}>
                                   {NETWORK_LABEL[networkKey] ?? w.method ?? networkKey ?? "—"}
                                 </span>
                               </td>
                               <td className="px-4 py-3 font-mono text-xs">{w.accountNumber || "—"}</td>
-                              <td className="px-4 py-3 text-xs font-medium">{w.accountName || "—"}</td>
+                              <td className="hidden sm:table-cell px-4 py-3 text-xs font-medium">{w.accountName || "—"}</td>
                               <td className="px-4 py-3">
                                 <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${STATUS_COLORS[w.status] ?? "bg-gray-100 text-gray-700"}`}>
                                   {STATUS_LABEL[w.status] ?? w.status}
                                 </span>
                               </td>
-                              <td className="px-4 py-3 font-mono text-[10px] text-muted-foreground max-w-[120px] truncate" title={w.note}>{w.note || "—"}</td>
-                              <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(w.createdAt)}</td>
+                              <td className="hidden sm:table-cell px-4 py-3 font-mono text-[10px] text-muted-foreground max-w-[120px] truncate" title={w.note}>{w.note || "—"}</td>
+                              <td className="hidden sm:table-cell px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(w.createdAt)}</td>
                               <td className="px-4 py-3">
                                 {needsAction ? (
                                   <div className="flex items-center gap-1">
@@ -352,6 +365,16 @@ function AdminStoresContent() {
                                       {isActioning ? "…" : "Refund"}
                                     </button>
                                   </div>
+                                ) : w.status === "processing" ? (
+                                  <button
+                                    onClick={() => handleWithdrawalComplete(w.id)}
+                                    disabled={isActioning}
+                                    className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold bg-blue-100 text-blue-700 hover:bg-blue-200 disabled:opacity-50 transition-colors whitespace-nowrap"
+                                    title="Manually mark as completed (use if webhook didn't arrive)"
+                                  >
+                                    <CheckCircle2 className="w-3 h-3" />
+                                    {isActioning ? "…" : "Mark Done"}
+                                  </button>
                                 ) : (
                                   <span className="text-xs text-muted-foreground/40 italic">—</span>
                                 )}

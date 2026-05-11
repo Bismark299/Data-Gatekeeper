@@ -53,18 +53,24 @@ function AdminDepositsContent() {
   const approveMutation = useAdminApproveDeposit();
   const rejectMutation  = useAdminRejectDeposit();
 
-  const invalidate = () => queryClient.invalidateQueries({ queryKey: getAdminListDepositsQueryKey() });
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: getAdminListDepositsQueryKey({}) });
+
+  const patchDeposit = (id: number, patch: Record<string, unknown>) =>
+    queryClient.setQueryData(
+      getAdminListDepositsQueryKey({}),
+      (old: unknown) => Array.isArray(old) ? old.map((d: { id: number }) => d.id === id ? { ...d, ...patch } : d) : old
+    );
 
   const handleApprove = (id: number) => {
     approveMutation.mutate({ id }, {
-      onSuccess: () => { toast({ title: "Deposit approved and wallet credited" }); invalidate(); },
+      onSuccess: () => { toast({ title: "Deposit approved and wallet credited" }); patchDeposit(id, { status: "completed" }); },
       onError:   (e: unknown) => toast({ title: (e as { message?: string })?.message ?? "Approval failed", variant: "destructive" }),
     });
   };
 
   const handleReject = (id: number) => {
     rejectMutation.mutate({ id }, {
-      onSuccess: () => { toast({ title: "Deposit claim rejected" }); invalidate(); },
+      onSuccess: () => { toast({ title: "Deposit claim rejected" }); patchDeposit(id, { status: "rejected" }); },
       onError:   (e: unknown) => toast({ title: (e as { message?: string })?.message ?? "Rejection failed", variant: "destructive" }),
     });
   };
@@ -117,8 +123,8 @@ function AdminDepositsContent() {
     <div className="flex h-screen bg-background overflow-hidden">
       <AdminSidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
-      <div className="flex-1 flex flex-col overflow-auto">
-        <header className="sticky top-0 z-20 bg-background/95 backdrop-blur border-b border-border px-6 py-4 flex items-center gap-3 flex-wrap">
+      <div className="flex-1 min-w-0 flex flex-col overflow-y-auto">
+        <header className="sticky top-0 z-20 bg-background/95 backdrop-blur border-b border-border px-3 sm:px-6 py-4 flex items-center gap-3 flex-wrap">
           <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setSidebarOpen(true)}>
             <Menu className="w-5 h-5" />
           </Button>
@@ -140,7 +146,7 @@ function AdminDepositsContent() {
           </div>
         </header>
 
-        <main className="flex-1 p-6 space-y-4">
+<main className="flex-1 p-3 sm:p-6 space-y-4">
 
           {/* Summary mini cards */}
           <div className="grid grid-cols-3 gap-4">
@@ -211,27 +217,27 @@ function AdminDepositsContent() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-border bg-muted/20">
-                      {["Date", "User", "Amount", "Method", "Reference", "Status", "Actions"].map(h => (
-                        <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
+                      {([["Date","hidden sm:table-cell"],["User",""],["Amount",""],["Method","hidden sm:table-cell"],["Reference","hidden sm:table-cell"],["Status",""],["Actions",""]] as [string,string][]).map(([h,cls]) => (
+                        <th key={h} className={`text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap ${cls}`}>{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
                     {paged.map(d => (
                       <tr key={d.id} className="hover:bg-muted/20 transition-colors" data-testid={`deposit-claim-${d.id}`}>
-                        <td className="px-5 py-3.5 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(d.createdAt)}</td>
+                        <td className="hidden sm:table-cell px-5 py-3.5 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(d.createdAt)}</td>
                         <td className="px-5 py-3.5">
                           <div className="font-semibold text-foreground">{d.userName}</div>
                           <div className="text-xs text-muted-foreground">{d.userEmail}</div>
                         </td>
                         <td className="px-5 py-3.5 font-bold text-emerald-600">GH₵{d.amount.toFixed(2)}</td>
-                        <td className="px-5 py-3.5">
+                        <td className="hidden sm:table-cell px-5 py-3.5">
                           <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
                             {d.method === "paystack" ? <CreditCard className="w-3.5 h-3.5" /> : <Smartphone className="w-3.5 h-3.5" />}
                             {d.method === "paystack" ? "Paystack" : "MoMo"}
                           </span>
                         </td>
-                        <td className="px-5 py-3.5 font-mono text-xs text-muted-foreground truncate max-w-[130px]">{d.reference ?? "—"}</td>
+                        <td className="hidden sm:table-cell px-5 py-3.5 font-mono text-xs text-muted-foreground truncate max-w-[130px]">{d.reference ?? "—"}</td>
                         <td className="px-5 py-3.5">
                           <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold capitalize ${STATUS_STYLES[d.status]}`}>
                             <span className={`w-1.5 h-1.5 rounded-full ${STATUS_DOT[d.status]}`} />
@@ -249,7 +255,9 @@ function AdminDepositsContent() {
                               </Button>
                             </div>
                           ) : (
-                            <span className="text-xs text-muted-foreground">{d.note ?? "—"}</span>
+                            <span className="text-xs text-muted-foreground" title={d.note ?? undefined}>
+                              {d.note ? (d.note.length > 40 ? d.note.slice(0, 40) + "…" : d.note) : "—"}
+                            </span>
                           )}
                         </td>
                       </tr>

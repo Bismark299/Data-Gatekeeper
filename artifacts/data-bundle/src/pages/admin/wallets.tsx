@@ -228,23 +228,23 @@ function DepositHistory({ userId }: { userId: number }) {
       <table className="w-full text-xs">
         <thead>
           <tr className="border-b border-border bg-muted/30">
-            {["Date", "Amount", "Method", "Note", "Reference", "Status"].map(h => (
-              <th key={h} className="text-left px-4 py-2 font-semibold text-muted-foreground uppercase tracking-wide">{h}</th>
+            {([["Date","hidden sm:table-cell"],["Amount",""],["Method","hidden sm:table-cell"],["Note","hidden sm:table-cell"],["Reference","hidden sm:table-cell"],["Status",""]] as [string,string][]).map(([h,cls]) => (
+              <th key={h} className={`text-left px-4 py-2 font-semibold text-muted-foreground uppercase tracking-wide ${cls}`}>{h}</th>
             ))}
           </tr>
         </thead>
         <tbody className="divide-y divide-border">
           {deposits.map(d => (
             <tr key={d.id} className="hover:bg-muted/10 transition-colors">
-              <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">{fmtDate(d.createdAt)}</td>
+              <td className="hidden sm:table-cell px-4 py-2.5 text-muted-foreground whitespace-nowrap">{fmtDate(d.createdAt)}</td>
               <td className="px-4 py-2.5 font-bold text-emerald-600">+GH₵{d.amount.toFixed(2)}</td>
-              <td className="px-4 py-2.5">
+              <td className="hidden sm:table-cell px-4 py-2.5">
                 <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold capitalize ${STATUS_COLORS[d.method] ?? "bg-muted text-muted-foreground"}`}>
                   {METHOD_LABEL[d.method] ?? d.method}
                 </span>
               </td>
-              <td className="px-4 py-2.5 text-muted-foreground">{d.note ?? "—"}</td>
-              <td className="px-4 py-2.5 font-mono text-muted-foreground max-w-[120px] truncate">{d.reference ?? "—"}</td>
+              <td className="hidden sm:table-cell px-4 py-2.5 text-muted-foreground">{d.note ?? "—"}</td>
+              <td className="hidden sm:table-cell px-4 py-2.5 font-mono text-muted-foreground max-w-[120px] truncate">{d.reference ?? "—"}</td>
               <td className="px-4 py-2.5">
                 <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold capitalize ${STATUS_COLORS[d.status] ?? ""}`}>{d.status}</span>
               </td>
@@ -461,8 +461,8 @@ function AllTransactions() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-muted/40 border-b border-border">
-                  {["Date", "Reference", "Agent", "Amount (GHS)", "Prev Balance", "Curr Balance", "Status", "Type", "Source"].map(h => (
-                    <th key={h} className="text-left px-4 py-3.5 text-[11px] font-bold text-muted-foreground uppercase tracking-wider whitespace-nowrap">
+                  {([["Date","hidden sm:table-cell"],["Reference","hidden sm:table-cell"],["Agent",""],["Amount (GHS)",""],["Prev Balance","hidden sm:table-cell"],["Curr Balance","hidden sm:table-cell"],["Status",""],["Type",""],["Source","hidden sm:table-cell"]] as [string,string][]).map(([h,cls]) => (
+                    <th key={h} className={`text-left px-4 py-3.5 text-[11px] font-bold text-muted-foreground uppercase tracking-wider whitespace-nowrap ${cls}`}>
                       {h}
                     </th>
                   ))}
@@ -472,12 +472,12 @@ function AllTransactions() {
                 {rows.map(r => (
                   <tr key={r.key} className={`hover:bg-muted/30 transition-colors ${isFetching ? "opacity-60" : ""}`}>
                     {/* Date */}
-                    <td className="px-4 py-3 whitespace-nowrap">
+                    <td className="hidden sm:table-cell px-4 py-3 whitespace-nowrap">
                       <span className="text-muted-foreground text-xs">{fmtDatetime(r.date)}</span>
                     </td>
 
                     {/* Reference */}
-                    <td className="px-4 py-3 max-w-[180px]">
+                    <td className="hidden sm:table-cell px-4 py-3 max-w-[180px]">
                       <span className="font-mono text-xs text-foreground/80 truncate block" title={r.ref}>{r.ref}</span>
                       {r.note && <span className="text-[10px] text-muted-foreground truncate block max-w-[160px]" title={r.note}>{r.note}</span>}
                     </td>
@@ -496,12 +496,12 @@ function AllTransactions() {
                     </td>
 
                     {/* Prev Balance */}
-                    <td className="px-4 py-3 whitespace-nowrap">
+                    <td className="hidden sm:table-cell px-4 py-3 whitespace-nowrap">
                       <span className="text-muted-foreground text-xs">{r.prevBalance.toFixed(2)}</span>
                     </td>
 
                     {/* Curr Balance */}
-                    <td className="px-4 py-3 whitespace-nowrap">
+                    <td className="hidden sm:table-cell px-4 py-3 whitespace-nowrap">
                       <span className="font-semibold text-xs text-foreground">{r.currBalance.toFixed(2)}</span>
                     </td>
 
@@ -524,7 +524,7 @@ function AllTransactions() {
                     </td>
 
                     {/* Source */}
-                    <td className="px-4 py-3 whitespace-nowrap">
+                    <td className="hidden sm:table-cell px-4 py-3 whitespace-nowrap">
                       <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${SOURCE_META[r.source]?.color ?? "bg-muted text-muted-foreground"}`}>
                         {SOURCE_META[r.source]?.label ?? r.source}
                       </span>
@@ -685,7 +685,7 @@ function AdminWalletsContent() {
         </div>
       )}
 
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
         {/* Header */}
         <header className="h-14 flex items-center gap-3 px-4 border-b border-border bg-background shrink-0">
           <button className="lg:hidden p-2 rounded-lg hover:bg-muted" onClick={() => setSidebarOpen(true)}>
@@ -727,7 +727,7 @@ function AdminWalletsContent() {
             </div>
           </div>
 
-          <main className="p-6 space-y-5 max-w-[1400px] mx-auto">
+          <main className="p-3 sm:p-6 space-y-5 max-w-[1400px] mx-auto">
             {/* Stat cards */}
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
               {STAT_CARDS.map(c => (
@@ -825,7 +825,7 @@ function AdminWalletsContent() {
                                 className="hover:bg-muted/20 transition-colors group"
                                 data-testid={`row-wallet-${w.id}`}
                               >
-                                <td className="px-5 py-4">
+                                <td className="hidden sm:table-cell px-5 py-4">
                                   {w.userDepositCode ? (
                                     <span className="text-xs font-mono font-bold text-primary bg-primary/10 border border-primary/20 px-2 py-1 rounded-lg whitespace-nowrap">
                                       {w.userDepositCode}
@@ -851,12 +851,12 @@ function AdminWalletsContent() {
                                     </div>
                                   </button>
                                 </td>
-                                <td className="px-5 py-4">
+                                <td className="hidden sm:table-cell px-5 py-4">
                                   <span className="text-sm font-semibold text-foreground">
                                     GH₵{(w.totalLoaded ?? 0).toFixed(2)}
                                   </span>
                                 </td>
-                                <td className="px-5 py-4">
+                                <td className="hidden sm:table-cell px-5 py-4">
                                   <span className="text-sm font-semibold text-foreground">
                                     GH₵{(w.totalOrders ?? 0).toFixed(2)}
                                   </span>
@@ -866,12 +866,12 @@ function AdminWalletsContent() {
                                     GH₵{w.balance.toFixed(2)}
                                   </span>
                                 </td>
-                                <td className="px-5 py-4">
+                                <td className="hidden sm:table-cell px-5 py-4">
                                   <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide ${ROLE_COLORS[w.userRole] ?? "bg-muted text-muted-foreground"}`}>
                                     {w.userRole}
                                   </span>
                                 </td>
-                                <td className="px-5 py-4">
+                                <td className="hidden sm:table-cell px-5 py-4">
                                   <div className="flex items-center gap-1 text-xs text-muted-foreground">
                                     <Clock className="w-3 h-3" />
                                     {w.updatedAt ? fmtDate(w.updatedAt) : "—"}

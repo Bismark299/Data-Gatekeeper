@@ -34,6 +34,9 @@ import { useCart } from "@/context/CartContext";
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
+      staleTime: 15_000,          // treat data as fresh for 15 s — avoids back-to-back refetches on navigation
+      gcTime: 5 * 60 * 1000,     // keep unused data in memory for 5 min so revisiting a page is instant
+      refetchOnWindowFocus: false, // don't silently refetch everything when the user alt-tabs back
       retry: (failureCount, error: unknown) => {
         const status = (error as { status?: number })?.status;
         if (status === 401 || status === 403) return false;

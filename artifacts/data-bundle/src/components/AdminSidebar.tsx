@@ -43,7 +43,7 @@ export function AdminSidebar({ open, onClose }: AdminSidebarProps) {
     },
     // only poll when the key is actually configured
     refetchInterval: (query) => query.state.data?.configured === false ? false : 30_000,
-    staleTime: 0,
+    staleTime: 20_000,
     retry: false,
   });
   const mcbisBalance = mcbisData?.balance ?? null;

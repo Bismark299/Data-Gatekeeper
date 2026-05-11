@@ -59,6 +59,12 @@ function AdminUsersContent() {
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: getAdminListUsersQueryKey({}) });
 
+  const patchUser = (id: number, patch: Record<string, unknown>) =>
+    queryClient.setQueryData(
+      getAdminListUsersQueryKey({}),
+      (old: unknown) => Array.isArray(old) ? old.map((u: { id: number }) => u.id === id ? { ...u, ...patch } : u) : old
+    );
+
   const createUser = async () => {
     setCreateError("");
     if (!newName.trim() || !newEmail.trim() || !newPassword.trim()) {
@@ -84,13 +90,13 @@ function AdminUsersContent() {
 
   const toggleActive = (u: { id: number; isActive: boolean; name: string }) => {
     updateUser.mutate({ id: u.id, data: { isActive: !u.isActive } }, {
-      onSuccess: () => { toast({ title: `${u.name} ${u.isActive ? "deactivated" : "activated"}` }); invalidate(); },
+      onSuccess: () => { toast({ title: `${u.name} ${u.isActive ? "deactivated" : "activated"}` }); patchUser(u.id, { isActive: !u.isActive }); },
     });
   };
 
   const changeRole = (u: { id: number; name: string }, newRole: string) => {
     updateUser.mutate({ id: u.id, data: { role: newRole } }, {
-      onSuccess: () => { toast({ title: `${u.name} is now ${newRole}` }); invalidate(); },
+      onSuccess: () => { toast({ title: `${u.name} is now ${newRole}` }); patchUser(u.id, { role: newRole }); },
     });
   };
 
@@ -159,8 +165,8 @@ function AdminUsersContent() {
     <div className="flex h-screen bg-background overflow-hidden">
       <AdminSidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
-      <div className="flex-1 flex flex-col overflow-auto">
-        <header className="sticky top-0 z-20 bg-background/95 backdrop-blur border-b border-border px-6 py-4 flex items-center gap-3 flex-wrap">
+      <div className="flex-1 min-w-0 flex flex-col overflow-y-auto">
+          <header className="sticky top-0 z-20 bg-background/95 backdrop-blur border-b border-border px-3 sm:px-6 py-4 flex items-center gap-3 flex-wrap">
           <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setSidebarOpen(true)}>
             <Menu className="w-5 h-5" />
           </Button>
@@ -182,7 +188,7 @@ function AdminUsersContent() {
           </div>
         </header>
 
-        <main className="flex-1 p-6 space-y-4">
+<main className="flex-1 p-3 sm:p-6 space-y-4">
 
           {/* Summary cards */}
           <div className="grid grid-cols-4 gap-4">
@@ -271,8 +277,8 @@ function AdminUsersContent() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-border bg-muted/20">
-                      {["Ref Code", "Joined", "Name", "Email", "Phone", "Balance", "Role", "Status", "Actions"].map(h => (
-                        <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
+                      {([["Ref Code","hidden sm:table-cell"],["Joined","hidden sm:table-cell"],["Name",""],["Email","hidden md:table-cell"],["Phone","hidden md:table-cell"],["Balance",""],["Role",""],["Status",""],["Actions",""]] as [string,string][]).map(([h,cls]) => (
+                        <th key={h} className={`text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap ${cls}`}>{h}</th>
                       ))}
                     </tr>
                   </thead>
@@ -281,7 +287,7 @@ function AdminUsersContent() {
                       const walletBalance = (u as { walletBalance?: number }).walletBalance ?? 0;
                       return (
                         <tr key={u.id} className="hover:bg-muted/20 transition-colors" data-testid={`row-user-${u.id}`}>
-                          <td className="px-5 py-3.5">
+                          <td className="hidden sm:table-cell px-5 py-3.5">
                             {(u as { depositCode?: string | null }).depositCode ? (
                               <span className="text-xs font-mono font-bold text-primary bg-primary/10 border border-primary/20 px-2 py-0.5 rounded-md whitespace-nowrap">
                                 {(u as { depositCode?: string | null }).depositCode}
@@ -290,7 +296,7 @@ function AdminUsersContent() {
                               <span className="text-xs text-muted-foreground">—</span>
                             )}
                           </td>
-                          <td className="px-5 py-3.5 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(u.createdAt)}</td>
+                          <td className="hidden sm:table-cell px-5 py-3.5 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(u.createdAt)}</td>
                           <td className="px-5 py-3.5">
                             <button
                               onClick={() => navigate(`/admin/agents/${u.id}`)}
@@ -302,8 +308,8 @@ function AdminUsersContent() {
                               <span className="font-semibold text-foreground whitespace-nowrap group-hover/agent:text-primary transition-colors">{u.name}</span>
                             </button>
                           </td>
-                          <td className="px-5 py-3.5 text-xs text-muted-foreground">{u.email}</td>
-                          <td className="px-5 py-3.5 text-sm text-muted-foreground font-mono">
+                          <td className="hidden md:table-cell px-5 py-3.5 text-xs text-muted-foreground">{u.email}</td>
+                          <td className="hidden md:table-cell px-5 py-3.5 text-sm text-muted-foreground font-mono">
                             {u.phone ? (u.phone.startsWith("+233") ? "0" + u.phone.slice(4) : u.phone) : "—"}
                           </td>
                           <td className="px-5 py-3.5">

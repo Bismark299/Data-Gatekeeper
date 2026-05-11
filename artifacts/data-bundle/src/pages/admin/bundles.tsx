@@ -190,8 +190,8 @@ function AdminBundlesContent() {
     <div className="flex h-screen bg-background overflow-hidden">
       <AdminSidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
-      <div className="flex-1 flex flex-col overflow-auto">
-        <header className="sticky top-0 z-20 bg-background/95 backdrop-blur border-b border-border px-6 py-4 flex items-center gap-3 flex-wrap">
+      <div className="flex-1 min-w-0 flex flex-col overflow-y-auto">
+        <header className="sticky top-0 z-20 bg-background/95 backdrop-blur border-b border-border px-3 sm:px-6 py-4 flex items-center gap-3 flex-wrap">
           <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setSidebarOpen(true)}>
             <Menu className="w-5 h-5" />
           </Button>
@@ -213,7 +213,7 @@ function AdminBundlesContent() {
           </div>
         </header>
 
-        <main className="flex-1 p-6 space-y-4">
+<main className="flex-1 p-3 sm:p-6 space-y-4">
 
           {/* Filter bar */}
           <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
@@ -292,8 +292,8 @@ function AdminBundlesContent() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-border bg-muted/20">
-                      {["Network", "Data", "Buying Cost", "Dealer Price", "Agent Price", "Status", "Actions"].map(h => (
-                        <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
+                      {([["Network",""],["Data",""],["Buying Cost","hidden sm:table-cell"],["Dealer Price","hidden sm:table-cell"],["Agent Price","hidden sm:table-cell"],["Status",""],["Actions",""]] as [string,string][]).map(([h,cls]) => (
+                        <th key={h} className={`text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap ${cls}`}>{h}</th>
                       ))}
                     </tr>
                   </thead>
@@ -309,13 +309,13 @@ function AdminBundlesContent() {
                             </span>
                           </td>
                           <td className="px-5 py-3.5 font-bold text-foreground text-base">{bundle.dataAmount}</td>
-                          <td className="px-5 py-3.5 font-bold text-foreground">GH₵{Number(bundle.price).toFixed(2)}</td>
-                          <td className="px-5 py-3.5">
+                          <td className="hidden sm:table-cell px-5 py-3.5">GH₵{Number(bundle.price).toFixed(2)}</td>
+                          <td className="hidden sm:table-cell px-5 py-3.5">
                             {(bundle as Bundle).dealerPrice != null
                               ? <span className="font-semibold text-foreground">GH₵{Number((bundle as Bundle).dealerPrice).toFixed(2)}</span>
                               : <span className="text-muted-foreground/40 italic text-xs">—</span>}
                           </td>
-                          <td className="px-5 py-3.5">
+                          <td className="hidden sm:table-cell px-5 py-3.5">
                             {(bundle as Bundle).agentPrice != null
                               ? <span className="font-semibold text-foreground">GH₵{Number((bundle as Bundle).agentPrice).toFixed(2)}</span>
                               : <span className="inline-flex items-center gap-1 text-amber-500 text-xs font-medium"><AlertTriangle className="w-3 h-3" />Not set</span>}

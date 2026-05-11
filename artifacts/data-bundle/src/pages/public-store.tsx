@@ -124,7 +124,7 @@ function CheckoutDialog({
               </div>
               <div>
                 <Label htmlFor="co-email" className="text-sm font-semibold mb-1.5 block flex items-center gap-1.5">
-                  <Mail className="w-3.5 h-3.5" /> Email for Receipt
+                  <Mail className="w-3.5 h-3.5" /> Email for Receipt <span className="text-muted-foreground font-normal text-xs">(optional)</span>
                 </Label>
                 <Input id="co-email" type="email" placeholder="you@example.com" value={email}
                   onChange={e => setEmail(e.target.value)} disabled={checkout.isPending} />
@@ -167,7 +167,7 @@ function CheckoutDialog({
           <Button variant="outline" onClick={onClose} disabled={checkout.isPending}>Cancel</Button>
           <Button
             onClick={() => checkout.mutate()}
-            disabled={!phone.trim() || phone.trim().length < 7 || !email.includes("@") || checkout.isPending}
+            disabled={!phone.trim() || phone.trim().length < 7 || checkout.isPending}
             className="gap-2"
           >
             {checkout.isPending
@@ -276,7 +276,17 @@ export default function PublicStorePage() {
     retry: false,
   });
 
-  const networks = data ? [...new Set(data.bundles.map(b => b.network))].sort() : [];
+  const { data: networkSettings } = useQuery<Record<string, boolean>>({
+    queryKey: ["networkSettings"],
+    queryFn: () => fetch("/api/settings/networks").then(r => r.json() as Promise<Record<string, boolean>>),
+    staleTime: 60_000,
+  });
+
+  const networks = data
+    ? [...new Set(data.bundles.map(b => b.network))]
+        .filter(n => !networkSettings || networkSettings[n] !== false)
+        .sort()
+    : [];
   const displayNetwork = activeNetwork ?? networks[0] ?? null;
   const filtered = (data?.bundles ?? []).filter(b => !displayNetwork || b.network === displayNetwork);
 
@@ -416,7 +426,7 @@ export default function PublicStorePage() {
             <p className="text-muted-foreground mt-1">Check back soon.</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
             {sorted.map(bundle => (
               <BundleCard
                 key={bundle.id}

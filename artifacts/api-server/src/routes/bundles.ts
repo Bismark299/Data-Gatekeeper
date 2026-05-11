@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
-import { eq, and, gte, lte, type SQL } from "drizzle-orm";
-import { db, bundlesTable, usersTable } from "@workspace/db";
+import { eq, and, gte, lte, inArray, type SQL } from "drizzle-orm";
+import { db, bundlesTable, usersTable, settingsTable } from "@workspace/db";
 import {
   ListBundlesQueryParams,
   CreateBundleBody,
@@ -54,6 +54,25 @@ function formatBundleForRole(b: typeof bundlesTable.$inferSelect, role: string) 
     createdAt: b.createdAt.toISOString(),
   };
 }
+
+const NETWORKS = ["mtn", "telecel", "at-ishare", "at-bigtime"] as const;
+
+// ── Public: which networks are currently enabled ───────────────────────────────
+router.get("/settings/networks", async (_req, res): Promise<void> => {
+  const keys = NETWORKS.map(n => `network_${n}_enabled`);
+  const rows = await db
+    .select({ key: settingsTable.key, value: settingsTable.value })
+    .from(settingsTable)
+    .where(inArray(settingsTable.key, keys));
+  const map: Record<string, string> = {};
+  for (const r of rows) map[r.key] = r.value;
+  const result: Record<string, boolean> = {};
+  for (const n of NETWORKS) {
+    // default to true if not explicitly set to "false"
+    result[n] = (map[`network_${n}_enabled`] ?? "true") !== "false";
+  }
+  res.json(result);
+});
 
 router.get("/bundles", async (req, res): Promise<void> => {
   const params = ListBundlesQueryParams.safeParse(req.query);

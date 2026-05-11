@@ -64,8 +64,8 @@ export function AdminFinancialSummary() {
   const { data, isLoading } = useQuery({
     queryKey: ["admin-financial-summary"],
     queryFn: fetchFinancialSummary,
-    refetchInterval: 5_000,
-    staleTime: 0,
+    refetchInterval: 30_000,
+    staleTime: 15_000,
   });
 
   const fmt = (n: number | undefined | null) => `GH₵${(Number(n ?? 0)).toFixed(2)}`;

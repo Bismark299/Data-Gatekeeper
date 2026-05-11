@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useListBundles } from "@workspace/api-client-react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
 import { Navbar } from "@/components/Navbar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -205,9 +205,23 @@ export default function Bundles() {
   const [selected, setSelected] = useState<Bundle | null>(null);
   const [phoneNumber, setPhoneNumber] = useState("");
   const [showDialog, setShowDialog] = useState(false);
-  const [showBulk, setShowBulk] = useState(false);
-
   const isAgent = user?.role === "agent" || user?.role === "dealer";
+
+  const { data: networkSettings } = useQuery<Record<string, boolean>>({
+    queryKey: ["networkSettings"],
+    queryFn: () => fetch("/api/settings/networks").then(r => r.json() as Promise<Record<string, boolean>>),
+    staleTime: 60_000,
+  });
+
+  const enabledTabs = NETWORK_TABS.filter(t => !networkSettings || networkSettings[t.key] !== false);
+
+  // If the active network gets disabled, switch to the first enabled one
+  useEffect(() => {
+    if (networkSettings && networkSettings[activeNetwork] === false) {
+      const first = NETWORK_TABS.find(t => networkSettings[t.key] !== false);
+      if (first) setActiveNetwork(first.key);
+    }
+  }, [networkSettings, activeNetwork]);
 
   const { data: bundles, isLoading } = useListBundles({ network: activeNetwork });
 
@@ -247,7 +261,7 @@ export default function Bundles() {
 
         {/* Network tabs */}
         <div className="flex flex-wrap items-center gap-2 mb-6">
-          {NETWORK_TABS.map(({ key, dot }) => {
+          {enabledTabs.map(({ key, dot }) => {
             const style = NETWORK_STYLES[key];
             const isActive = activeNetwork === key;
             return (
@@ -266,22 +280,11 @@ export default function Bundles() {
               </button>
             );
           })}
-          {isAgent && (
-            <Button
-              onClick={() => setShowBulk(true)}
-              variant="outline"
-              className="ml-auto gap-2 font-semibold"
-            >
-              <List className="w-4 h-4" /> Bulk Order
-            </Button>
-          )}
         </div>
 
         {/* Bundles grid */}
         {isLoading ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
-            {Array.from({ length: 8 }).map((_, i) => (
-              <div key={i} className="h-56 rounded-2xl bg-muted animate-pulse" />
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
             ))}
           </div>
         ) : filtered.length === 0 ? (
@@ -292,7 +295,7 @@ export default function Bundles() {
           </div>
         ) : (
           <>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
               {filtered.map(bundle => (
                 <BundleCard
                   key={bundle.id}
@@ -309,8 +312,6 @@ export default function Bundles() {
           </>
         )}
       </div>
-
-      {showBulk && <BulkOrderModal network={activeNetwork} onClose={() => setShowBulk(false)} />}
 
       {/* Add-to-cart dialog */}
       <Dialog open={showDialog} onOpenChange={v => { setShowDialog(v); if (!v) setPhoneNumber(""); }}>
