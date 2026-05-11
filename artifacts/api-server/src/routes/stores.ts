@@ -1018,6 +1018,21 @@ router.patch("/admin/stores/withdrawals/:id/approve", requireAuth, async (req, r
   res.json({ ...updated, amount: parseFloat(updated.amount as any) });
 });
 
+router.patch("/admin/stores/withdrawals/:id/complete", requireAuth, async (req, res) => {
+  if (req.session.userRole !== "admin") { res.status(403).json({ error: "Forbidden" }); return; }
+  const id = parseInt(String(req.params.id));
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+
+  const [w] = await db.select().from(storeWithdrawalsTable).where(eq(storeWithdrawalsTable.id, id));
+  if (!w) { res.status(404).json({ error: "Withdrawal not found" }); return; }
+  if (w.status === "completed") { res.status(400).json({ error: "Withdrawal already completed" }); return; }
+  if (w.status === "cancelled") { res.status(400).json({ error: "Cannot complete a cancelled withdrawal" }); return; }
+
+  await db.update(storeWithdrawalsTable).set({ status: "completed" }).where(eq(storeWithdrawalsTable.id, id));
+  const [updated] = await db.select().from(storeWithdrawalsTable).where(eq(storeWithdrawalsTable.id, id));
+  res.json({ ...updated, amount: parseFloat(updated.amount as any) });
+});
+
 router.patch("/admin/stores/withdrawals/:id/reject", requireAuth, async (req, res) => {
   if (req.session.userRole !== "admin") { res.status(403).json({ error: "Forbidden" }); return; }
   const id = parseInt(String(req.params.id));
