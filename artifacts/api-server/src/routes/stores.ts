@@ -576,7 +576,7 @@ router.post("/s/:slug/checkout", async (req, res) => {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      email: parsed.data.customerEmail ?? `${parsed.data.customerPhone.replace(/\D/g, "")}@guest.noreply`,
+      email: parsed.data.customerEmail ?? `guest-${parsed.data.customerPhone.replace(/\D/g, "")}@checkout.example.com`,
       amount: Math.round(chargedPrice * 100),
       reference,
       callback_url: callbackUrl,
