@@ -509,8 +509,8 @@ router.get("/s/:slug", async (req, res) => {
 const StoreCheckoutBody = z.object({
   storeBundleId: z.number().int().positive(),
   customerPhone: z.string().min(7),
-  customerEmail: z.string().email(),
-});
+  customerEmail: z.string().email().optional().or(z.literal("")),
+}).transform(d => ({ ...d, customerEmail: d.customerEmail || undefined }));
 
 router.post("/s/:slug/checkout", async (req, res) => {
   const parsed = StoreCheckoutBody.safeParse(req.body);
@@ -576,7 +576,7 @@ router.post("/s/:slug/checkout", async (req, res) => {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      email: parsed.data.customerEmail,
+      email: parsed.data.customerEmail ?? `${parsed.data.customerPhone.replace(/\D/g, "")}@guest.noreply`,
       amount: Math.round(chargedPrice * 100),
       reference,
       callback_url: callbackUrl,
