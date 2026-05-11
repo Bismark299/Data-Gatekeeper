@@ -710,26 +710,16 @@ router.post("/s/:slug/verify", async (req, res) => {
 
 // ─── PAYSTACK WEBHOOK (store orders) ─────────────────────────────────────────
 
-router.post("/s/paystack/webhook", async (req, res) => {
-  const sig = req.headers["x-paystack-signature"] as string;
-  const hash = crypto.createHmac("sha512", PAYSTACK_SECRET).update(req.rawBody ?? Buffer.from(JSON.stringify(req.body))).digest("hex");
-  if (hash !== sig) { res.status(401).json({ error: "Invalid signature" }); return; }
-
-  const { event, data } = req.body as { event: string; data: { reference: string; status: string; amount: number } };
-  if (event !== "charge.success" || !data.reference.startsWith("STORE-")) { res.sendStatus(200); return; }
+// Exported for the unified /api/paystack/webhook handler in index.ts
+export async function handleStorePaystackWebhook(body: { event: string; data: { reference: string; status: string; amount: number } }) {
+  const { event, data } = body;
+  if (event !== "charge.success" || !data.reference.startsWith("STORE-")) return;
 
   const [storeOrder] = await db.select().from(storeOrdersTable).where(eq(storeOrdersTable.paystackReference, data.reference));
-  // Skip if payment already handled (any status past "pending")
-  if (!storeOrder || storeOrder.status !== "pending") { res.sendStatus(200); return; }
+  if (!storeOrder || storeOrder.status !== "pending") return;
 
-  res.sendStatus(200);
+  await db.update(storeOrdersTable).set({ status: "paid" }).where(eq(storeOrdersTable.id, storeOrder.id));
 
-  // Mark payment confirmed before dispatching (idempotency marker)
-  await db.update(storeOrdersTable)
-    .set({ status: "paid" })
-    .where(eq(storeOrdersTable.id, storeOrder.id));
-
-  // Dispatch to McbisSolution — on success transitions to "processing"
   dispatchToMcbis({
     orderId:      storeOrder.id,
     network:      storeOrder.bundleNetwork,
@@ -742,8 +732,15 @@ router.post("/s/paystack/webhook", async (req, res) => {
         .set({ status: "processing", mcbisReference: outcome.reference })
         .where(eq(storeOrdersTable.id, storeOrder.id));
     }
-    // not dispatched → stays "paid"; poller will retry
   }).catch(() => {/* non-fatal */});
+}
+
+router.post("/s/paystack/webhook", async (req, res) => {
+  const sig = req.headers["x-paystack-signature"] as string;
+  const hash = crypto.createHmac("sha512", PAYSTACK_SECRET).update(req.rawBody ?? Buffer.from(JSON.stringify(req.body))).digest("hex");
+  if (hash !== sig) { res.status(401).json({ error: "Invalid signature" }); return; }
+  res.sendStatus(200);
+  await handleStorePaystackWebhook(req.body);
 });
 
 // Admin: list all stores

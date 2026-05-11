@@ -346,44 +346,20 @@ router.post("/paystack/verify", requireAuth, async (req, res) => {
   res.json({ balance: parseFloat(wallet!.balance), updatedAt: wallet!.updatedAt });
 });
 
-router.post("/paystack/webhook", async (req, res) => {
-  // Mandatory signature verification — reject unconditionally if secret not set or signature absent/invalid
-  if (!PAYSTACK_SECRET) {
-    res.status(503).send("Webhook not configured");
-    return;
-  }
-  const signature = req.headers["x-paystack-signature"] as string | undefined;
-  if (!signature) {
-    res.status(401).send("Missing signature");
-    return;
-  }
-  const hash = crypto
-    .createHmac("sha512", PAYSTACK_SECRET)
-    .update(req.rawBody ?? Buffer.from(JSON.stringify(req.body)))
-    .digest("hex");
-  if (hash !== signature) {
-    res.status(401).send("Invalid signature");
-    return;
-  }
-
-  const event = req.body as { event: string; data?: { reference: string; status: string } };
-  if (event.event === "charge.success" && event.data?.status === "success") {
-    const { reference } = event.data;
-
+// Exported for the unified /api/paystack/webhook handler in index.ts
+export async function handlePaystackWebhook(body: { event: string; data?: { reference: string; status: string } }) {
+  if (body.event === "charge.success" && body.data?.status === "success") {
+    const { reference } = body.data;
     await db.transaction(async (tx) => {
       const [locked] = await tx
         .select()
         .from(depositsTable)
         .where(and(eq(depositsTable.reference, reference), eq(depositsTable.status, "pending")))
         .for("update");
-
       if (!locked) return;
-
-      await tx
-        .update(depositsTable)
+      await tx.update(depositsTable)
         .set({ status: "completed", note: "Auto-credited via Paystack webhook" })
         .where(eq(depositsTable.id, locked.id));
-
       await creditWallet(locked.userId, parseFloat(locked.amount), tx, {
         source: "paystack",
         reference: locked.reference ?? undefined,
@@ -391,9 +367,7 @@ router.post("/paystack/webhook", async (req, res) => {
       });
     });
   }
-
-  res.sendStatus(200);
-});
+}
 
 const MomoClaimBodySchema = z.object({
   amount: z.number().positive().optional(),
