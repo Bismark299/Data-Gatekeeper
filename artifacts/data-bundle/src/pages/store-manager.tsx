@@ -654,6 +654,7 @@ function BundlesTab({ storeBundles, store: _store, userRole: _userRole }: { stor
                     </tbody>
                   </table>
                 </div>
+              </div>
             );
           })}
         </div>
