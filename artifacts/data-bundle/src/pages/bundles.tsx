@@ -205,6 +205,7 @@ export default function Bundles() {
   const [selected, setSelected] = useState<Bundle | null>(null);
   const [phoneNumber, setPhoneNumber] = useState("");
   const [showDialog, setShowDialog] = useState(false);
+  const [showBulk, setShowBulk] = useState(false);
   const isAgent = user?.role === "agent" || user?.role === "dealer";
 
   const { data: networkSettings } = useQuery<Record<string, boolean>>({
@@ -280,6 +281,15 @@ export default function Bundles() {
               </button>
             );
           })}
+          {isAuthenticated && (
+            <button
+              onClick={() => setShowBulk(true)}
+              className="ml-auto flex items-center gap-2 px-4 py-2.5 rounded-xl font-semibold text-sm border-2 border-border bg-background text-muted-foreground hover:border-primary/40 transition-all"
+            >
+              <List className="w-4 h-4" />
+              Bulk Order
+            </button>
+          )}
         </div>
 
         {/* Bundles grid */}
@@ -364,6 +374,10 @@ export default function Bundles() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {showBulk && (
+        <BulkOrderModal network={activeNetwork} onClose={() => setShowBulk(false)} />
+      )}
     </div>
   );
 }
