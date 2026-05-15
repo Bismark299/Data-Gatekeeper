@@ -312,8 +312,16 @@ router.post("/admin/orders/:id/refund", requireAdmin, async (req, res): Promise<
       await creditWallet(locked.userId, parseFloat(locked.price), tx, {
         source: "refund",
         reference: `refund-order-${id}`,
-        note: `Refund for order #${id} (${locked.bundleName})`,
+        note: `Refund for cancelled order #${id} (${locked.bundleName})`,
       });
+
+      // Log the cancellation in the admin's own ledger for audit trail
+      const adminId = req.session.userId!;
+      await insertLedgerEntry(
+        tx, adminId, parseFloat(locked.price), "debit", "order_cancelled",
+        `cancel-order-${id}`,
+        `Cancelled order #${id} for user #${locked.userId} — GH₵${locked.price} refunded`,
+      );
 
       return Number(locked.price);
     });

@@ -8,6 +8,7 @@ import { eq, desc, and, ne, sql, inArray } from "drizzle-orm";
 import { z } from "zod";
 import crypto from "crypto";
 import { dispatchToMcbis } from "../lib/mcbis";
+import { insertLedgerEntry } from "./wallet";
 
 const router = Router();
 
@@ -909,10 +910,34 @@ router.patch("/admin/store-orders/:id/cancel", requireAuth, async (req, res) => 
   if (req.session.userRole !== "admin") { res.status(403).json({ error: "Forbidden" }); return; }
   const id = parseInt(String(req.params.id));
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+
   const [order] = await db.select().from(storeOrdersTable).where(eq(storeOrdersTable.id, id));
   if (!order) { res.status(404).json({ error: "Order not found" }); return; }
-  await db.update(storeOrdersTable).set({ status: "cancelled" }).where(eq(storeOrdersTable.id, id));
-  const [updated] = await db.select().from(storeOrdersTable).where(eq(storeOrdersTable.id, id));
+
+  // Get store to find the agent (store owner)
+  const [store] = await db.select({ userId: storesTable.userId }).from(storesTable).where(eq(storesTable.id, order.storeId));
+
+  const updated = await db.transaction(async (tx) => {
+    await tx.update(storeOrdersTable).set({ status: "cancelled" }).where(eq(storeOrdersTable.id, id));
+
+    const profit = parseFloat(order.profit as string);
+    const ref = `cancel-store-order-${id}`;
+    const agentNote = `Store order #${id} (${order.bundleData}) cancelled — GH₵${profit.toFixed(2)} profit voided`;
+    const adminNote = `Cancelled store order #${id} for store #${order.storeId} — GH₵${profit.toFixed(2)} profit voided`;
+
+    // Log for the agent (store owner)
+    if (store?.userId) {
+      await insertLedgerEntry(tx, store.userId, profit, "debit", "order_cancelled", ref, agentNote);
+    }
+
+    // Log for the admin performing the cancellation
+    const adminId = req.session.userId!;
+    await insertLedgerEntry(tx, adminId, profit, "debit", "order_cancelled", `${ref}-admin`, adminNote);
+
+    const [u] = await tx.select().from(storeOrdersTable).where(eq(storeOrdersTable.id, id));
+    return u;
+  });
+
   res.json(formatStoreOrder(updated));
 });
 
