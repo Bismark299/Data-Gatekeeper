@@ -10,7 +10,7 @@
  * Settings keys in DB:
  *   topupgh_enabled   — "true" | "false"
  *   topupgh_min_batch — integer string (min 5, API minimum)
- *   topupgh_max_batch — integer string (max 300, API limit)
+ *   topupgh_max_batch — integer string (max 100, API limit)
  *
  * Env vars:
  *   TOPUPGH_API_KEY    — API key from My Account > API Management
@@ -155,7 +155,7 @@ export async function getTopupghSettings(): Promise<{
   ]);
   const enabled  = enabledRow?.value === "true";
   const minBatch = Math.max(5, parseInt(minRow?.value ?? "5", 10) || 5);
-  const maxBatch = Math.min(300, parseInt(maxRow?.value ?? "50", 10) || 50);
+  const maxBatch = Math.min(100, parseInt(maxRow?.value ?? "50", 10) || 50);
   const { apiKey, apiSecret } = getCredentials();
   return { enabled, minBatch, maxBatch, apiKey, apiSecret };
 }
@@ -309,13 +309,15 @@ export async function dispatchPendingQueue(forceDispatch = false): Promise<Dispa
 // ─── Backup status checker ────────────────────────────────────────────────────
 
 /**
- * Poll TopUpGH order status for processing batches that haven't been
- * updated by a webhook in over 10 minutes (webhook miss fallback).
+ * Poll TopUpGH delivery status for ONE processing batch per cycle.
+ * Rate limit: delivery-status endpoint is capped at 1 req/min.
+ * Poller runs every 2 min, so one check per cycle stays safely within limits.
+ * Picks the stalest batch first (oldest dispatchedAt) to ensure forward progress.
  */
 async function checkProcessingBatches(): Promise<void> {
   const TEN_MIN_AGO = new Date(Date.now() - 10 * 60 * 1000);
 
-  const batches = await db
+  const [batch] = await db
     .select()
     .from(topupghBatchesTable)
     .where(and(
@@ -323,23 +325,22 @@ async function checkProcessingBatches(): Promise<void> {
       isNotNull(topupghBatchesTable.topupghOrderId),
       lt(topupghBatchesTable.dispatchedAt, TEN_MIN_AGO),
     ))
-    .limit(10);
+    .orderBy(topupghBatchesTable.dispatchedAt)
+    .limit(1);
 
-  for (const batch of batches) {
-    if (!batch.topupghOrderId) continue;
-    try {
-      const statusData = await topupghGetOrderStatus(batch.topupghOrderId);
-      if (statusData.order?.status === "completed") {
-        await db.update(ordersTable)
-          .set({ status: "completed" })
-          .where(and(eq(ordersTable.topupghBatchId, batch.id), eq(ordersTable.status, "processing")));
-        await db.update(topupghBatchesTable)
-          .set({ status: "completed" })
-          .where(eq(topupghBatchesTable.id, batch.id));
-      }
-    } catch { /* transient — retry next cycle */ }
-    await sleep(300);
-  }
+  if (!batch?.topupghOrderId) return;
+
+  try {
+    const statusData = await topupghGetOrderStatus(batch.topupghOrderId);
+    if (statusData.order?.status === "completed") {
+      await db.update(ordersTable)
+        .set({ status: "completed" })
+        .where(and(eq(ordersTable.topupghBatchId, batch.id), eq(ordersTable.status, "processing")));
+      await db.update(topupghBatchesTable)
+        .set({ status: "completed" })
+        .where(eq(topupghBatchesTable.id, batch.id));
+    }
+  } catch { /* transient — retry next cycle */ }
 }
 
 // ─── Webhook payload types ────────────────────────────────────────────────────
@@ -366,6 +367,18 @@ export interface TopupghWebhookPayload {
     formatted_delivery_info: string;
     items:                   TopupghWebhookItem[];
   };
+}
+
+/**
+ * Verify the X-Webhook-Signature header from TopUpGH.
+ * Signature = HMAC-SHA256(rawBody, apiSecret), hex-encoded.
+ * Returns false if credentials are missing or signature doesn't match.
+ */
+export function verifyTopupghWebhookSignature(signature: string, rawBody: Buffer): boolean {
+  const { apiSecret } = getCredentials();
+  if (!apiSecret) return false;
+  const expected = crypto.createHmac("sha256", apiSecret).update(rawBody).digest("hex");
+  return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
 }
 
 /**

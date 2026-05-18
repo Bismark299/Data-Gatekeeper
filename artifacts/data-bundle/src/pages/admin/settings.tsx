@@ -310,7 +310,7 @@ function TopUpGHSection({
             id="topupgh_min_batch"
             type="number"
             min={5}
-            max={300}
+            max={100}
             value={minBatch}
             onChange={e => onBatchChange("topupgh_min_batch", e.target.value)}
             className="h-8 text-sm"
@@ -323,12 +323,12 @@ function TopUpGHSection({
             id="topupgh_max_batch"
             type="number"
             min={5}
-            max={300}
+            max={100}
             value={maxBatch}
             onChange={e => onBatchChange("topupgh_max_batch", e.target.value)}
             className="h-8 text-sm"
           />
-          <p className="text-[11px] text-muted-foreground">Maximum 300 (TopUpGH API limit)</p>
+          <p className="text-[11px] text-muted-foreground">Maximum 100 (TopUpGH API limit)</p>
         </div>
       </div>
 

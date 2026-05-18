@@ -12,6 +12,7 @@ import {
   topupghTestConnection,
   dispatchPendingQueue,
   handleTopupghWebhook,
+  verifyTopupghWebhookSignature,
   getTopupghSettings,
   type TopupghWebhookPayload,
 } from "../lib/topupgh";
@@ -270,7 +271,29 @@ router.get("/admin/topupgh/order-status/:orderId", requireAdmin, async (req, res
 // ─── Webhook (public — no auth) ───────────────────────────────────────────────
 
 router.post("/topupgh/webhook", async (req, res): Promise<void> => {
-  res.sendStatus(200); // ack immediately
+  const sig = req.headers["x-webhook-signature"];
+  const raw = req.rawBody;
+
+  if (!sig || typeof sig !== "string" || !raw) {
+    res.sendStatus(401);
+    return;
+  }
+
+  let valid = false;
+  try {
+    valid = verifyTopupghWebhookSignature(sig, raw);
+  } catch {
+    res.sendStatus(401);
+    return;
+  }
+
+  if (!valid) {
+    logger.warn("TopUpGH webhook: invalid signature — request rejected");
+    res.sendStatus(401);
+    return;
+  }
+
+  res.sendStatus(200); // ack immediately before processing
   try {
     await handleTopupghWebhook(req.body as TopupghWebhookPayload);
   } catch (e) {
