@@ -35,6 +35,33 @@ await pool.query(`
   ON CONFLICT (key) DO NOTHING
 `);
 console.log("✓ mcbis_auto_sync row seeded");
+// Ensure topupgh_batches table exists
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS topupgh_batches (
+    id                SERIAL PRIMARY KEY,
+    topupgh_order_id  INTEGER,
+    status            TEXT NOT NULL DEFAULT 'pending',
+    network           TEXT NOT NULL DEFAULT 'mtn',
+    item_count        INTEGER NOT NULL DEFAULT 0,
+    items_added       INTEGER NOT NULL DEFAULT 0,
+    items_skipped     INTEGER NOT NULL DEFAULT 0,
+    total_amount      NUMERIC(10,2),
+    wallet_deducted   NUMERIC(10,2),
+    previous_balance  NUMERIC(10,2),
+    new_balance       NUMERIC(10,2),
+    delivery_data     JSONB,
+    error_message     TEXT,
+    dispatched_at     TIMESTAMPTZ,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )
+`);
+console.log("\u2713 topupgh_batches table exists");
 
+// Add topupgh_batch_id column to orders if missing
+await pool.query(`
+  ALTER TABLE orders ADD COLUMN IF NOT EXISTS topupgh_batch_id INTEGER
+`);
+console.log("\u2713 orders.topupgh_batch_id column exists");
 await pool.end();
 console.log("✓ Migration complete");
