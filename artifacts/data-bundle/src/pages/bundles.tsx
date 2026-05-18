@@ -69,6 +69,14 @@ function BulkOrderModal({ network, onClose }: { network: Network; onClose: () =>
   const validLines = lines.filter(l => l.valid);
   const invalidLines = lines.filter(l => !l.valid);
 
+  const previewTotal = validLines.reduce((sum, line) => {
+    const bundle = adminBundles.find(b => {
+      const m = b.dataAmount.match(/^(\d+)\s*GB$/i);
+      return m ? parseInt(m[1], 10) === line.gb : false;
+    });
+    return sum + (bundle ? Number(bundle.price) : 0);
+  }, 0);
+
   const bulk = useMutation({
     mutationFn: () => storeApi.bulkOrder({ network, items: validLines.map(l => ({ phone: l.phone, gb: l.gb })) }),
     onSuccess: (data) => {
@@ -143,7 +151,7 @@ function BulkOrderModal({ network, onClose }: { network: Network; onClose: () =>
                     <span className="font-bold text-foreground">{validLines.length}</span> valid
                     {invalidLines.length > 0 && <> · <span className="text-red-500 font-bold">{invalidLines.length}</span> skipped</>}
                   </span>
-                  <span className="text-xs text-muted-foreground">Deducted from wallet balance</span>
+                  <span className="font-bold text-foreground">GH₵{previewTotal.toFixed(2)}</span>
                 </div>
               )}
               {error && (
@@ -179,7 +187,7 @@ function BulkOrderModal({ network, onClose }: { network: Network; onClose: () =>
               <Button variant="outline" onClick={onClose} className="flex-1">Cancel</Button>
               <Button onClick={() => bulk.mutate()} disabled={validLines.length === 0 || bulk.isPending} className="flex-1 gap-2">
                 {bulk.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <List className="w-4 h-4" />}
-                {bulk.isPending ? "Submitting…" : `Submit ${validLines.length} Order${validLines.length !== 1 ? "s" : ""}`}
+                {bulk.isPending ? "Submitting…" : `Submit ${validLines.length} Order${validLines.length !== 1 ? "s" : ""} — GH₵${previewTotal.toFixed(2)}`}
               </Button>
             </>
           ) : (

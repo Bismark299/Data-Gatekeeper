@@ -307,10 +307,12 @@ function BulkOrderModal({
   network,
   onClose,
   gbOptions,
+  gbPriceMap,
 }: {
   network: string;
   onClose: () => void;
   gbOptions: number[];
+  gbPriceMap: Record<number, number>;
 }) {
   const qc = useQueryClient();
   const [text, setText] = useState("");
@@ -336,6 +338,8 @@ function BulkOrderModal({
 
   const validLines = lines.filter(l => l.valid);
   const invalidLines = lines.filter(l => !l.valid);
+
+  const previewTotal = validLines.reduce((sum, line) => sum + (gbPriceMap[line.gb] ?? 0), 0);
 
   const bulk = useMutation({
     mutationFn: () => storeApi.bulkOrder({
@@ -414,7 +418,7 @@ function BulkOrderModal({
                     <span className="font-bold text-foreground">{validLines.length}</span> valid
                     {invalidLines.length > 0 && <> · <span className="text-red-500 font-bold">{invalidLines.length}</span> skipped</>}
                   </span>
-                  <span className="font-semibold text-foreground">Cost will be deducted from profit balance</span>
+                  <span className="font-bold text-foreground">GH₵{previewTotal.toFixed(2)}</span>
                 </div>
               )}
 
@@ -458,7 +462,7 @@ function BulkOrderModal({
                 className="flex-1 gap-2"
               >
                 {bulk.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <List className="w-4 h-4" />}
-                {bulk.isPending ? "Submitting…" : `Submit ${validLines.length} Order${validLines.length !== 1 ? "s" : ""}`}
+                {bulk.isPending ? "Submitting…" : `Submit ${validLines.length} Order${validLines.length !== 1 ? "s" : ""} — GH₵${previewTotal.toFixed(2)}`}
               </Button>
             </>
           ) : (
@@ -538,12 +542,24 @@ function BundlesTab({ storeBundles, store: _store, userRole: _userRole }: { stor
     return [...new Set(options)].sort((a, b) => a - b);
   };
 
+  const networkGbPriceMap = (network: string): Record<number, number> => {
+    const map: Record<number, number> = {};
+    for (const b of allBundles as any[]) {
+      if (b.network !== network) continue;
+      if (!storeBundleMap.has(b.id)) continue;
+      const m = (b.dataAmount as string).match(/^(\d+)\s*GB$/i);
+      if (m) map[parseInt(m[1], 10)] = Number(b.price);
+    }
+    return map;
+  };
+
   return (
     <div className="space-y-6">
       {bulkNetwork && (
         <BulkOrderModal
           network={bulkNetwork}
           gbOptions={networkGbOptions(bulkNetwork)}
+          gbPriceMap={networkGbPriceMap(bulkNetwork)}
           onClose={() => setBulkNetwork(null)}
         />
       )}
