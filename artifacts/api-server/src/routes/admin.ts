@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import {
-  eq, count, sum, desc, gte, and, ilike, inArray, isNull, isNotNull, lt, not,
+  eq, count, sum, desc, gte, and, ilike, inArray, isNull, isNotNull, lt,
   type SQL, sql,
 } from "drizzle-orm";
 import {
@@ -806,15 +806,15 @@ router.get("/admin/financial-summary", requireAdmin, async (req, res): Promise<v
     platformToday, platformAll,
     storeToday, storeAll,
   ] = await Promise.all([
-    // Direct platform orders — wallet debited at placement, so count all non-cancelled orders
+    // Direct platform orders — profit only counted when order is marked completed
     db.select({ price: ordersTable.price, buyingCost: bundlesTable.price })
       .from(ordersTable)
       .leftJoin(bundlesTable, eq(ordersTable.bundleId, bundlesTable.id))
-      .where(and(not(eq(ordersTable.status, "cancelled")), gte(ordersTable.createdAt, todayStart))),
+      .where(and(eq(ordersTable.status, "completed"), gte(ordersTable.createdAt, todayStart))),
     db.select({ price: ordersTable.price, buyingCost: bundlesTable.price })
       .from(ordersTable)
       .leftJoin(bundlesTable, eq(ordersTable.bundleId, bundlesTable.id))
-      .where(not(eq(ordersTable.status, "cancelled"))),
+      .where(eq(ordersTable.status, "completed")),
     // Store orders — join bundle + store owner role so we can compute system profit
     // even for legacy rows where agentCost was not yet captured
     db.select({
