@@ -268,6 +268,133 @@ router.get("/admin/topupgh/order-status/:orderId", requireAdmin, async (req, res
   }
 });
 
+// ─── Delivery search ──────────────────────────────────────────────────────────
+// POST /admin/topupgh/search
+// Body: { topupghOrderId?: number } | { phones?: string[] }
+// Looks up our DB then fetches live delivery-status from TopUpGH.
+// Max 5 unique TopUpGH batches per bulk request (rate limit: 1 req/min).
+
+router.post("/admin/topupgh/search", requireAdmin, async (req, res): Promise<void> => {
+  const { apiKey, apiSecret } = await getTopupghSettings();
+  if (!apiKey || !apiSecret) { res.status(400).json({ error: "TopUpGH credentials not configured" }); return; }
+
+  const body = req.body as { topupghOrderId?: number; phones?: string[] };
+
+  // ── Mode 1: by TopUpGH order ID ───────────────────────────────────────────
+  if (body.topupghOrderId != null) {
+    const tgId = Number(body.topupghOrderId);
+    if (isNaN(tgId)) { res.status(400).json({ error: "Invalid topupghOrderId" }); return; }
+
+    const [batch] = await db.select().from(topupghBatchesTable)
+      .where(eq(topupghBatchesTable.topupghOrderId, tgId));
+
+    try {
+      const delivery = await topupghGetDeliveryStatus(tgId);
+      const localOrders = batch
+        ? await db.select({
+            id: ordersTable.id, phone: ordersTable.phoneNumber,
+            bundleName: ordersTable.bundleName, status: ordersTable.status,
+            createdAt: ordersTable.createdAt,
+          }).from(ordersTable).where(eq(ordersTable.topupghBatchId, batch.id))
+        : [];
+      res.json({ mode: "order", topupghOrderId: tgId, batch: batch ?? null, delivery, localOrders });
+    } catch (e) {
+      res.status(502).json({ error: e instanceof Error ? e.message : "Failed to fetch delivery status" });
+    }
+    return;
+  }
+
+  // ── Mode 2: by phone number(s) ────────────────────────────────────────────
+  if (Array.isArray(body.phones) && body.phones.length > 0) {
+    const phones = body.phones.map((p: string) => p.trim()).filter(Boolean).slice(0, 100);
+
+    const rows = await db
+      .select({
+        orderId:        ordersTable.id,
+        phone:          ordersTable.phoneNumber,
+        bundleName:     ordersTable.bundleName,
+        bundleData:     ordersTable.bundleData,
+        price:          ordersTable.price,
+        status:         ordersTable.status,
+        createdAt:      ordersTable.createdAt,
+        batchId:        topupghBatchesTable.id,
+        topupghOrderId: topupghBatchesTable.topupghOrderId,
+        batchStatus:    topupghBatchesTable.status,
+        dispatchedAt:   topupghBatchesTable.dispatchedAt,
+      })
+      .from(ordersTable)
+      .innerJoin(topupghBatchesTable, eq(topupghBatchesTable.id, ordersTable.topupghBatchId))
+      .where(and(isNotNull(ordersTable.topupghBatchId), inArray(ordersTable.phoneNumber, phones)))
+      .orderBy(desc(ordersTable.createdAt))
+      .limit(200);
+
+    if (rows.length === 0) {
+      res.json({ mode: "phones", phones, results: [], notFound: phones, apiCallsMade: 0,
+        message: "No TopUpGH-processed orders found for these phone numbers." });
+      return;
+    }
+
+    // Group by unique topupghOrderId then fetch live delivery-status (1 call per batch)
+    const byTgId = new Map<number, typeof rows>();
+    for (const row of rows) {
+      if (!row.topupghOrderId) continue;
+      const arr = byTgId.get(row.topupghOrderId) ?? [];
+      arr.push(row);
+      byTgId.set(row.topupghOrderId, arr);
+    }
+
+    const uniqueIds = [...byTgId.keys()].slice(0, 5);
+    const deliveryMap = new Map<number, Record<string, { status: string; date: string; time: string }>>();
+    let apiCallsMade = 0;
+
+    for (const tgId of uniqueIds) {
+      try {
+        const data = await topupghGetDeliveryStatus(tgId);
+        const byPhone: Record<string, { status: string; date: string; time: string }> = {};
+        if (data.delivery_status && typeof data.delivery_status === "object") {
+          for (const [phone, info] of Object.entries(data.delivery_status)) {
+            const i = info as { delivery_status?: string; delivery_date?: string; delivery_time?: string };
+            byPhone[phone] = { status: i.delivery_status ?? "unknown", date: i.delivery_date ?? "", time: i.delivery_time ?? "" };
+          }
+        }
+        deliveryMap.set(tgId, byPhone);
+        apiCallsMade++;
+      } catch { /* skip — return partial results */ }
+    }
+
+    const notFound = phones.filter(p => !rows.some(r => r.phone === p));
+    const truncated = byTgId.size > 5;
+
+    res.json({
+      mode: "phones",
+      phones,
+      results: rows.map(row => ({
+        orderId:        row.orderId,
+        phone:          row.phone,
+        bundleName:     row.bundleName,
+        bundleData:     row.bundleData,
+        price:          parseFloat(row.price),
+        localStatus:    row.status,
+        batchId:        row.batchId,
+        topupghOrderId: row.topupghOrderId,
+        batchStatus:    row.batchStatus,
+        dispatchedAt:   row.dispatchedAt,
+        createdAt:      row.createdAt,
+        liveDelivery:   row.topupghOrderId ? (deliveryMap.get(row.topupghOrderId)?.[row.phone] ?? null) : null,
+      })),
+      notFound,
+      apiCallsMade,
+      truncated,
+      message: truncated
+        ? `Results span ${byTgId.size} batches; only first 5 fetched live (rate limit: 1 req/min).`
+        : null,
+    });
+    return;
+  }
+
+  res.status(400).json({ error: "Provide topupghOrderId (number) or phones (string[])" });
+});
+
 // ─── Webhook (public — no auth) ───────────────────────────────────────────────
 
 router.post("/topupgh/webhook", async (req, res): Promise<void> => {

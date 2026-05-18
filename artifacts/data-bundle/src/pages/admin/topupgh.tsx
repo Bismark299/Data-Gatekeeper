@@ -5,10 +5,11 @@ import { AdminSidebar } from "@/components/AdminSidebar";
 import { AdminFinancialSummary } from "@/components/AdminFinancialSummary";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
+import { Input } from "@/components/ui/input";
 import {
   Menu, RefreshCw, Loader2, Package2, Zap, CheckCircle2, AlertCircle,
   Clock, Send, Wifi, Info, ChevronDown, ChevronUp, AlertTriangle,
-  BarChart3, PackageSearch, ArrowRight,
+  BarChart3, PackageSearch, ArrowRight, Search, Hash, Phone,
 } from "lucide-react";
 
 export default function AdminTopupgh() {
@@ -88,13 +89,14 @@ function timeSince(d: string) {
 
 // ─── Tabs ─────────────────────────────────────────────────────────────────────
 
-type Tab = "queue" | "products" | "batches" | "reconcile";
+type Tab = "queue" | "products" | "batches" | "reconcile" | "search";
 
 const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: "queue",     label: "Queue",     icon: Clock },
   { id: "products",  label: "Products",  icon: PackageSearch },
   { id: "batches",   label: "Batches",   icon: BarChart3 },
   { id: "reconcile", label: "Reconcile", icon: ArrowRight },
+  { id: "search",    label: "Search",    icon: Search },
 ];
 
 // ─── Queue Tab ────────────────────────────────────────────────────────────────
@@ -590,6 +592,327 @@ function ReconcileTab() {
   );
 }
 
+// ─── Search Tab ───────────────────────────────────────────────────────────────
+
+type SearchMode = "order" | "phones";
+
+interface PhoneResult {
+  orderId: number; phone: string; bundleName: string; bundleData: string;
+  price: number; localStatus: string; batchId: number; topupghOrderId: number | null;
+  batchStatus: string; dispatchedAt: string | null; createdAt: string;
+  liveDelivery: { status: string; date: string; time: string } | null;
+}
+
+interface OrderSearchResult {
+  mode: "order"; topupghOrderId: number; batch: Batch | null;
+  delivery: { success: boolean; order_id: number; delivery_status: Record<string, { delivery_status?: string; delivery_date?: string; delivery_time?: string }> };
+  localOrders: { id: number; phone: string; bundleName: string; status: string; createdAt: string }[];
+}
+
+interface PhonesSearchResult {
+  mode: "phones"; phones: string[]; results: PhoneResult[];
+  notFound: string[]; apiCallsMade: number; truncated: boolean; message: string | null;
+}
+
+type SearchResult = OrderSearchResult | PhonesSearchResult;
+
+const LIVE_STATUS_COLORS: Record<string, string> = {
+  delivered:     "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400",
+  failed:        "bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400",
+  "not delivered": "bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400",
+  unsuccessful:  "bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400",
+  pending:       "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-400",
+  processing:    "bg-blue-100 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400",
+  unknown:       "bg-muted text-muted-foreground",
+};
+
+function LiveStatusBadge({ status }: { status: string }) {
+  const s = status.toLowerCase();
+  return (
+    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full capitalize ${LIVE_STATUS_COLORS[s] ?? LIVE_STATUS_COLORS.unknown}`}>
+      {status}
+    </span>
+  );
+}
+
+function SearchTab() {
+  const [mode, setMode] = useState<SearchMode>("phones");
+  const [orderIdInput, setOrderIdInput] = useState("");
+  const [phonesInput, setPhonesInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<SearchResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const { toast } = useToast();
+
+  const parsePhones = (raw: string) =>
+    raw.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+
+  const doSearch = async () => {
+    setError(null);
+    setResult(null);
+    setLoading(true);
+    try {
+      let body: object;
+      if (mode === "order") {
+        const id = parseInt(orderIdInput.trim(), 10);
+        if (isNaN(id)) { setError("Enter a valid TopUpGH order ID (number)"); setLoading(false); return; }
+        body = { topupghOrderId: id };
+      } else {
+        const phones = parsePhones(phonesInput);
+        if (phones.length === 0) { setError("Enter at least one phone number"); setLoading(false); return; }
+        body = { phones };
+      }
+
+      const res = await fetch("/api/admin/topupgh/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(body),
+      });
+      const data = await res.json() as SearchResult & { error?: string };
+      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+      setResult(data);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Search failed";
+      setError(msg);
+      toast({ title: msg, variant: "destructive" });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-5">
+      {/* Mode + input */}
+      <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
+        <div className="flex items-center gap-2">
+          <Search className="w-4 h-4 text-orange-500" />
+          <h3 className="text-sm font-semibold text-foreground">Delivery Status Lookup</h3>
+        </div>
+
+        {/* Mode toggle */}
+        <div className="flex gap-1 p-1 bg-muted/40 rounded-xl w-fit border border-border">
+          {([
+            { id: "phones" as SearchMode, label: "By Phone Number(s)", icon: Phone },
+            { id: "order"  as SearchMode, label: "By TopUpGH Order ID", icon: Hash },
+          ] as const).map(m => (
+            <button
+              key={m.id}
+              onClick={() => { setMode(m.id); setResult(null); setError(null); }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                mode === m.id ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <m.icon className="w-3.5 h-3.5" />
+              {m.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Input area */}
+        {mode === "order" ? (
+          <div className="space-y-1">
+            <label className="text-xs font-semibold text-foreground">TopUpGH Order ID</label>
+            <div className="flex gap-2">
+              <Input
+                placeholder="e.g. 1448326"
+                value={orderIdInput}
+                onChange={e => setOrderIdInput(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && doSearch()}
+                className="h-9 text-sm max-w-xs font-mono"
+              />
+              <Button size="sm" onClick={doSearch} disabled={loading} className="h-9 gap-1.5 bg-orange-500 hover:bg-orange-600 text-white">
+                {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
+                Search
+              </Button>
+            </div>
+            <p className="text-[11px] text-muted-foreground">This calls TopUpGH's delivery-status API directly (1 req/min limit)</p>
+          </div>
+        ) : (
+          <div className="space-y-1">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-semibold text-foreground">Phone Numbers</label>
+              <span className="text-[11px] text-muted-foreground">{parsePhones(phonesInput).length} number{parsePhones(phonesInput).length !== 1 ? "s" : ""}</span>
+            </div>
+            <textarea
+              placeholder={"0241234567\n0551234567\n0201234567\n\nOr paste comma-separated: 0241234567, 0551234567"}
+              value={phonesInput}
+              onChange={e => setPhonesInput(e.target.value)}
+              rows={5}
+              className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm font-mono resize-y placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+            <div className="flex items-center justify-between">
+              <p className="text-[11px] text-muted-foreground">One phone per line, or comma-separated. Up to 100 numbers. Results span max 5 batches per search.</p>
+              <Button size="sm" onClick={doSearch} disabled={loading} className="h-8 gap-1.5 bg-orange-500 hover:bg-orange-600 text-white">
+                {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
+                Search
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {error && (
+          <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-800">
+            <AlertCircle className="w-3.5 h-3.5 text-red-500 shrink-0" />
+            <p className="text-xs text-red-700 dark:text-red-400">{error}</p>
+          </div>
+        )}
+      </div>
+
+      {/* Results */}
+      {result && result.mode === "order" && (
+        <div className="space-y-4">
+          {/* Batch summary */}
+          {result.batch && (
+            <div className="bg-card border border-border rounded-2xl p-4 flex flex-wrap gap-4 text-sm">
+              <div><span className="text-muted-foreground text-xs">Batch #</span><div className="font-bold">{result.batch.id}</div></div>
+              <div><span className="text-muted-foreground text-xs">TopUpGH Order</span><div className="font-mono font-bold">#{result.topupghOrderId}</div></div>
+              <div><span className="text-muted-foreground text-xs">Batch Status</span><div className="mt-0.5"><StatusBadge status={result.batch.status} /></div></div>
+              <div><span className="text-muted-foreground text-xs">Items</span><div className="font-bold">{result.batch.itemCount}</div></div>
+              {result.batch.dispatchedAt && <div><span className="text-muted-foreground text-xs">Dispatched</span><div className="font-medium text-xs">{fmt(result.batch.dispatchedAt)}</div></div>}
+            </div>
+          )}
+
+          {/* Delivery status table */}
+          <div className="bg-card border border-border rounded-2xl overflow-hidden">
+            <div className="px-5 py-3 border-b border-border flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-foreground">Live Delivery Status</h3>
+              <span className="text-xs text-muted-foreground">{Object.keys(result.delivery.delivery_status ?? {}).length} items</span>
+            </div>
+            {Object.keys(result.delivery.delivery_status ?? {}).length === 0 ? (
+              <div className="py-8 text-center text-sm text-muted-foreground">No delivery data returned</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border bg-muted/30 text-[11px] text-muted-foreground uppercase tracking-wide">
+                      <th className="px-4 py-2.5 text-left font-semibold">Phone</th>
+                      <th className="px-4 py-2.5 text-left font-semibold">Local Status</th>
+                      <th className="px-4 py-2.5 text-left font-semibold">Live Status</th>
+                      <th className="px-4 py-2.5 text-left font-semibold">Bundle</th>
+                      <th className="px-4 py-2.5 text-left font-semibold">Date / Time</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Object.entries(result.delivery.delivery_status).map(([phone, info], i) => {
+                      const localOrder = result.localOrders.find(o => o.phone === phone);
+                      return (
+                        <tr key={phone} className={`border-b border-border/50 hover:bg-muted/20 ${i % 2 === 0 ? "" : "bg-muted/10"}`}>
+                          <td className="px-4 py-2.5 font-mono font-medium text-foreground text-xs">{phone}</td>
+                          <td className="px-4 py-2.5"><StatusBadge status={localOrder?.status ?? "—"} /></td>
+                          <td className="px-4 py-2.5"><LiveStatusBadge status={info.delivery_status ?? "unknown"} /></td>
+                          <td className="px-4 py-2.5 text-xs text-muted-foreground">{localOrder?.bundleName ?? "—"}</td>
+                          <td className="px-4 py-2.5 text-xs text-muted-foreground">
+                            {info.delivery_date ? `${info.delivery_date} ${info.delivery_time ?? ""}`.trim() : "—"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {result && result.mode === "phones" && (
+        <div className="space-y-4">
+          {/* Summary row */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {[
+              { label: "Searched",    value: String(result.phones.length),      icon: Phone,        color: "text-blue-500" },
+              { label: "Found",       value: String(result.results.length),      icon: CheckCircle2, color: "text-emerald-500" },
+              { label: "Not Found",   value: String(result.notFound.length),     icon: AlertCircle,  color: result.notFound.length > 0 ? "text-red-500" : "text-muted-foreground" },
+              { label: "API Calls",   value: String(result.apiCallsMade),        icon: Zap,          color: "text-orange-500" },
+            ].map(s => (
+              <div key={s.label} className="bg-card border border-border rounded-2xl p-3 flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-muted flex items-center justify-center shrink-0">
+                  <s.icon className={`w-4 h-4 ${s.color}`} />
+                </div>
+                <div>
+                  <div className="text-lg font-bold text-foreground">{s.value}</div>
+                  <div className="text-[10px] text-muted-foreground font-medium">{s.label}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Rate-limit warning */}
+          {result.truncated && result.message && (
+            <div className="flex items-start gap-2 px-3 py-2 rounded-xl bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800">
+              <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" />
+              <p className="text-[11px] text-amber-700 dark:text-amber-400">{result.message}</p>
+            </div>
+          )}
+
+          {/* Not found notice */}
+          {result.notFound.length > 0 && (
+            <div className="px-4 py-3 rounded-xl bg-muted/40 border border-border">
+              <p className="text-xs font-semibold text-muted-foreground mb-1">Not found in TopUpGH orders ({result.notFound.length})</p>
+              <p className="text-[11px] text-muted-foreground font-mono">{result.notFound.join(", ")}</p>
+            </div>
+          )}
+
+          {/* Results table */}
+          {result.results.length > 0 && (
+            <div className="bg-card border border-border rounded-2xl overflow-hidden">
+              <div className="px-5 py-3 border-b border-border">
+                <h3 className="text-sm font-semibold text-foreground">{result.results.length} result{result.results.length !== 1 ? "s" : ""}</h3>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border bg-muted/30 text-[11px] text-muted-foreground uppercase tracking-wide">
+                      <th className="px-4 py-2.5 text-left font-semibold">Phone</th>
+                      <th className="px-4 py-2.5 text-left font-semibold">Bundle</th>
+                      <th className="px-4 py-2.5 text-left font-semibold">Local</th>
+                      <th className="px-4 py-2.5 text-left font-semibold">Live Delivery</th>
+                      <th className="px-4 py-2.5 text-left font-semibold">Delivery Date</th>
+                      <th className="px-4 py-2.5 text-left font-semibold">Batch / TG Order</th>
+                      <th className="px-4 py-2.5 text-right font-semibold">Price</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {result.results.map((r, i) => (
+                      <tr key={`${r.orderId}-${i}`} className={`border-b border-border/50 hover:bg-muted/20 ${i % 2 === 0 ? "" : "bg-muted/10"}`}>
+                        <td className="px-4 py-2.5 font-mono font-medium text-foreground text-xs">{r.phone}</td>
+                        <td className="px-4 py-2.5">
+                          <div className="text-xs font-medium text-foreground">{r.bundleName}</div>
+                          <div className="text-[11px] text-muted-foreground">{r.bundleData}</div>
+                        </td>
+                        <td className="px-4 py-2.5"><StatusBadge status={r.localStatus} /></td>
+                        <td className="px-4 py-2.5">
+                          {r.liveDelivery ? <LiveStatusBadge status={r.liveDelivery.status} /> : <span className="text-[10px] text-muted-foreground">—</span>}
+                        </td>
+                        <td className="px-4 py-2.5 text-xs text-muted-foreground">
+                          {r.liveDelivery?.date ? `${r.liveDelivery.date} ${r.liveDelivery.time ?? ""}`.trim() : "—"}
+                        </td>
+                        <td className="px-4 py-2.5 text-xs text-muted-foreground">
+                          <span className="font-mono">#{r.batchId}</span>
+                          {r.topupghOrderId && <span className="text-[11px] ml-1 text-orange-500">TG#{r.topupghOrderId}</span>}
+                        </td>
+                        <td className="px-4 py-2.5 text-right font-semibold text-foreground text-xs">GH₵{r.price.toFixed(2)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {result.results.length === 0 && result.message && (
+            <div className="py-10 text-center">
+              <Search className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
+              <p className="text-sm text-muted-foreground">{result.message}</p>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Main content ─────────────────────────────────────────────────────────────
 
 function AdminTopupghContent() {
@@ -721,6 +1044,7 @@ function AdminTopupghContent() {
           {activeTab === "products"  && <ProductsTab />}
           {activeTab === "batches"   && <BatchesTab />}
           {activeTab === "reconcile" && <ReconcileTab />}
+          {activeTab === "search"    && <SearchTab />}
         </main>
       </div>
     </div>
