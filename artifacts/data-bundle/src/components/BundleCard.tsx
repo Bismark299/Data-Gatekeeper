@@ -147,7 +147,7 @@ export function BundleCard({
           <p className="text-xs" style={{ color: "#9ca3af" }}>Rollover</p>
         </div>
         <div>
-          <p className="text-sm font-semibold">{validityDays > 0 ? `${validityDays}d` : "∞"}</p>
+          <p className="text-sm font-semibold">∞</p>
           <p className="text-xs" style={{ color: "#9ca3af" }}>Duration</p>
         </div>
       </div>
@@ -184,7 +184,7 @@ export function BundleCardMini({
           <p className="text-xs" style={{ color: "#9ca3af" }}>{phone ? "Number" : "Rollover"}</p>
         </div>
         <div>
-          <p className="text-sm font-semibold">{validityDays > 0 ? `${validityDays}d` : "∞"}</p>
+          <p className="text-sm font-semibold">∞</p>
           <p className="text-xs" style={{ color: "#9ca3af" }}>Duration</p>
         </div>
       </div>
