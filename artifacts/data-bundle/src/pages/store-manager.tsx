@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { storeApi, type Store, type StoreBundle, type StoreStats } from "@/lib/storeApi";
-import { useListBundles } from "@workspace/api-client-react";
+import { useListBundles, getGetWalletBalanceQueryKey } from "@workspace/api-client-react";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { useAuth } from "@/context/AuthContext";
 import { Navbar } from "@/components/Navbar";
@@ -343,6 +343,7 @@ function BulkOrderModal({
       items: validLines.map(l => ({ phone: l.phone, gb: l.gb })),
     }),
     onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: getGetWalletBalanceQueryKey() });
       qc.invalidateQueries({ queryKey: ["myStoreOrders"] });
       qc.invalidateQueries({ queryKey: ["myStoreStats"] });
       setResult({ processed: data.processed, skipped: data.skipped, totalCost: data.totalCost });

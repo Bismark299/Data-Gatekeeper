@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { useListBundles } from "@workspace/api-client-react";
+import { useListBundles, getGetWalletBalanceQueryKey } from "@workspace/api-client-react";
 import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
 import { Navbar } from "@/components/Navbar";
 import { Button } from "@/components/ui/button";
@@ -72,6 +72,7 @@ function BulkOrderModal({ network, onClose }: { network: Network; onClose: () =>
   const bulk = useMutation({
     mutationFn: () => storeApi.bulkOrder({ network, items: validLines.map(l => ({ phone: l.phone, gb: l.gb })) }),
     onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: getGetWalletBalanceQueryKey() });
       qc.invalidateQueries({ queryKey: ["myStoreOrders"] });
       qc.invalidateQueries({ queryKey: ["myStoreStats"] });
       setResult({ processed: data.processed, skipped: data.skipped, totalCost: data.totalCost });
