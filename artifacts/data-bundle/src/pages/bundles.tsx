@@ -297,7 +297,6 @@ export default function Bundles() {
             </button>
           )}
         </div>
-        </div>
 
         {/* Bundles grid */}
         {isLoading ? (
