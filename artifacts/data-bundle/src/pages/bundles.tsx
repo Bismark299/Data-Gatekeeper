@@ -72,6 +72,11 @@ function BulkOrderModal({ network, onClose }: { network: Network; onClose: () =>
   const bulk = useMutation({
     mutationFn: () => storeApi.bulkOrder({ network, items: validLines.map(l => ({ phone: l.phone, gb: l.gb })) }),
     onSuccess: (data) => {
+      // Instantly subtract cost — no waiting for a network refetch
+      const prev = qc.getQueryData<{ balance: number }>(getGetWalletBalanceQueryKey());
+      if (prev != null) {
+        qc.setQueryData(getGetWalletBalanceQueryKey(), { ...prev, balance: prev.balance - data.totalCost });
+      }
       qc.invalidateQueries({ queryKey: getGetWalletBalanceQueryKey() });
       qc.invalidateQueries({ queryKey: ["myStoreOrders"] });
       qc.invalidateQueries({ queryKey: ["myStoreStats"] });
