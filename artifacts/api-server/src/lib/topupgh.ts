@@ -1,0 +1,502 @@
+/**
+ * TopUpGH Reseller API client.
+ * Docs: https://reseller.etopupgh.com/api/v1
+ *
+ * Flow:
+ *  - topupgh_enabled = "true" AND mcbis_enabled = "false" → pending MTN orders queue
+ *  - Poller runs every 2 min; dispatches when count >= topupgh_min_batch
+ *  - Webhook fires delivery updates per-item; poller polls as fallback
+ *
+ * Settings keys in DB:
+ *   topupgh_enabled   — "true" | "false"
+ *   topupgh_min_batch — integer string (min 5, API minimum)
+ *   topupgh_max_batch — integer string (max 300, API limit)
+ *
+ * Env vars:
+ *   TOPUPGH_API_KEY    — API key from My Account > API Management
+ *   TOPUPGH_API_SECRET — API secret for HMAC-SHA256 signing
+ *
+ * ⚠️ Domain/IP whitelist required in TopUpGH dashboard before any call works.
+ */
+
+import crypto from "crypto";
+import { eq, and, isNull, isNotNull, lt, inArray } from "drizzle-orm";
+import { sql } from "drizzle-orm";
+import { db, settingsTable, ordersTable, bundlesTable, topupghBatchesTable, walletsTable, walletLedgerTable } from "@workspace/db";
+import { logger } from "./logger";
+
+const TOPUPGH_BASE_URL = "https://reseller.etopupgh.com/api/v1";
+const TOPUPGH_INTERNAL_PREFIX = "/topupgh-api/v1";
+const REQUEST_TIMEOUT_MS = 20_000;
+
+const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+
+// ─── Auth helpers ─────────────────────────────────────────────────────────────
+
+function getCredentials() {
+  return {
+    apiKey: process.env.TOPUPGH_API_KEY ?? "",
+    apiSecret: process.env.TOPUPGH_API_SECRET ?? "",
+  };
+}
+
+function buildHeaders(method: string, endpoint: string, body = ""): Record<string, string> {
+  const { apiKey, apiSecret } = getCredentials();
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const signatureString = timestamp + method + TOPUPGH_INTERNAL_PREFIX + endpoint + body;
+  const signature = crypto.createHmac("sha256", apiSecret).update(signatureString).digest("hex");
+  return {
+    "Accept":          "application/json",
+    "Content-Type":    "application/json",
+    "X-API-Key":       apiKey,
+    "X-Timestamp":     timestamp,
+    "X-API-Signature": signature,
+  };
+}
+
+async function topupghRequest<T>(method: string, endpoint: string, body?: object): Promise<T> {
+  const bodyStr = body ? JSON.stringify(body) : "";
+  const headers = buildHeaders(method, endpoint, bodyStr);
+  const res = await fetch(TOPUPGH_BASE_URL + endpoint, {
+    method,
+    headers,
+    body: bodyStr || undefined,
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+  return res.json() as Promise<T>;
+}
+
+// ─── API wrappers ─────────────────────────────────────────────────────────────
+
+export async function topupghTestConnection(): Promise<{
+  success: boolean; message: string; timestamp?: string; user_id?: number;
+}> {
+  return topupghRequest("GET", "/test");
+}
+
+export interface TopupghProduct {
+  id: number;
+  name: string;
+  price: string;
+  data_size: string;
+  network: "mtn" | "at" | "telecel";
+  in_stock: boolean;
+}
+
+export async function topupghGetProducts(network?: "mtn" | "at" | "telecel", dataSize?: number): Promise<{
+  success: boolean; products: TopupghProduct[]; total: number;
+}> {
+  const p = new URLSearchParams();
+  if (network)   p.set("network", network);
+  if (dataSize)  p.set("data_size", String(dataSize));
+  const q = p.toString() ? `?${p.toString()}` : "";
+  return topupghRequest("GET", `/products${q}`);
+}
+
+export async function topupghGetBalance(): Promise<{
+  success: boolean; balance: number; currency: string; today: { credit: number; debit: number };
+}> {
+  return topupghRequest("GET", "/wallet/balance");
+}
+
+export interface TopupghOrderItem {
+  _beneficiary_number: string;
+  network: "mtn" | "at" | "telecel";
+  _data_size: number;
+}
+
+export interface TopupghCreateOrderResponse {
+  success: boolean;
+  message: string;
+  order_id: number;
+  total_amount: number;
+  items_added: number;
+  items_skipped: number;
+  wallet_deducted: number;
+  previous_balance: number;
+  new_balance: number;
+}
+
+export async function topupghCreateOrder(orders: TopupghOrderItem[]): Promise<TopupghCreateOrderResponse> {
+  return topupghRequest("POST", "/orders/create", { orders });
+}
+
+export async function topupghGetOrderStatus(orderId: number): Promise<{
+  success: boolean; order: { id: number; status: string; total: number; date_created: string };
+}> {
+  return topupghRequest("GET", `/orders/${orderId}`);
+}
+
+export async function topupghGetDeliveryStatus(orderId: number): Promise<{
+  success: boolean; order_id: number; delivery_status: Record<string, unknown>;
+}> {
+  return topupghRequest("GET", `/orders/${orderId}/delivery-status`);
+}
+
+export async function topupghGetAllOrders(page = 1, perPage = 20, status?: string): Promise<{
+  success: boolean;
+  pagination: { total: number; per_page: number; current_page: number; total_pages: number };
+  orders?: Array<{ id: number; status: string; total: number; date_created: string }>;
+}> {
+  const p = new URLSearchParams({ page: String(page), per_page: String(perPage) });
+  if (status) p.set("status", status);
+  return topupghRequest("GET", `/orders?${p.toString()}`);
+}
+
+// ─── Settings helpers ─────────────────────────────────────────────────────────
+
+export async function getTopupghSettings(): Promise<{
+  enabled: boolean; minBatch: number; maxBatch: number; apiKey: string; apiSecret: string;
+}> {
+  const [enabledRow, minRow, maxRow] = await Promise.all([
+    db.select({ value: settingsTable.value }).from(settingsTable).where(eq(settingsTable.key, "topupgh_enabled")).then(r => r[0]),
+    db.select({ value: settingsTable.value }).from(settingsTable).where(eq(settingsTable.key, "topupgh_min_batch")).then(r => r[0]),
+    db.select({ value: settingsTable.value }).from(settingsTable).where(eq(settingsTable.key, "topupgh_max_batch")).then(r => r[0]),
+  ]);
+  const enabled  = enabledRow?.value === "true";
+  const minBatch = Math.max(5, parseInt(minRow?.value ?? "5", 10) || 5);
+  const maxBatch = Math.min(300, parseInt(maxRow?.value ?? "50", 10) || 50);
+  const { apiKey, apiSecret } = getCredentials();
+  return { enabled, minBatch, maxBatch, apiKey, apiSecret };
+}
+
+// ─── Data helpers ─────────────────────────────────────────────────────────────
+
+export function parseGb(dataAmount: string): number {
+  const m = dataAmount.match(/^(\d+(?:\.\d+)?)\s*GB$/i);
+  return m ? parseFloat(m[1]) : 0;
+}
+
+// ─── Queue dispatch ───────────────────────────────────────────────────────────
+
+export interface DispatchResult {
+  batchId: number | null;
+  dispatched: boolean;
+  reason?: string;
+  ordersCount: number;
+  topupghOrderId?: number;
+}
+
+/**
+ * Collect pending MTN orders and dispatch as a batch to TopUpGH.
+ * forceDispatch=true bypasses the minBatch check (admin manual trigger).
+ */
+export async function dispatchPendingQueue(forceDispatch = false): Promise<DispatchResult> {
+  const { enabled, minBatch, maxBatch, apiKey, apiSecret } = await getTopupghSettings();
+
+  if (!enabled)              return { batchId: null, dispatched: false, reason: "disabled",        ordersCount: 0 };
+  if (!apiKey || !apiSecret) return { batchId: null, dispatched: false, reason: "not_configured",  ordersCount: 0 };
+
+  const GRACE_MS       = 30_000;
+  const graceThreshold = new Date(Date.now() - GRACE_MS);
+
+  const pendingOrders = await db
+    .select({
+      id:         ordersTable.id,
+      phone:      ordersTable.phoneNumber,
+      bundleData: ordersTable.bundleData,
+      network:    bundlesTable.network,
+      price:      ordersTable.price,
+      userId:     ordersTable.userId,
+    })
+    .from(ordersTable)
+    .leftJoin(bundlesTable, eq(bundlesTable.id, ordersTable.bundleId))
+    .where(and(
+      eq(ordersTable.status, "pending"),
+      isNull(ordersTable.topupghBatchId),
+      isNull(ordersTable.mcbisReference),
+      eq(bundlesTable.network, "mtn"),
+      lt(ordersTable.createdAt, graceThreshold),
+    ))
+    .orderBy(ordersTable.createdAt)
+    .limit(maxBatch);
+
+  const count = pendingOrders.length;
+  if (count === 0)                            return { batchId: null, dispatched: false, reason: "empty_queue",    ordersCount: 0 };
+  if (!forceDispatch && count < minBatch)     return { batchId: null, dispatched: false, reason: "below_minimum", ordersCount: count };
+
+  const valid = pendingOrders.filter(o => parseGb(o.bundleData) > 0 && o.network === "mtn");
+  if (valid.length === 0)                     return { batchId: null, dispatched: false, reason: "no_valid_orders", ordersCount: 0 };
+
+  // Create batch record (optimistic lock)
+  const [batch] = await db.insert(topupghBatchesTable).values({
+    status:    "pending",
+    network:   "mtn",
+    itemCount: valid.length,
+  }).returning();
+
+  // Atomically link orders to this batch
+  const orderIds = valid.map(o => o.id);
+  await db.update(ordersTable)
+    .set({ topupghBatchId: batch.id })
+    .where(and(
+      inArray(ordersTable.id, orderIds),
+      isNull(ordersTable.topupghBatchId),
+    ));
+
+  // Verify how many were actually linked
+  const linked = await db
+    .select({ id: ordersTable.id, phone: ordersTable.phoneNumber, bundleData: ordersTable.bundleData, price: ordersTable.price, userId: ordersTable.userId })
+    .from(ordersTable)
+    .where(eq(ordersTable.topupghBatchId, batch.id));
+
+  if (linked.length === 0 || (!forceDispatch && linked.length < minBatch)) {
+    await db.update(ordersTable).set({ topupghBatchId: null }).where(eq(ordersTable.topupghBatchId, batch.id));
+    await db.delete(topupghBatchesTable).where(eq(topupghBatchesTable.id, batch.id));
+    return { batchId: null, dispatched: false, reason: linked.length === 0 ? "race_condition" : "below_minimum", ordersCount: linked.length };
+  }
+
+  // Pre-flight balance check
+  try {
+    const balanceData = await topupghGetBalance();
+    const totalCost   = linked.reduce((s, o) => s + parseFloat(o.price), 0);
+    if (balanceData.balance < totalCost) {
+      await db.update(ordersTable).set({ topupghBatchId: null }).where(eq(ordersTable.topupghBatchId, batch.id));
+      await db.update(topupghBatchesTable)
+        .set({ status: "failed", errorMessage: `Insufficient TopUpGH wallet balance (GH₵${balanceData.balance.toFixed(2)} available)` })
+        .where(eq(topupghBatchesTable.id, batch.id));
+      return { batchId: batch.id, dispatched: false, reason: "insufficient_balance", ordersCount: linked.length };
+    }
+  } catch { /* balance check failed — proceed anyway */ }
+
+  // Build payload
+  const orderItems: TopupghOrderItem[] = linked.map(o => ({
+    _beneficiary_number: o.phone,
+    network:             "mtn" as const,
+    _data_size:          parseGb(o.bundleData),
+  }));
+
+  try {
+    const result = await topupghCreateOrder(orderItems);
+
+    if (!result.success) {
+      await db.update(ordersTable).set({ topupghBatchId: null }).where(eq(ordersTable.topupghBatchId, batch.id));
+      await db.update(topupghBatchesTable)
+        .set({ status: "failed", errorMessage: result.message ?? "TopUpGH rejected the order" })
+        .where(eq(topupghBatchesTable.id, batch.id));
+      return { batchId: batch.id, dispatched: false, reason: "api_error", ordersCount: linked.length };
+    }
+
+    // Success — update batch
+    await db.update(topupghBatchesTable).set({
+      topupghOrderId:  result.order_id,
+      status:          "processing",
+      itemsAdded:      result.items_added,
+      itemsSkipped:    result.items_skipped,
+      walletDeducted:  String(result.wallet_deducted),
+      previousBalance: String(result.previous_balance),
+      newBalance:      String(result.new_balance),
+      dispatchedAt:    new Date(),
+    }).where(eq(topupghBatchesTable.id, batch.id));
+
+    // Mark orders as processing
+    await db.update(ordersTable)
+      .set({ status: "processing" })
+      .where(eq(ordersTable.topupghBatchId, batch.id));
+
+    return { batchId: batch.id, dispatched: true, ordersCount: linked.length, topupghOrderId: result.order_id };
+
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Unknown error";
+    await db.update(ordersTable).set({ topupghBatchId: null }).where(eq(ordersTable.topupghBatchId, batch.id));
+    await db.update(topupghBatchesTable)
+      .set({ status: "failed", errorMessage: `Dispatch exception: ${msg}` })
+      .where(eq(topupghBatchesTable.id, batch.id));
+    return { batchId: batch.id, dispatched: false, reason: "exception", ordersCount: linked.length };
+  }
+}
+
+// ─── Backup status checker ────────────────────────────────────────────────────
+
+/**
+ * Poll TopUpGH order status for processing batches that haven't been
+ * updated by a webhook in over 10 minutes (webhook miss fallback).
+ */
+async function checkProcessingBatches(): Promise<void> {
+  const TEN_MIN_AGO = new Date(Date.now() - 10 * 60 * 1000);
+
+  const batches = await db
+    .select()
+    .from(topupghBatchesTable)
+    .where(and(
+      eq(topupghBatchesTable.status, "processing"),
+      isNotNull(topupghBatchesTable.topupghOrderId),
+      lt(topupghBatchesTable.dispatchedAt, TEN_MIN_AGO),
+    ))
+    .limit(10);
+
+  for (const batch of batches) {
+    if (!batch.topupghOrderId) continue;
+    try {
+      const statusData = await topupghGetOrderStatus(batch.topupghOrderId);
+      if (statusData.order?.status === "completed") {
+        await db.update(ordersTable)
+          .set({ status: "completed" })
+          .where(and(eq(ordersTable.topupghBatchId, batch.id), eq(ordersTable.status, "processing")));
+        await db.update(topupghBatchesTable)
+          .set({ status: "completed" })
+          .where(eq(topupghBatchesTable.id, batch.id));
+      }
+    } catch { /* transient — retry next cycle */ }
+    await sleep(300);
+  }
+}
+
+// ─── Webhook payload types ────────────────────────────────────────────────────
+
+export interface TopupghWebhookItem {
+  item_id:           string;
+  beneficiary_number: string;
+  network:           string;
+  data_size:         number;
+  delivery_status:   string;
+  delivery_date:     string;
+  delivery_time:     string;
+}
+
+export interface TopupghWebhookPayload {
+  event:     string;
+  timestamp: string;
+  order: {
+    order_id:                number;
+    order_number:            string;
+    delivery_info:           string;
+    delivery_date:           string;
+    delivery_time:           string;
+    formatted_delivery_info: string;
+    items:                   TopupghWebhookItem[];
+  };
+}
+
+/**
+ * Process a delivery_status_updated webhook from TopUpGH.
+ * Marks individual orders as completed or failed.
+ * Auto-refunds wallet for failed deliveries.
+ */
+export async function handleTopupghWebhook(payload: TopupghWebhookPayload): Promise<void> {
+  if (payload.event !== "delivery_status_updated") return;
+
+  const { order } = payload;
+  const { order_id, items } = order;
+
+  const [batch] = await db.select().from(topupghBatchesTable)
+    .where(eq(topupghBatchesTable.topupghOrderId, order_id));
+
+  if (!batch) {
+    logger.warn({ topupghOrderId: order_id }, "TopUpGH webhook: batch not found");
+    return;
+  }
+
+  for (const item of items) {
+    const status    = item.delivery_status.toLowerCase();
+    const delivered = status === "delivered";
+    const failed    = status === "failed" || status === "not delivered" || status === "unsuccessful";
+
+    if (!delivered && !failed) continue;
+
+    const [orderRow] = await db.select()
+      .from(ordersTable)
+      .where(and(
+        eq(ordersTable.topupghBatchId, batch.id),
+        eq(ordersTable.phoneNumber, item.beneficiary_number),
+      ))
+      .limit(1);
+
+    if (!orderRow || orderRow.status === "completed" || orderRow.status === "failed") continue;
+
+    if (delivered) {
+      await db.update(ordersTable)
+        .set({ status: "completed" })
+        .where(eq(ordersTable.id, orderRow.id));
+
+    } else if (failed) {
+      await db.transaction(async (tx) => {
+        await tx.update(ordersTable)
+          .set({ status: "failed" })
+          .where(eq(ordersTable.id, orderRow.id));
+
+        const price    = parseFloat(orderRow.price);
+        const refundRef = `topupgh-refund-${orderRow.id}`;
+
+        await tx.insert(walletsTable)
+          .values({ userId: orderRow.userId, balance: price.toFixed(2) })
+          .onConflictDoNothing();
+
+        await tx.update(walletsTable)
+          .set({ balance: sql`balance + ${price.toFixed(2)}::numeric` })
+          .where(eq(walletsTable.userId, orderRow.userId));
+
+        await tx.insert(walletLedgerTable).values({
+          userId:    orderRow.userId,
+          amount:    price.toFixed(2),
+          type:      "credit",
+          source:    "refund",
+          reference: refundRef,
+          note:      `Auto-refund: TopUpGH delivery failed — ${orderRow.bundleName} → ${orderRow.phoneNumber}`,
+        });
+      });
+
+      logger.info({ orderId: orderRow.id, phone: item.beneficiary_number }, "TopUpGH delivery failed — wallet refunded");
+    }
+  }
+
+  // Store latest webhook payload on batch
+  await db.update(topupghBatchesTable)
+    .set({ deliveryData: payload as unknown as Record<string, unknown>, updatedAt: new Date() })
+    .where(eq(topupghBatchesTable.id, batch.id));
+
+  // Auto-close batch when all orders are settled
+  const batchOrders = await db.select({ status: ordersTable.status })
+    .from(ordersTable)
+    .where(eq(ordersTable.topupghBatchId, batch.id));
+
+  const allSettled = batchOrders.every(o => o.status === "completed" || o.status === "failed");
+  if (allSettled && batch.status === "processing") {
+    const allFailed = batchOrders.every(o => o.status === "failed");
+    const anyFailed = batchOrders.some(o => o.status === "failed");
+    const finalStatus = allFailed ? "failed" : anyFailed ? "partial" : "completed";
+    await db.update(topupghBatchesTable)
+      .set({ status: finalStatus })
+      .where(eq(topupghBatchesTable.id, batch.id));
+  }
+}
+
+// ─── Background poller ────────────────────────────────────────────────────────
+
+let _pollerStarted = false;
+let _pollRunning   = false;
+const POLL_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
+
+export function startTopupghPoller(): void {
+  if (_pollerStarted) return;
+  _pollerStarted = true;
+
+  const poll = async () => {
+    if (_pollRunning) return;
+    _pollRunning = true;
+    try {
+      const { enabled, apiKey, apiSecret } = await getTopupghSettings();
+      if (!enabled || !apiKey || !apiSecret) return;
+
+      // Dispatch pending queue
+      const result = await dispatchPendingQueue();
+      if (result.dispatched) {
+        logger.info({ batchId: result.batchId, ordersCount: result.ordersCount, topupghOrderId: result.topupghOrderId }, "TopUpGH batch dispatched");
+      }
+
+      // Backup status checks for stuck processing batches
+      await checkProcessingBatches();
+
+    } catch (e) {
+      logger.error({ err: e }, "TopUpGH poller error");
+    } finally {
+      _pollRunning = false;
+    }
+  };
+
+  // Start after 15 s (let server warm up), then every 2 min
+  setTimeout(() => {
+    poll();
+    setInterval(poll, POLL_INTERVAL_MS);
+  }, 15_000);
+}

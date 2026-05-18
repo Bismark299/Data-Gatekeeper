@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   LayoutDashboard, Package, Users, ShoppingCart, LogOut, Wifi, ChevronRight, X,
   Wallet, ArrowDownCircle, BarChart3, Store, Settings, Zap, Loader2, Smartphone,
+  Package2,
 } from "lucide-react";
 
 const navItems = [
@@ -17,6 +18,7 @@ const navItems = [
   { href: "/admin/deposits",  icon: ArrowDownCircle, label: "Deposits" },
   { href: "/admin/momo",      icon: Smartphone,      label: "MoMo Transactions" },
   { href: "/admin/stats",     icon: BarChart3,       label: "Statistics" },
+  { href: "/admin/topupgh",   icon: Package2,        label: "TopUpGH" },
   { href: "/admin/settings",  icon: Settings,        label: "Settings" },
 ];
 
@@ -29,25 +31,46 @@ export function AdminSidebar({ open, onClose }: AdminSidebarProps) {
   const [location] = useLocation();
   const { user, signOut } = useAuth();
 
-  const { data: mcbisData, isLoading: balanceLoading } = useQuery<{ balance: number | null; configured: boolean }>({
+  // Fetch settings to determine which provider is active
+  const { data: settings } = useQuery<Record<string, string>>({
+    queryKey: ["adminSettings"],
+    queryFn: () => fetch("/api/admin/settings", { credentials: "include" }).then(r => r.json()),
+    staleTime: 60_000,
+  });
+
+  const mcbisEnabled  = settings?.mcbis_enabled  === "true";
+  const topupghEnabled = settings?.topupgh_enabled === "true";
+
+  // McbisSolution wallet balance (only when mcbis is active)
+  const { data: mcbisData, isLoading: mcbisLoading } = useQuery<{ balance: number | null; configured: boolean }>({
     queryKey: ["mcbis-balance-sidebar"],
     queryFn: async () => {
       const r = await fetch("/api/admin/mcbis/balance", { credentials: "include" });
       const d = await r.json() as { balance?: number; error?: string };
-      // 400 "not configured" = key deleted; treat as success so polling stops
-      if (r.status === 400 && d.error?.includes("not configured")) {
-        return { balance: null, configured: false };
-      }
+      if (r.status === 400 && d.error?.includes("not configured")) return { balance: null, configured: false };
       if (!r.ok) throw new Error(d.error ?? `HTTP ${r.status}`);
       return { balance: d.balance ?? null, configured: true };
     },
-    // only poll when the key is actually configured
-    refetchInterval: (query) => query.state.data?.configured === false ? false : 30_000,
+    enabled: mcbisEnabled,
+    refetchInterval: mcbisEnabled ? 30_000 : false,
     staleTime: 20_000,
     retry: false,
   });
-  const mcbisBalance = mcbisData?.balance ?? null;
-  const mcbisConfigured = mcbisData?.configured !== false;
+
+  // TopUpGH wallet balance (only when topupgh is active)
+  const { data: topupghData, isLoading: topupghLoading } = useQuery<{ success: boolean; balance: number }>({
+    queryKey: ["topupgh-balance-sidebar"],
+    queryFn: () =>
+      fetch("/api/admin/topupgh/balance", { credentials: "include" }).then(r => r.json()),
+    enabled: topupghEnabled,
+    refetchInterval: topupghEnabled ? 60_000 : false,
+    staleTime: 30_000,
+    retry: false,
+  });
+
+  const mcbisBalance   = mcbisData?.balance ?? null;
+  const mcbisConfigured = mcbisEnabled && mcbisData?.configured !== false;
+  const topupghBalance  = topupghData?.success ? topupghData.balance : null;
 
   const SidebarContent = () => (
     <div className="flex flex-col h-full bg-sidebar text-sidebar-foreground">
@@ -69,24 +92,44 @@ export function AdminSidebar({ open, onClose }: AdminSidebarProps) {
         <div className="text-xs font-semibold text-sidebar-foreground/40 uppercase tracking-wider mb-1">Admin Panel</div>
       </div>
 
-      {/* McbisSolution live wallet balance — only shown when API key is set */}
+      {/* McbisSolution live wallet balance — shown when Mcbis is enabled */}
       {mcbisConfigured && (
-      <div className="mx-3 mt-3 mb-1 rounded-xl bg-sidebar-accent/50 border border-sidebar-border px-3 py-2.5 flex items-center gap-2.5">
-        <div className="w-7 h-7 rounded-lg bg-sky-500/15 flex items-center justify-center shrink-0">
-          <Zap className="w-3.5 h-3.5 text-sky-500" />
+        <div className="mx-3 mt-3 mb-1 rounded-xl bg-sidebar-accent/50 border border-sidebar-border px-3 py-2.5 flex items-center gap-2.5">
+          <div className="w-7 h-7 rounded-lg bg-sky-500/15 flex items-center justify-center shrink-0">
+            <Zap className="w-3.5 h-3.5 text-sky-500" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="text-[10px] font-semibold text-sidebar-foreground/40 uppercase tracking-wider leading-none mb-0.5">McbisSolution</div>
+            {mcbisLoading ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-sidebar-foreground/40" />
+            ) : mcbisBalance == null ? (
+              <div className="text-xs text-sidebar-foreground/40">Unavailable</div>
+            ) : (
+              <div className="text-sm font-bold text-sky-500">GH₵{mcbisBalance.toFixed(2)}</div>
+            )}
+          </div>
+          <div className="w-1.5 h-1.5 rounded-full bg-sky-400 shrink-0" title="Live" />
         </div>
-        <div className="flex-1 min-w-0">
-          <div className="text-[10px] font-semibold text-sidebar-foreground/40 uppercase tracking-wider leading-none mb-0.5">McbisSolution</div>
-          {balanceLoading ? (
-            <Loader2 className="w-3.5 h-3.5 animate-spin text-sidebar-foreground/40" />
-          ) : mcbisBalance == null ? (
-            <div className="text-xs text-sidebar-foreground/40">Unavailable</div>
-          ) : (
-            <div className="text-sm font-bold text-sky-500">GH₵{mcbisBalance.toFixed(2)}</div>
-          )}
+      )}
+
+      {/* TopUpGH live wallet balance — shown when TopUpGH is enabled */}
+      {topupghEnabled && (
+        <div className="mx-3 mt-3 mb-1 rounded-xl bg-sidebar-accent/50 border border-sidebar-border px-3 py-2.5 flex items-center gap-2.5">
+          <div className="w-7 h-7 rounded-lg bg-orange-500/15 flex items-center justify-center shrink-0">
+            <Package2 className="w-3.5 h-3.5 text-orange-500" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="text-[10px] font-semibold text-sidebar-foreground/40 uppercase tracking-wider leading-none mb-0.5">TopUpGH</div>
+            {topupghLoading ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-sidebar-foreground/40" />
+            ) : topupghBalance == null ? (
+              <div className="text-xs text-sidebar-foreground/40">Unavailable</div>
+            ) : (
+              <div className="text-sm font-bold text-orange-500">GH₵{topupghBalance.toFixed(2)}</div>
+            )}
+          </div>
+          <div className="w-1.5 h-1.5 rounded-full bg-orange-400 shrink-0" title="Live" />
         </div>
-        <div className="w-1.5 h-1.5 rounded-full bg-sky-400 shrink-0" title="Live" />
-      </div>
       )}
 
       <nav className="flex-1 px-3 py-4 space-y-1">

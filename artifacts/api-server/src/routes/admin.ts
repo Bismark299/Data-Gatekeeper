@@ -1260,7 +1260,13 @@ router.put("/admin/settings", requireAdmin, async (req, res): Promise<void> => {
     res.status(400).json({ error: "Body must be a key-value object" });
     return;
   }
-  for (const [key, value] of Object.entries(body)) {
+
+  // Enforce mutual exclusivity: TopUpGH and McbisSolution cannot both be enabled.
+  const mutualBody = { ...body };
+  if (mutualBody.topupgh_enabled === "true") mutualBody.mcbis_enabled  = "false";
+  if (mutualBody.mcbis_enabled  === "true") mutualBody.topupgh_enabled = "false";
+
+  for (const [key, value] of Object.entries(mutualBody)) {
     if (typeof key !== "string" || typeof value !== "string") continue;
     await db.insert(settingsTable)
       .values({ key, value, updatedAt: new Date() })

@@ -23,6 +23,7 @@ import AdminStores from "@/pages/admin/stores";
 import AdminAgentDetail from "@/pages/admin/agent-detail";
 import AdminSettings from "@/pages/admin/settings";
 import AdminMomo from "@/pages/admin/momo";
+import AdminTopupgh from "@/pages/admin/topupgh";
 import Shop from "@/pages/shop";
 import StoreManager from "@/pages/store-manager";
 import PublicStore from "@/pages/public-store";
@@ -68,6 +69,7 @@ function Router() {
       <Route path="/admin/agents/:userId">{(params) => <ProtectedRoute adminOnly><AdminAgentDetail /></ProtectedRoute>}</Route>
       <Route path="/admin/settings">{() => <ProtectedRoute adminOnly><AdminSettings /></ProtectedRoute>}</Route>
       <Route path="/admin/momo">{() => <ProtectedRoute adminOnly><AdminMomo /></ProtectedRoute>}</Route>
+      <Route path="/admin/topupgh">{() => <ProtectedRoute adminOnly><AdminTopupgh /></ProtectedRoute>}</Route>
       <Route path="/shop">{() => <ProtectedRoute><Shop /></ProtectedRoute>}</Route>
       <Route path="/store-manager">{() => <ProtectedRoute><StoreManager /></ProtectedRoute>}</Route>
       <Route path="/s/:slug" component={PublicStore} />

@@ -10,7 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   Menu, Settings, Save, RefreshCw, Globe, CreditCard, Phone,
   Mail, Shield, Info, CheckCircle2, AlertCircle, Building2,
-  Zap, Wifi, Loader2,
+  Zap, Wifi, Loader2, Package2,
 } from "lucide-react";
 
 export default function AdminSettings() {
@@ -39,7 +39,10 @@ const DEFAULTS: Record<string, string> = {
   store_enabled:       "true",
   order_auto_complete: "false",
   footer_note:         "© 2025 DataBundle GH. All rights reserved.",
-  mcbis_enabled:              "true",
+  mcbis_enabled:               "false",
+  topupgh_enabled:             "false",
+  topupgh_min_batch:           "5",
+  topupgh_max_batch:           "50",
   network_mtn_enabled:         "true",
   network_telecel_enabled:     "true",
   "network_at-ishare_enabled": "true",
@@ -221,11 +224,153 @@ function NetworkSettingsSection({
   );
 }
 
+function TopUpGHSection({
+  enabled,
+  mcbisEnabled,
+  minBatch,
+  maxBatch,
+  onToggle,
+  onBatchChange,
+}: {
+  enabled: boolean;
+  mcbisEnabled: boolean;
+  minBatch: string;
+  maxBatch: string;
+  onToggle: (v: boolean) => void;
+  onBatchChange: (key: string, val: string) => void;
+}) {
+  const [balanceState, setBalanceState] = useState<"idle" | "loading" | "ok" | "error">("idle");
+  const [balance, setBalance] = useState<number | null>(null);
+  const { toast } = useToast();
+
+  const checkBalance = async () => {
+    setBalanceState("loading");
+    try {
+      const res = await fetch("/api/admin/topupgh/balance", { credentials: "include" });
+      const data = await res.json() as { balance?: number; success?: boolean; error?: string };
+      if (!res.ok) throw new Error(data.error ?? "Failed");
+      setBalance(data.balance ?? null);
+      setBalanceState("ok");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Failed to fetch balance";
+      toast({ title: msg, variant: "destructive" });
+      setBalanceState("error");
+    }
+  };
+
+  return (
+    <div className="bg-card border border-border rounded-2xl p-5 space-y-5">
+      {/* Header */}
+      <div className="flex items-start gap-3 pb-4 border-b border-border">
+        <div className="w-8 h-8 rounded-lg bg-orange-500/10 flex items-center justify-center shrink-0">
+          <Package2 className="w-4 h-4 text-orange-500" />
+        </div>
+        <div className="flex-1">
+          <div className="flex items-center gap-2">
+            <h2 className="font-semibold text-foreground text-sm">TopUpGH Batch Fulfillment</h2>
+            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${enabled ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400" : "bg-muted text-muted-foreground"}`}>
+              {enabled ? "ENABLED" : "DISABLED"}
+            </span>
+          </div>
+          <p className="text-xs text-muted-foreground">Batch MTN orders and dispatch via TopUpGH Reseller API (min. 5 orders per batch)</p>
+        </div>
+      </div>
+
+      {/* Mutual exclusivity notice */}
+      {mcbisEnabled && (
+        <div className="flex items-start gap-2 px-3 py-2 rounded-xl bg-purple-50 dark:bg-purple-900/10 border border-purple-200 dark:border-purple-800">
+          <Info className="w-3.5 h-3.5 text-purple-500 shrink-0 mt-0.5" />
+          <p className="text-[11px] text-purple-700 dark:text-purple-400">
+            <strong>McbisSolution is currently active.</strong> Enabling TopUpGH will automatically disable McbisSolution. Both providers cannot run simultaneously.
+          </p>
+        </div>
+      )}
+
+      {/* Toggle row */}
+      <div className="flex items-center justify-between bg-muted/30 rounded-xl px-4 py-3">
+        <div>
+          <div className="text-sm font-semibold text-foreground">Enable Batch Fulfillment</div>
+          <div className="text-xs text-muted-foreground">MTN orders are queued and dispatched in batches to TopUpGH</div>
+        </div>
+        <button
+          type="button"
+          onClick={() => onToggle(!enabled)}
+          className={`relative w-11 h-6 rounded-full transition-colors focus:outline-none ${enabled ? "bg-emerald-500" : "bg-muted-foreground/30"}`}
+          aria-label="Toggle TopUpGH"
+        >
+          <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${enabled ? "translate-x-5" : "translate-x-0"}`} />
+        </button>
+      </div>
+
+      {/* Batch size settings */}
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-1">
+          <Label htmlFor="topupgh_min_batch" className="text-xs font-semibold text-foreground">Min Batch Size</Label>
+          <Input
+            id="topupgh_min_batch"
+            type="number"
+            min={5}
+            max={300}
+            value={minBatch}
+            onChange={e => onBatchChange("topupgh_min_batch", e.target.value)}
+            className="h-8 text-sm"
+          />
+          <p className="text-[11px] text-muted-foreground">Minimum 5 (TopUpGH API limit)</p>
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="topupgh_max_batch" className="text-xs font-semibold text-foreground">Max Batch Size</Label>
+          <Input
+            id="topupgh_max_batch"
+            type="number"
+            min={5}
+            max={300}
+            value={maxBatch}
+            onChange={e => onBatchChange("topupgh_max_batch", e.target.value)}
+            className="h-8 text-sm"
+          />
+          <p className="text-[11px] text-muted-foreground">Maximum 300 (TopUpGH API limit)</p>
+        </div>
+      </div>
+
+      {/* Network coverage + balance */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center gap-2">
+          <Wifi className="w-3.5 h-3.5 text-yellow-500" />
+          <span className="text-xs text-muted-foreground">Coverage: <span className="font-semibold text-foreground">MTN only</span></span>
+          <span className="text-[10px] bg-yellow-100 text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-400 px-2 py-0.5 rounded-full font-medium">Telecel &amp; AT not supported</span>
+        </div>
+        <div className="flex items-center gap-2">
+          {balanceState === "ok" && balance !== null && (
+            <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+              Wallet: GH₵{balance.toFixed(2)}
+            </span>
+          )}
+          <Button type="button" variant="outline" size="sm" onClick={checkBalance} disabled={balanceState === "loading"} className="gap-1.5 h-7 text-xs">
+            {balanceState === "loading" ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+            Check Balance
+          </Button>
+        </div>
+      </div>
+
+      {/* Credential hint */}
+      <div className="flex items-start gap-2.5 px-3.5 py-2.5 rounded-xl bg-orange-50 dark:bg-orange-900/10 border border-orange-200 dark:border-orange-800">
+        <Info className="w-3.5 h-3.5 text-orange-500 shrink-0 mt-0.5" />
+        <p className="text-[11px] text-orange-700 dark:text-orange-400">
+          Requires <strong>TOPUPGH_API_KEY</strong> and <strong>TOPUPGH_API_SECRET</strong> environment variables plus domain whitelist in your TopUpGH dashboard.
+          Pending MTN orders are auto-dispatched every <strong>2 minutes</strong> when the queue reaches the minimum batch size.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function McbisSolutionSection({
   enabled,
+  topupghEnabled,
   onToggle,
 }: {
   enabled: boolean;
+  topupghEnabled: boolean;
   onToggle: (v: boolean) => void;
 }) {
   const [balanceState, setBalanceState] = useState<"idle" | "loading" | "ok" | "error">("idle");
@@ -264,6 +409,16 @@ function McbisSolutionSection({
           <p className="text-xs text-muted-foreground">Automatically send MTN orders to McbisSolution for instant fulfillment</p>
         </div>
       </div>
+
+      {/* Mutual exclusivity notice */}
+      {topupghEnabled && (
+        <div className="flex items-start gap-2 px-3 py-2 rounded-xl bg-orange-50 dark:bg-orange-900/10 border border-orange-200 dark:border-orange-800">
+          <Info className="w-3.5 h-3.5 text-orange-500 shrink-0 mt-0.5" />
+          <p className="text-[11px] text-orange-700 dark:text-orange-400">
+            <strong>TopUpGH is currently active.</strong> Enabling McbisSolution will automatically disable TopUpGH. Both providers cannot run simultaneously.
+          </p>
+        </div>
+      )}
 
       {/* Toggle row */}
       <div className="flex items-center justify-between bg-muted/30 rounded-xl px-4 py-3">
@@ -491,11 +646,34 @@ function AdminSettingsContent() {
               {/* McbisSolution Integration */}
               <McbisSolutionSection
                 enabled={local.mcbis_enabled === "true"}
+                topupghEnabled={local.topupgh_enabled === "true"}
                 onToggle={v => {
-                  const updated = { ...local, mcbis_enabled: v ? "true" : "false" };
+                  const updated = {
+                    ...local,
+                    mcbis_enabled:   v ? "true" : "false",
+                    topupgh_enabled: v ? "false" : local.topupgh_enabled,
+                  };
                   setLocal(updated);
                   saveMutation.mutate(updated);
                 }}
+              />
+
+              {/* TopUpGH Integration */}
+              <TopUpGHSection
+                enabled={local.topupgh_enabled === "true"}
+                mcbisEnabled={local.mcbis_enabled === "true"}
+                minBatch={local.topupgh_min_batch ?? "5"}
+                maxBatch={local.topupgh_max_batch ?? "50"}
+                onToggle={v => {
+                  const updated = {
+                    ...local,
+                    topupgh_enabled: v ? "true" : "false",
+                    mcbis_enabled:   v ? "false" : local.mcbis_enabled,
+                  };
+                  setLocal(updated);
+                  saveMutation.mutate(updated);
+                }}
+                onBatchChange={(key, val) => handleChange(key, val)}
               />
 
               {/* Info box */}

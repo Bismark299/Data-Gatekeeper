@@ -7,6 +7,7 @@ import adminRouter from "./admin";
 import { walletRouter, handlePaystackWebhook } from "./wallet";
 import { cartRouter } from "./cart";
 import { storesRouter, handleStorePaystackWebhook } from "./stores";
+import { topupghRouter } from "./topupgh";
 import crypto from "crypto";
 
 const router: IRouter = Router();
@@ -49,5 +50,6 @@ router.use(adminRouter);
 router.use("/wallet", walletRouter);
 router.use("/cart", cartRouter);
 router.use(storesRouter);
+router.use(topupghRouter);
 
 export default router;
