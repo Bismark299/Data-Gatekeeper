@@ -260,31 +260,44 @@ export default function Bundles() {
           <p className="text-muted-foreground mt-1">Choose your network and pick a plan</p>
         </div>
 
-        {/* Network tabs */}
-        <div className="flex flex-wrap items-center gap-2 mb-6">
-          {enabledTabs.map(({ key, dot }) => {
-            const style = NETWORK_STYLES[key];
-            const isActive = activeNetwork === key;
-            return (
-              <button
-                key={key}
-                onClick={() => setActiveNetwork(key)}
-                data-testid={`tab-${key}`}
-                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-semibold text-sm border-2 transition-all ${
-                  isActive
-                    ? `border-transparent ${style.gradient} ${style.text} shadow-md`
-                    : "border-border bg-background text-muted-foreground hover:border-primary/40"
-                }`}
-              >
-                <span className={`w-2.5 h-2.5 rounded-full ${dot}`} />
-                {NETWORK_LABELS[key]}
-              </button>
-            );
-          })}
+        {/* Network cards */}
+        <div className="mb-6">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            {enabledTabs.map(({ key }) => {
+              const style = NETWORK_STYLES[key];
+              const isActive = activeNetwork === key;
+              return (
+                <button
+                  key={key}
+                  onClick={() => setActiveNetwork(key)}
+                  data-testid={`tab-${key}`}
+                  className={`relative rounded-xl overflow-hidden shadow-lg border transition-transform duration-300 hover:scale-105 ${
+                    isActive ? "border-white ring-2 ring-white/60 scale-105" : "border-gray-200"
+                  }`}
+                  style={{ height: "120px" }}
+                >
+                  {/* Gradient background */}
+                  <div className={`absolute inset-0 ${style.gradient}`} />
+                  {/* Dark overlay */}
+                  <div className="absolute inset-0 bg-black/10" />
+                  {/* Active indicator */}
+                  {isActive && (
+                    <div className="absolute top-3 right-3 w-5 h-5 rounded-full bg-white/90 flex items-center justify-center">
+                      <div className="w-2.5 h-2.5 rounded-full bg-green-500" />
+                    </div>
+                  )}
+                  {/* Network name */}
+                  <div className="absolute bottom-3 left-4 right-4">
+                    <h3 className="text-white font-bold text-base drop-shadow-lg">{NETWORK_LABELS[key]}</h3>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
           {isAuthenticated && (
             <button
               onClick={() => setShowBulk(true)}
-              className="ml-auto flex items-center gap-2 px-4 py-2.5 rounded-xl font-semibold text-sm border-2 border-border bg-background text-muted-foreground hover:border-primary/40 transition-all"
+              className="mt-3 flex items-center gap-2 px-4 py-2.5 rounded-xl font-semibold text-sm border-2 border-border bg-background text-muted-foreground hover:border-primary/40 transition-all"
             >
               <List className="w-4 h-4" />
               Bulk Order

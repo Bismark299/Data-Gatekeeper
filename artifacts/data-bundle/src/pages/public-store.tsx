@@ -388,30 +388,48 @@ export default function PublicStorePage() {
           ))}
         </div>
 
-        {/* Network tabs */}
+        {/* Network cards */}
         {networks.length > 1 && (
-          <div className="flex flex-wrap gap-2 mb-6">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+            {/* "All" card */}
             <button
               onClick={() => setActiveNetwork(null)}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-semibold text-sm border-2 transition-all ${
-                activeNetwork === null
-                  ? `border-transparent ${storeTheme.bannerGradient} ${storeTheme.bannerText} shadow-md`
-                  : "border-border bg-background text-muted-foreground hover:border-primary/40"
+              className={`relative rounded-xl overflow-hidden shadow-lg border transition-transform duration-300 hover:scale-105 ${
+                activeNetwork === null ? "border-white ring-2 ring-white/60 scale-105" : "border-gray-200"
               }`}
+              style={{ height: "120px" }}
             >
-              All Networks
+              <div className={`absolute inset-0 ${storeTheme.bannerGradient}`} />
+              <div className="absolute inset-0 bg-black/10" />
+              {activeNetwork === null && (
+                <div className="absolute top-3 right-3 w-5 h-5 rounded-full bg-white/90 flex items-center justify-center">
+                  <div className="w-2.5 h-2.5 rounded-full bg-green-500" />
+                </div>
+              )}
+              <div className="absolute bottom-3 left-4 right-4">
+                <h3 className={`font-bold text-base drop-shadow-lg ${storeTheme.bannerText}`}>All Networks</h3>
+              </div>
             </button>
             {networks.map(net => {
               const nStyle = NETWORK_STYLES[net];
+              const isActive = activeNetwork === net;
               return (
                 <button key={net} onClick={() => setActiveNetwork(net)}
-                  className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-semibold text-sm border-2 transition-all ${
-                    activeNetwork === net
-                      ? `border-transparent ${nStyle?.gradient ?? ""} ${nStyle?.text ?? "text-white"} shadow-md`
-                      : "border-border bg-background text-muted-foreground hover:border-primary/40"
+                  className={`relative rounded-xl overflow-hidden shadow-lg border transition-transform duration-300 hover:scale-105 ${
+                    isActive ? "border-white ring-2 ring-white/60 scale-105" : "border-gray-200"
                   }`}
+                  style={{ height: "120px" }}
                 >
-                  {NETWORK_LABELS[net] ?? net}
+                  <div className={`absolute inset-0 ${nStyle?.gradient ?? "bg-gradient-to-br from-gray-600 to-gray-800"}`} />
+                  <div className="absolute inset-0 bg-black/10" />
+                  {isActive && (
+                    <div className="absolute top-3 right-3 w-5 h-5 rounded-full bg-white/90 flex items-center justify-center">
+                      <div className="w-2.5 h-2.5 rounded-full bg-green-500" />
+                    </div>
+                  )}
+                  <div className="absolute bottom-3 left-4 right-4">
+                    <h3 className="text-white font-bold text-base drop-shadow-lg">{NETWORK_LABELS[net] ?? net}</h3>
+                  </div>
                 </button>
               );
             })}
