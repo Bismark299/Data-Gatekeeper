@@ -14,15 +14,6 @@ import {
   Phone, Mail, Globe, ArrowRight, RotateCcw, Search, PackageSearch,
 } from "lucide-react";
 
-// ─── Network gradient map (matches admin packages.html getNetworkGradient) ────
-const NETWORK_GRADIENTS: Record<string, string> = {
-  mtn:          "linear-gradient(135deg, #ffc107 0%, #ff9800 50%, #e65100 100%)",
-  telecel:      "linear-gradient(135deg, #ef4444 0%, #dc2626 50%, #991b1b 100%)",
-  "at-ishare":  "linear-gradient(135deg, #3b82f6 0%, #2563eb 50%, #1e40af 100%)",
-  "at-bigtime": "linear-gradient(135deg, #3b82f6 0%, #2563eb 50%, #1e40af 100%)",
-  _default:     "linear-gradient(135deg, #6b7280 0%, #4b5563 50%, #374151 100%)",
-};
-
 // ─── Store Theme system ───────────────────────────────────────────────────────
 const STORE_THEMES: Record<string, {
   bannerGradient: string; bannerText: string; accentLight: string; accentBorder: string;
@@ -399,45 +390,45 @@ export default function PublicStorePage() {
 
         {/* Network cards */}
         {networks.length > 1 && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
             {/* "All" card */}
             <button
               onClick={() => setActiveNetwork(null)}
-              className={`relative rounded-xl overflow-hidden shadow-lg border transform hover:scale-105 transition-transform duration-300 ${
-                activeNetwork === null ? "border-white ring-2 ring-white/60" : "border-gray-200"
+              className={`relative rounded-xl overflow-hidden shadow-lg border transition-transform duration-300 hover:scale-105 ${
+                activeNetwork === null ? "border-white ring-2 ring-white/60 scale-105" : "border-gray-200"
               }`}
-              style={{ height: "200px" }}
+              style={{ height: "120px" }}
             >
-              <div className="absolute inset-0" style={{ background: "linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #7c3aed 100%)" }} />
+              <div className={`absolute inset-0 ${storeTheme.bannerGradient}`} />
               <div className="absolute inset-0 bg-black/10" />
               {activeNetwork === null && (
                 <div className="absolute top-3 right-3 w-5 h-5 rounded-full bg-white/90 flex items-center justify-center">
                   <div className="w-2.5 h-2.5 rounded-full bg-green-500" />
                 </div>
               )}
-              <div className="absolute bottom-4 left-4 right-4">
-                <h3 className="text-white font-bold text-lg drop-shadow-lg">All Networks</h3>
+              <div className="absolute bottom-3 left-4 right-4">
+                <h3 className={`font-bold text-base drop-shadow-lg ${storeTheme.bannerText}`}>All Networks</h3>
               </div>
             </button>
             {networks.map(net => {
+              const nStyle = NETWORK_STYLES[net];
               const isActive = activeNetwork === net;
-              const gradient = NETWORK_GRADIENTS[net] ?? NETWORK_GRADIENTS._default;
               return (
                 <button key={net} onClick={() => setActiveNetwork(net)}
-                  className={`relative rounded-xl overflow-hidden shadow-lg border transform hover:scale-105 transition-transform duration-300 ${
-                    isActive ? "border-white ring-2 ring-white/60" : "border-gray-200"
+                  className={`relative rounded-xl overflow-hidden shadow-lg border transition-transform duration-300 hover:scale-105 ${
+                    isActive ? "border-white ring-2 ring-white/60 scale-105" : "border-gray-200"
                   }`}
-                  style={{ height: "200px" }}
+                  style={{ height: "120px" }}
                 >
-                  <div className="absolute inset-0" style={{ background: gradient }} />
+                  <div className={`absolute inset-0 ${nStyle?.gradient ?? "bg-gradient-to-br from-gray-600 to-gray-800"}`} />
                   <div className="absolute inset-0 bg-black/10" />
                   {isActive && (
                     <div className="absolute top-3 right-3 w-5 h-5 rounded-full bg-white/90 flex items-center justify-center">
                       <div className="w-2.5 h-2.5 rounded-full bg-green-500" />
                     </div>
                   )}
-                  <div className="absolute bottom-4 left-4 right-4">
-                    <h3 className="text-white font-bold text-lg drop-shadow-lg">{NETWORK_LABELS[net] ?? net}</h3>
+                  <div className="absolute bottom-3 left-4 right-4">
+                    <h3 className="text-white font-bold text-base drop-shadow-lg">{NETWORK_LABELS[net] ?? net}</h3>
                   </div>
                 </button>
               );
