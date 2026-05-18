@@ -197,6 +197,14 @@ const NETWORK_TABS: { key: Network; dot: string }[] = [
   { key: "at-bigtime",  dot: "bg-green-500" },
 ];
 
+const NETWORK_GRADIENTS: Record<string, string> = {
+  mtn:          "linear-gradient(135deg, #ffc107 0%, #ff9800 50%, #e65100 100%)",
+  telecel:      "linear-gradient(135deg, #ef4444 0%, #dc2626 50%, #991b1b 100%)",
+  "at-ishare":  "linear-gradient(135deg, #3b82f6 0%, #2563eb 50%, #1e40af 100%)",
+  "at-bigtime": "linear-gradient(135deg, #3b82f6 0%, #2563eb 50%, #1e40af 100%)",
+  _default:     "linear-gradient(135deg, #6b7280 0%, #4b5563 50%, #374151 100%)",
+};
+
 export default function Bundles() {
   const { isAuthenticated, user } = useAuth();
   const { addItem } = useCart();
@@ -262,33 +270,29 @@ export default function Bundles() {
 
         {/* Network cards */}
         <div className="mb-6">
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {enabledTabs.map(({ key }) => {
-              const style = NETWORK_STYLES[key];
               const isActive = activeNetwork === key;
+              const gradient = NETWORK_GRADIENTS[key] ?? NETWORK_GRADIENTS._default;
               return (
                 <button
                   key={key}
                   onClick={() => setActiveNetwork(key)}
                   data-testid={`tab-${key}`}
-                  className={`relative rounded-xl overflow-hidden shadow-lg border transition-transform duration-300 hover:scale-105 ${
-                    isActive ? "border-white ring-2 ring-white/60 scale-105" : "border-gray-200"
+                  className={`relative rounded-xl overflow-hidden shadow-lg border transform hover:scale-105 transition-transform duration-300 ${
+                    isActive ? "border-white ring-2 ring-white/60" : "border-gray-200"
                   }`}
-                  style={{ height: "120px" }}
+                  style={{ height: "200px" }}
                 >
-                  {/* Gradient background */}
-                  <div className={`absolute inset-0 ${style.gradient}`} />
-                  {/* Dark overlay */}
+                  <div className="absolute inset-0" style={{ background: gradient }} />
                   <div className="absolute inset-0 bg-black/10" />
-                  {/* Active indicator */}
                   {isActive && (
                     <div className="absolute top-3 right-3 w-5 h-5 rounded-full bg-white/90 flex items-center justify-center">
                       <div className="w-2.5 h-2.5 rounded-full bg-green-500" />
                     </div>
                   )}
-                  {/* Network name */}
-                  <div className="absolute bottom-3 left-4 right-4">
-                    <h3 className="text-white font-bold text-base drop-shadow-lg">{NETWORK_LABELS[key]}</h3>
+                  <div className="absolute bottom-4 left-4 right-4">
+                    <h3 className="text-white font-bold text-lg drop-shadow-lg">{NETWORK_LABELS[key]}</h3>
                   </div>
                 </button>
               );
