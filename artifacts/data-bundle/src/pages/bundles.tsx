@@ -269,7 +269,7 @@ export default function Bundles() {
         </div>
 
         {/* Network selector */}
-        <div className="flex justify-center gap-2 mb-8 flex-wrap items-center">
+        <div className="flex justify-center gap-2 mb-4 flex-wrap items-center">
           {enabledTabs.map(({ key }) => {
             const isActive = activeNetwork === key;
             const activeStyle = NETWORK_TAB_ACTIVE[key];
@@ -287,16 +287,18 @@ export default function Bundles() {
               </button>
             );
           })}
-          {isAuthenticated && (
+        </div>
+        {isAuthenticated && (
+          <div className="flex justify-end mb-4">
             <button
               onClick={() => setShowBulk(true)}
-              className="ml-2 flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm border border-gray-600 text-gray-400 hover:opacity-90 transition bg-gray-700"
+              className="flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm border border-gray-600 text-gray-400 hover:opacity-90 transition bg-gray-700"
             >
               <List className="w-4 h-4" />
               Bulk Order
             </button>
-          )}
-        </div>
+          </div>
+        )}
 
         {/* Bundles grid */}
         {isLoading ? (
