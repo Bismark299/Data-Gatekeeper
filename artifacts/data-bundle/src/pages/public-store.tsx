@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { useParams, Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { storeApi, type PublicStore, type StoreBundle } from "@/lib/storeApi";
@@ -13,6 +13,14 @@ import {
   Wifi, Zap, Loader2, XCircle, CheckCircle2, Clock, ShoppingBag,
   Phone, Mail, Globe, ArrowRight, RotateCcw, Search, PackageSearch,
 } from "lucide-react";
+
+// Active tab colours — matches network-card-designs.txt sections 8-9
+const NETWORK_TAB_ACTIVE: Record<string, React.CSSProperties> = {
+  mtn:          { backgroundColor: "rgb(245,197,24)", color: "#000", fontWeight: 600 },
+  telecel:      { backgroundColor: "rgb(229,57,53)",  color: "#fff", fontWeight: 600 },
+  "at-ishare":  { backgroundColor: "rgb(0,51,160)",   color: "#fff", fontWeight: 600 },
+  "at-bigtime": { backgroundColor: "rgb(0,51,160)",   color: "#fff", fontWeight: 600 },
+};
 
 // ─── Store Theme system ───────────────────────────────────────────────────────
 const STORE_THEMES: Record<string, {
@@ -388,48 +396,29 @@ export default function PublicStorePage() {
           ))}
         </div>
 
-        {/* Network cards */}
+        {/* Network selector */}
         {networks.length > 1 && (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
-            {/* "All" card */}
+          <div className="flex justify-center gap-2 mb-6 flex-wrap">
+            {/* All Networks tab */}
             <button
               onClick={() => setActiveNetwork(null)}
-              className={`relative rounded-xl overflow-hidden shadow-lg border transition-transform duration-300 hover:scale-105 ${
-                activeNetwork === null ? "border-white ring-2 ring-white/60 scale-105" : "border-gray-200"
+              className={`network-tab px-4 sm:px-6 py-2 rounded-lg font-medium transition text-sm sm:text-base ${
+                activeNetwork === null ? "" : "bg-gray-700 text-gray-400 hover:opacity-90"
               }`}
-              style={{ height: "120px" }}
+              style={activeNetwork === null ? { backgroundColor: "#334155", color: "#fff", fontWeight: 600 } : undefined}
             >
-              <div className={`absolute inset-0 ${storeTheme.bannerGradient}`} />
-              <div className="absolute inset-0 bg-black/10" />
-              {activeNetwork === null && (
-                <div className="absolute top-3 right-3 w-5 h-5 rounded-full bg-white/90 flex items-center justify-center">
-                  <div className="w-2.5 h-2.5 rounded-full bg-green-500" />
-                </div>
-              )}
-              <div className="absolute bottom-3 left-4 right-4">
-                <h3 className={`font-bold text-base drop-shadow-lg ${storeTheme.bannerText}`}>All Networks</h3>
-              </div>
+              All
             </button>
             {networks.map(net => {
-              const nStyle = NETWORK_STYLES[net];
               const isActive = activeNetwork === net;
               return (
                 <button key={net} onClick={() => setActiveNetwork(net)}
-                  className={`relative rounded-xl overflow-hidden shadow-lg border transition-transform duration-300 hover:scale-105 ${
-                    isActive ? "border-white ring-2 ring-white/60 scale-105" : "border-gray-200"
+                  className={`network-tab px-4 sm:px-6 py-2 rounded-lg font-medium transition text-sm sm:text-base ${
+                    isActive ? "" : "bg-gray-700 text-gray-400 hover:opacity-90"
                   }`}
-                  style={{ height: "120px" }}
+                  style={isActive ? NETWORK_TAB_ACTIVE[net] : undefined}
                 >
-                  <div className={`absolute inset-0 ${nStyle?.gradient ?? "bg-gradient-to-br from-gray-600 to-gray-800"}`} />
-                  <div className="absolute inset-0 bg-black/10" />
-                  {isActive && (
-                    <div className="absolute top-3 right-3 w-5 h-5 rounded-full bg-white/90 flex items-center justify-center">
-                      <div className="w-2.5 h-2.5 rounded-full bg-green-500" />
-                    </div>
-                  )}
-                  <div className="absolute bottom-3 left-4 right-4">
-                    <h3 className="text-white font-bold text-base drop-shadow-lg">{NETWORK_LABELS[net] ?? net}</h3>
-                  </div>
+                  {NETWORK_LABELS[net] ?? net}
                 </button>
               );
             })}

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { useListBundles } from "@workspace/api-client-react";
 import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
 import { Navbar } from "@/components/Navbar";
@@ -197,6 +197,14 @@ const NETWORK_TABS: { key: Network; dot: string }[] = [
   { key: "at-bigtime",  dot: "bg-green-500" },
 ];
 
+// Active tab colours — matches network-card-designs.txt sections 8-9
+const NETWORK_TAB_ACTIVE: Record<string, React.CSSProperties> = {
+  mtn:          { backgroundColor: "rgb(245,197,24)", color: "#000", fontWeight: 600 },
+  telecel:      { backgroundColor: "rgb(229,57,53)",  color: "#fff", fontWeight: 600 },
+  "at-ishare":  { backgroundColor: "rgb(0,51,160)",   color: "#fff", fontWeight: 600 },
+  "at-bigtime": { backgroundColor: "rgb(0,51,160)",   color: "#fff", fontWeight: 600 },
+};
+
 export default function Bundles() {
   const { isAuthenticated, user } = useAuth();
   const { addItem } = useCart();
@@ -260,49 +268,35 @@ export default function Bundles() {
           <p className="text-muted-foreground mt-1">Choose your network and pick a plan</p>
         </div>
 
-        {/* Network cards */}
-        <div className="mb-6">
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            {enabledTabs.map(({ key }) => {
-              const style = NETWORK_STYLES[key];
-              const isActive = activeNetwork === key;
-              return (
-                <button
-                  key={key}
-                  onClick={() => setActiveNetwork(key)}
-                  data-testid={`tab-${key}`}
-                  className={`relative rounded-xl overflow-hidden shadow-lg border transition-transform duration-300 hover:scale-105 ${
-                    isActive ? "border-white ring-2 ring-white/60 scale-105" : "border-gray-200"
-                  }`}
-                  style={{ height: "120px" }}
-                >
-                  {/* Gradient background */}
-                  <div className={`absolute inset-0 ${style.gradient}`} />
-                  {/* Dark overlay */}
-                  <div className="absolute inset-0 bg-black/10" />
-                  {/* Active indicator */}
-                  {isActive && (
-                    <div className="absolute top-3 right-3 w-5 h-5 rounded-full bg-white/90 flex items-center justify-center">
-                      <div className="w-2.5 h-2.5 rounded-full bg-green-500" />
-                    </div>
-                  )}
-                  {/* Network name */}
-                  <div className="absolute bottom-3 left-4 right-4">
-                    <h3 className="text-white font-bold text-base drop-shadow-lg">{NETWORK_LABELS[key]}</h3>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
+        {/* Network selector */}
+        <div className="flex justify-center gap-2 mb-8 flex-wrap items-center">
+          {enabledTabs.map(({ key }) => {
+            const isActive = activeNetwork === key;
+            const activeStyle = NETWORK_TAB_ACTIVE[key];
+            return (
+              <button
+                key={key}
+                onClick={() => setActiveNetwork(key)}
+                data-testid={`tab-${key}`}
+                className={`network-tab px-4 sm:px-6 py-2 rounded-lg font-medium transition text-sm sm:text-base ${
+                  isActive ? "" : "bg-gray-700 text-gray-400 hover:opacity-90"
+                }`}
+                style={isActive ? activeStyle : undefined}
+              >
+                {NETWORK_LABELS[key]}
+              </button>
+            );
+          })}
           {isAuthenticated && (
             <button
               onClick={() => setShowBulk(true)}
-              className="mt-3 flex items-center gap-2 px-4 py-2.5 rounded-xl font-semibold text-sm border-2 border-border bg-background text-muted-foreground hover:border-primary/40 transition-all"
+              className="ml-2 flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm border border-gray-600 text-gray-400 hover:opacity-90 transition bg-gray-700"
             >
               <List className="w-4 h-4" />
               Bulk Order
             </button>
           )}
+        </div>
         </div>
 
         {/* Bundles grid */}
