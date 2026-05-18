@@ -1,0 +1,679 @@
+TopUpGH Reseller API
+ 1.3.0 
+OAS 3.0
+API for integrating with TopUpGH platform to create data orders programmatically.
+
+Authentication Required:
+
+API Key (X-API-Key): Your API key from My Account > API Management
+Timestamp (X-Timestamp): Current Unix timestamp
+API Signature (X-API-Signature): HMAC-SHA256 signature (REQUIRED for POST requests)
+How to Generate Signature:
+
+signature_string = timestamp + method + endpoint + body
+signature = HMAC-SHA256(signature_string, API_SECRET)
+Example (POST /orders/create):
+
+const timestamp = Math.floor(Date.now() / 1000);
+const method = "POST";
+// IMPORTANT: Use the internal route for signature, NOT the clean URL
+const endpoint = "/topupgh-api/v1/orders/create";
+const body = JSON.stringify({orders: [...]});
+const signatureString = timestamp + method + endpoint + body;
+const signature = crypto.createHmac("sha256", API_SECRET).update(signatureString).digest("hex");
+⚠️ Important:
+
+API Secret is found in My Account > API Management
+HMAC signature is REQUIRED for order creation (POST requests)
+Use /topupgh-api/v1/... for signature (NOT /api/v1/...)
+The Swagger UI auto-generates signatures when you enter your API Secret
+Domain Whitelist Required: You must add your domain/server IP in My Account > API Management > Domain Whitelist. Without a whitelist, all API requests will be blocked.
+TopUpGH Support - Website
+Servers
+
+https://reseller.etopupgh.com/api/v1 - Production Server
+
+Authorize
+Testing
+
+
+GET
+/test
+Test API Connection
+
+
+Test endpoint to verify API credentials and connection
+
+Parameters
+Try it out
+No parameters
+
+Responses
+Code	Description	Links
+200	
+Connection successful
+
+Media type
+
+application/json
+Controls Accept header.
+Example Value
+Schema
+{
+  "success": true,
+  "message": "string",
+  "timestamp": "string",
+  "user_id": 0
+}
+No links
+401	
+Unauthorized
+
+Media type
+
+application/json
+Example Value
+Schema
+{
+  "success": false,
+  "message": "string"
+}
+No links
+Products
+
+
+GET
+/products
+Get Available Products
+
+
+Retrieve list of available data products
+
+Parameters
+Try it out
+Name	Description
+network
+string
+(query)
+Filter by network
+
+Available values : mtn, at, telecel
+
+
+--
+data_size
+integer
+(query)
+Filter by data size in GB
+
+data_size
+Responses
+Code	Description	Links
+200	
+List of products
+
+Media type
+
+application/json
+Controls Accept header.
+Example Value
+Schema
+{
+  "success": true,
+  "products": [
+    {
+      "id": 0,
+      "name": "string",
+      "price": "string",
+      "data_size": "string",
+      "network": "mtn",
+      "in_stock": true
+    }
+  ],
+  "total": 0
+}
+No links
+Wallet
+
+
+GET
+/wallet/balance
+Get Wallet Balance
+
+
+Retrieve current wallet balance and today's transactions
+
+Parameters
+Try it out
+No parameters
+
+Responses
+Code	Description	Links
+200	
+Wallet balance
+
+Media type
+
+application/json
+Controls Accept header.
+Example Value
+Schema
+{
+  "success": true,
+  "balance": 0,
+  "currency": "string",
+  "today": {
+    "credit": 0,
+    "debit": 0
+  }
+}
+No links
+Orders
+
+
+POST
+/orders/create
+Create Bulk Order
+
+
+Create a new data order with up to 300 beneficiaries in a single request. Payment is automatically deducted from wallet balance. This endpoint supports bulk orders for efficiency.
+
+Parameters
+Try it out
+No parameters
+
+Request body
+
+application/json
+Example Value
+Schema
+{
+  "orders": [
+    {
+      "_beneficiary_number": "0241234567",
+      "network": "mtn",
+      "_data_size": 5
+    },
+    {
+      "_beneficiary_number": "0551234567",
+      "network": "at",
+      "_data_size": 10
+    },
+    {
+      "_beneficiary_number": "0261234567",
+      "network": "mtn",
+      "_data_size": 2
+    }
+  ]
+}
+Responses
+Code	Description	Links
+200	
+Order created successfully
+
+Media type
+
+application/json
+Controls Accept header.
+Example Value
+Schema
+{
+  "success": true,
+  "message": "string",
+  "order_id": 0,
+  "total_amount": 0,
+  "items_added": 0,
+  "items_skipped": 0,
+  "wallet_deducted": 0,
+  "previous_balance": 0,
+  "new_balance": 0
+}
+No links
+400	
+Bad request or insufficient balance
+
+No links
+
+GET
+/orders/{order_id}
+Get Order Status
+
+
+Retrieve status and details of a specific order
+
+Parameters
+Try it out
+Name	Description
+order_id *
+integer
+(path)
+order_id
+Responses
+Code	Description	Links
+200	
+Order details
+
+Media type
+
+application/json
+Controls Accept header.
+Example Value
+Schema
+{
+  "success": true,
+  "order": {
+    "id": 0,
+    "status": "string",
+    "total": 0,
+    "date_created": "string"
+  }
+}
+No links
+404	
+Order not found
+
+No links
+
+GET
+/orders/{order_id}/delivery-status
+Get Delivery Status
+
+
+Get detailed delivery status from MTN for a specific order
+
+Parameters
+Try it out
+Name	Description
+order_id *
+integer
+(path)
+order_id
+Responses
+Code	Description	Links
+200	
+Delivery status
+
+Media type
+
+application/json
+Controls Accept header.
+Example Value
+Schema
+{
+  "success": true,
+  "order_id": 0,
+  "delivery_status": {}
+}
+No links
+
+GET
+/orders
+Get All Orders
+
+
+Retrieve paginated list of user's orders
+
+Parameters
+Try it out
+Name	Description
+page
+integer
+(query)
+Page number
+
+Default value : 1
+
+1
+per_page
+integer
+(query)
+Items per page
+
+Default value : 20
+
+20
+status
+string
+(query)
+Filter by order status
+
+Available values : completed, processing, pending
+
+
+--
+Responses
+Code	Description	Links
+200	
+List of orders
+
+Media type
+
+application/json
+Controls Accept header.
+Example Value
+Schema
+{
+  "success": true,
+  "pagination": {
+    "total": 0,
+    "per_page": 0,
+    "current_page": 0,
+    "total_pages": 0
+  }
+}
+No links
+
+Schemas
+Error{
+success	[...]
+message	[...]
+}
+Product{
+id	[...]
+name	[...]
+price	[...]
+data_size	[...]
+network	[...]
+in_stock	[...]
+}
+OrderItem{
+_beneficiary_number*	[...]
+network*	[...]
+_data_size*	[...]
+}
+📚 Code Samples
+/test - Test API Connection
+const crypto = require("crypto");
+
+const API_KEY = "YOUR_API_KEY";
+const API_SECRET = "YOUR_API_SECRET";
+const BASE_URL = "https://reseller.etopupgh.com/api/v1";
+
+async function testConnection() {
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const method = "GET";
+    const endpoint = "/topupgh-api/v1/test";
+    const body = "";
+    
+    const signatureString = timestamp + method + endpoint + body;
+    const signature = crypto
+        .createHmac("sha256", API_SECRET)
+        .update(signatureString)
+        .digest("hex");
+    
+    const response = await fetch(BASE_URL + "/test", {
+        method: "GET",
+        headers: {
+            "Accept": "application/json",
+            "X-API-Key": API_KEY,
+            "X-Timestamp": timestamp,
+            "X-API-Signature": signature
+        }
+    });
+    
+    const data = await response.json();
+    console.log(data);
+}
+
+testConnection();
+/products - Get Available Products
+const crypto = require("crypto");
+
+const API_KEY = "YOUR_API_KEY";
+const API_SECRET = "YOUR_API_SECRET";
+const BASE_URL = "https://reseller.etopupgh.com/api/v1";
+
+async function getProducts() {
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const method = "GET";
+    const endpoint = "/topupgh-api/v1/products";
+    const body = "";
+    
+    const signatureString = timestamp + method + endpoint + body;
+    const signature = crypto
+        .createHmac("sha256", API_SECRET)
+        .update(signatureString)
+        .digest("hex");
+    
+    const response = await fetch(BASE_URL + "/products?network=mtn", {
+        method: "GET",
+        headers: {
+            "Accept": "application/json",
+            "X-API-Key": API_KEY,
+            "X-Timestamp": timestamp,
+            "X-API-Signature": signature
+        }
+    });
+    
+    const data = await response.json();
+    console.log(data);
+}
+
+getProducts();
+/wallet/balance - Get Wallet Balance
+const crypto = require("crypto");
+
+const API_KEY = "YOUR_API_KEY";
+const API_SECRET = "YOUR_API_SECRET";
+const BASE_URL = "https://reseller.etopupgh.com/api/v1";
+
+async function getWalletBalance() {
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const method = "GET";
+    const endpoint = "/topupgh-api/v1/wallet/balance";
+    const body = "";
+    
+    const signatureString = timestamp + method + endpoint + body;
+    const signature = crypto
+        .createHmac("sha256", API_SECRET)
+        .update(signatureString)
+        .digest("hex");
+    
+    const response = await fetch(BASE_URL + "/wallet/balance", {
+        method: "GET",
+        headers: {
+            "Accept": "application/json",
+            "X-API-Key": API_KEY,
+            "X-Timestamp": timestamp,
+            "X-API-Signature": signature
+        }
+    });
+    
+    const data = await response.json();
+    console.log("Balance:", data.balance);
+}
+
+getWalletBalance();
+/orders/create - Create Bulk Order
+const crypto = require("crypto");
+
+const API_KEY = "YOUR_API_KEY";
+const API_SECRET = "YOUR_API_SECRET";
+const BASE_URL = "https://reseller.etopupgh.com/api/v1";
+
+async function createOrder() {
+    const orders = [
+        { _beneficiary_number: "0241234567", network: "mtn", _data_size: 5 },
+        { _beneficiary_number: "0551234567", network: "at", _data_size: 10 }
+    ];
+    
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const method = "POST";
+    const endpoint = "/topupgh-api/v1/orders/create";
+    const body = JSON.stringify({ orders });
+    
+    const signatureString = timestamp + method + endpoint + body;
+    const signature = crypto
+        .createHmac("sha256", API_SECRET)
+        .update(signatureString)
+        .digest("hex");
+    
+    const response = await fetch(BASE_URL + "/orders/create", {
+        method: "POST",
+        headers: {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "X-API-Key": API_KEY,
+            "X-Timestamp": timestamp,
+            "X-API-Signature": signature
+        },
+        body: body
+    });
+    
+    const data = await response.json();
+    console.log("Order ID:", data.order_id);
+}
+
+createOrder();
+/orders/{order_id} - Get Order Status
+const crypto = require("crypto");
+
+const API_KEY = "YOUR_API_KEY";
+const API_SECRET = "YOUR_API_SECRET";
+const BASE_URL = "https://reseller.etopupgh.com/api/v1";
+const orderId = 123456;
+
+async function getOrderStatus() {
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const method = "GET";
+    const endpoint = "/topupgh-api/v1/orders/" + orderId;
+    const body = "";
+    
+    const signatureString = timestamp + method + endpoint + body;
+    const signature = crypto
+        .createHmac("sha256", API_SECRET)
+        .update(signatureString)
+        .digest("hex");
+    
+    const response = await fetch(BASE_URL + "/orders/" + orderId, {
+        method: "GET",
+        headers: {
+            "Accept": "application/json",
+            "X-API-Key": API_KEY,
+            "X-Timestamp": timestamp,
+            "X-API-Signature": signature
+        }
+    });
+    
+    const data = await response.json();
+    console.log(data);
+}
+
+getOrderStatus();
+/orders/{order_id}/delivery-status - Get Delivery Status
+const crypto = require("crypto");
+
+const API_KEY = "YOUR_API_KEY";
+const API_SECRET = "YOUR_API_SECRET";
+const BASE_URL = "https://reseller.etopupgh.com/api/v1";
+const orderId = 123456;
+
+async function getDeliveryStatus() {
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const method = "GET";
+    const endpoint = "/topupgh-api/v1/orders/" + orderId + "/delivery-status";
+    const body = "";
+    
+    const signatureString = timestamp + method + endpoint + body;
+    const signature = crypto
+        .createHmac("sha256", API_SECRET)
+        .update(signatureString)
+        .digest("hex");
+    
+    const response = await fetch(BASE_URL + "/orders/" + orderId + "/delivery-status", {
+        method: "GET",
+        headers: {
+            "Accept": "application/json",
+            "X-API-Key": API_KEY,
+            "X-Timestamp": timestamp,
+            "X-API-Signature": signature
+        }
+    });
+    
+    const data = await response.json();
+    console.log(data);
+}
+
+getDeliveryStatus();
+/orders - Get All Orders
+const crypto = require("crypto");
+
+const API_KEY = "YOUR_API_KEY";
+const API_SECRET = "YOUR_API_SECRET";
+const BASE_URL = "https://reseller.etopupgh.com/api/v1";
+
+async function getAllOrders() {
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const method = "GET";
+    const endpoint = "/topupgh-api/v1/orders";
+    const body = "";
+    
+    const signatureString = timestamp + method + endpoint + body;
+    const signature = crypto
+        .createHmac("sha256", API_SECRET)
+        .update(signatureString)
+        .digest("hex");
+    
+    const response = await fetch(BASE_URL + "/orders?page=1&per_page=20", {
+        method: "GET",
+        headers: {
+            "Accept": "application/json",
+            "X-API-Key": API_KEY,
+            "X-Timestamp": timestamp,
+            "X-API-Signature": signature
+        }
+    });
+    
+    const data = await response.json();
+    console.log(data);
+}
+
+getAllOrders();
+webhook - items format. Sample of response sent to webhook url
+// Express.js webhook endpoint example
+const express = require("express");
+const app = express();
+
+app.use(express.json());
+
+app.post("/webhook", (req, res) => {
+    const payload = req.body;
+    
+    // Sample payload structure:
+    // {
+    //     "event": "delivery_status_updated",
+    //     "timestamp": "2026-01-17T10:30:00+00:00",
+    //     "order": {
+    //         "order_id": 123456,
+    //         "order_number": "123456",
+    //         "delivery_info": "Submited to the Yello server on 7:24AM - 14/January/2026",
+    //         "delivery_date": "2026-01-14",
+    //         "delivery_time": "07:24:00",
+    //         "formatted_delivery_info": "Submited to the Yello server on 7:24AM - 14/January/2026",
+    //         "items": [
+    //             {
+    //                 "item_id": "123456-1",
+    //                 "beneficiary_number": "0241234567",
+    //                 "network": "mtn",
+    //                 "data_size": 5,
+    //                 "delivery_status": "Delivered",
+    //                 "delivery_date": "2026-01-14",
+    //                 "delivery_time": "07:24:00"
+    //             }
+    //         ]
+    //     }
+    // }
+    
+    if (payload.event === "delivery_status_updated") {
+        const orderId = payload.order.order_id;
+        const deliveryInfo = payload.order.delivery_info;
+        // Process delivery status update
+        console.log("Order", orderId, "delivered:", deliveryInfo);
+    }
+    
+    res.status(200).send("OK");
+});
+
+app.listen(3000, () => {
+    console.log("Webhook server listening on port 3000");
+});
