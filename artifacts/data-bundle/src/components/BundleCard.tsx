@@ -1,5 +1,3 @@
-import { Zap } from "lucide-react";
-
 export type NetworkKey = "mtn" | "telecel" | "at-ishare" | "at-bigtime";
 
 export const NETWORK_LABELS: Record<string, string> = {
@@ -9,45 +7,77 @@ export const NETWORK_LABELS: Record<string, string> = {
   "at-bigtime": "AT Big-Time",
 };
 
+// Network style map — exact colours from network-card-designs.txt
+const CARD_STYLES: Record<string, {
+  bodyBg: string; text: string; badge: string;
+  badgeBorder: string; footerBg: string; footerText: string;
+}> = {
+  mtn: {
+    bodyBg:      "#F5C518",
+    text:        "text-black",
+    badge:       "MTN",
+    badgeBorder: "border-gray-600 text-gray-600",
+    footerBg:    "#4a4a4a",
+    footerText:  "#e5e5e5",
+  },
+  telecel: {
+    bodyBg:      "rgb(229,57,53)",
+    text:        "text-white",
+    badge:       "T",
+    badgeBorder: "border-white text-white",
+    footerBg:    "#2d2d2d",
+    footerText:  "#ffffff",
+  },
+  "at-ishare": {
+    bodyBg:      "#0033A0",
+    text:        "text-white",
+    badge:       "AT",
+    badgeBorder: "border-white text-white",
+    footerBg:    "#E4002B",
+    footerText:  "#ffffff",
+  },
+  "at-bigtime": {
+    bodyBg:      "#0033A0",
+    text:        "text-white",
+    badge:       "AT",
+    badgeBorder: "border-white text-white",
+    footerBg:    "#E4002B",
+    footerText:  "#ffffff",
+  },
+};
+
+// Keep NETWORK_STYLES exported for network selector cards (bundles.tsx / public-store.tsx)
 export const NETWORK_STYLES: Record<string, {
   gradient: string; text: string; badge: string;
   shimmer: string; glow: string; ctaBg: string; ctaText: string;
 }> = {
   mtn: {
-    gradient:  "bg-gradient-to-br from-[#FFCC00] via-[#FFB800] to-[#E6A500]",
-    text:      "text-gray-900",
-    badge:     "bg-black/15 text-gray-900 border-black/20",
-    shimmer:   "from-white/50 via-white/10 to-transparent",
-    glow:      "shadow-[0_8px_40px_rgba(255,184,0,0.45)]",
-    ctaBg:     "bg-black/80",
-    ctaText:   "text-yellow-400",
+    gradient: "bg-gradient-to-br from-[#FFCC00] via-[#FFB800] to-[#E6A500]",
+    text: "text-gray-900", badge: "bg-black/15 text-gray-900 border-black/20",
+    shimmer: "from-white/50 via-white/10 to-transparent",
+    glow: "shadow-[0_8px_40px_rgba(255,184,0,0.45)]",
+    ctaBg: "bg-black/80", ctaText: "text-yellow-400",
   },
   telecel: {
-    gradient:  "bg-gradient-to-br from-[#F44336] via-[#C62828] to-[#7B0000]",
-    text:      "text-white",
-    badge:     "bg-white/20 text-white border-white/30",
-    shimmer:   "from-white/25 via-white/5 to-transparent",
-    glow:      "shadow-[0_8px_40px_rgba(198,40,40,0.45)]",
-    ctaBg:     "bg-black/80",
-    ctaText:   "text-red-400",
+    gradient: "bg-gradient-to-br from-[#F44336] via-[#C62828] to-[#7B0000]",
+    text: "text-white", badge: "bg-white/20 text-white border-white/30",
+    shimmer: "from-white/25 via-white/5 to-transparent",
+    glow: "shadow-[0_8px_40px_rgba(198,40,40,0.45)]",
+    ctaBg: "bg-black/80", ctaText: "text-red-400",
   },
   "at-ishare": {
-    gradient:  "bg-gradient-to-br from-[#2196F3] via-[#1565C0] to-[#0D2E78]",
-    text:      "text-white",
-    badge:     "bg-white/20 text-white border-white/30",
-    shimmer:   "from-white/25 via-white/5 to-transparent",
-    glow:      "shadow-[0_8px_40px_rgba(21,101,192,0.45)]",
-    ctaBg:     "bg-black/80",
-    ctaText:   "text-blue-400",
+    gradient: "bg-gradient-to-br from-[#2196F3] via-[#1565C0] to-[#0D2E78]",
+    text: "text-white", badge: "bg-white/20 text-white border-white/30",
+    shimmer: "from-white/25 via-white/5 to-transparent",
+    glow: "shadow-[0_8px_40px_rgba(21,101,192,0.45)]",
+    ctaBg: "bg-black/80", ctaText: "text-blue-400",
   },
   "at-bigtime": {
-    gradient:  "bg-gradient-to-br from-[#4CAF50] via-[#2E7D32] to-[#1A3A1C]",
-    text:      "text-white",
-    badge:     "bg-white/20 text-white border-white/30",
-    shimmer:   "from-white/25 via-white/5 to-transparent",
-    glow:      "shadow-[0_8px_40px_rgba(46,125,50,0.45)]",
-    ctaBg:     "bg-black/80",
-    ctaText:   "text-green-400",
+    gradient: "bg-gradient-to-br from-[#4CAF50] via-[#2E7D32] to-[#1A3A1C]",
+    text: "text-white", badge: "bg-white/20 text-white border-white/30",
+    shimmer: "from-white/25 via-white/5 to-transparent",
+    glow: "shadow-[0_8px_40px_rgba(46,125,50,0.45)]",
+    ctaBg: "bg-black/80", ctaText: "text-green-400",
   },
 };
 
@@ -64,84 +94,63 @@ export interface BundleCardProps {
   "data-testid"?: string;
 }
 
-function formatDuration(_days: number) {
-  return "∞";
-}
-
 export function BundleCard({
   dataAmount, network, price, validityDays,
-  insufficient, ctaLabel, showBuyHover = true, onClick, className = "",
+  insufficient, onClick, className = "",
   "data-testid": testId,
 }: BundleCardProps) {
-  const style = NETWORK_STYLES[network] ?? NETWORK_STYLES["at-ishare"];
-  const label = NETWORK_LABELS[network] ?? network.toUpperCase();
+  const style = CARD_STYLES[network] ?? CARD_STYLES["at-ishare"];
 
   return (
     <div
-      className={`group relative rounded-xl overflow-hidden cursor-pointer transition-all duration-300
-        hover:-translate-y-1 hover:scale-[1.01] border border-white/10
-        ${style.glow} hover:shadow-[0_12px_40px_rgba(0,0,0,0.35)]
+      className={`package-card relative rounded-xl overflow-hidden shadow-lg
+        cursor-pointer transition-all duration-300
+        hover:shadow-xl hover:-translate-y-1 active:-translate-y-0.5
+        ${insufficient ? "opacity-60 cursor-not-allowed" : ""}
         ${className}`}
-      onClick={onClick}
+      onClick={insufficient ? undefined : onClick}
       data-testid={testId}
     >
-      {/* Gradient background */}
-      <div className={`relative ${style.gradient} pt-3 pb-3 px-3`}>
-        {/* Top shimmer */}
-        <div className={`absolute inset-0 bg-gradient-to-b ${style.shimmer} pointer-events-none`} />
-
-        {/* Network badge */}
-        <div className={`relative inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-extrabold tracking-widest border backdrop-blur-sm mb-2 ${style.badge}`}>
-          {label}
-        </div>
-
-        {/* Buy Now hover pill */}
-        {showBuyHover && (
-          <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-all duration-200 translate-y-1 group-hover:translate-y-0">
-            <span className={`flex items-center gap-1 bg-black/30 backdrop-blur-md ${style.text} text-[10px] font-bold px-2 py-0.5 rounded-full border border-white/20`}>
-              <Zap className="w-2.5 h-2.5" /> Buy
-            </span>
-          </div>
-        )}
-
-        {/* Glass data amount panel */}
-        <div className="relative flex items-center justify-center py-0.5">
-          <div className="absolute inset-0 rounded-xl bg-black/10 backdrop-blur-sm border border-white/15" />
-          <span className={`relative text-3xl font-black tracking-tight leading-none py-3 px-4 ${style.text}`} style={{ textShadow: "0 2px 8px rgba(0,0,0,0.15)" }}>
-            {dataAmount}
+      {/* Out of stock / low balance overlay */}
+      {insufficient && (
+        <div className="absolute inset-0 bg-black/50 z-10 flex items-center justify-center">
+          <span className="bg-red-600 text-white px-4 py-2 rounded-full text-sm font-bold shadow-lg">
+            LOW BALANCE
           </span>
         </div>
-
-        {/* Insufficient overlay */}
-        {insufficient && (
-          <div className="absolute inset-0 bg-black/40 backdrop-blur-[1px] flex items-center justify-center">
-            <span className="text-xs font-bold text-white bg-red-600/90 px-3 py-1.5 rounded-full">Low Balance</span>
-          </div>
-        )}
-      </div>
-
-      {/* Info bar */}
-      <div className={`${style.ctaBg} backdrop-blur-sm grid grid-cols-3 divide-x divide-white/10`}>
-        <div className="py-2 px-2 text-center">
-          <div className={`text-xs font-bold ${insufficient ? "text-red-400" : style.ctaText}`}>GH₵{price.toFixed(2)}</div>
-          <div className="text-[9px] text-gray-500 mt-0.5 uppercase tracking-wide">Price</div>
-        </div>
-        <div className="py-2 px-2 text-center">
-          <div className={`text-xs font-bold ${style.ctaText}`}>N/A</div>
-          <div className="text-[9px] text-gray-500 mt-0.5 uppercase tracking-wide">Rollover</div>
-        </div>
-        <div className="py-2 px-2 text-center">
-          <div className={`text-xs font-bold ${style.ctaText}`}>{formatDuration(validityDays)}</div>
-          <div className="text-[9px] text-gray-500 mt-0.5 uppercase tracking-wide">Duration</div>
-        </div>
-      </div>
-
-      {/* Optional CTA bar */}
-      {ctaLabel && (
-        <div className={`${style.gradient} py-2.5 text-center text-sm font-bold ${style.text} tracking-wide group-hover:brightness-105 transition-all`}>
-          {ctaLabel}
-        </div>
       )}
+
+      {/* Card body — coloured top section */}
+      <div
+        className="relative p-4 sm:p-5 text-center"
+        style={{ backgroundColor: style.bodyBg }}
+      >
+        {/* Network badge top-left */}
+        <span className={`absolute top-3 left-3 border-2 ${style.badgeBorder} rounded-full px-3 py-0.5 text-xs font-bold`}>
+          {style.badge}
+        </span>
+        {/* Data size */}
+        <p className={`${style.text} text-3xl sm:text-4xl font-bold mt-4`}>{dataAmount}</p>
+      </div>
+
+      {/* Card footer — dark bottom section, 3 columns */}
+      <div
+        className="p-2 grid grid-cols-3 gap-1 text-center"
+        style={{ backgroundColor: style.footerBg, color: style.footerText }}
+      >
+        <div>
+          <p className="text-sm font-semibold">GH₵{price.toFixed(2)}</p>
+          <p className="text-xs" style={{ color: "#9ca3af" }}>Price</p>
+        </div>
+        <div>
+          <p className="text-sm font-semibold">N/A</p>
+          <p className="text-xs" style={{ color: "#9ca3af" }}>Rollover</p>
+        </div>
+        <div>
+          <p className="text-sm font-semibold">{validityDays > 0 ? `${validityDays}d` : "∞"}</p>
+          <p className="text-xs" style={{ color: "#9ca3af" }}>Duration</p>
+        </div>
+      </div>
     </div>
   );
 }
@@ -150,22 +159,34 @@ export function BundleCard({
 export function BundleCardMini({
   dataAmount, network, price, validityDays, phone,
 }: { dataAmount: string; network: string; price: number; validityDays: number; phone?: string }) {
-  const style = NETWORK_STYLES[network] ?? NETWORK_STYLES["at-ishare"];
-  const label = NETWORK_LABELS[network] ?? network.toUpperCase();
+  const style = CARD_STYLES[network] ?? CARD_STYLES["at-ishare"];
 
   return (
-    <div className={`rounded-2xl overflow-hidden border border-white/10 ${style.glow}`}>
-      <div className={`relative ${style.gradient} flex items-center justify-center py-8`}>
-        <div className={`absolute inset-0 bg-gradient-to-b ${style.shimmer} pointer-events-none`} />
-        <div className={`absolute top-3 left-3 inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-extrabold border backdrop-blur-sm ${style.badge}`}>{label}</div>
-        <div className="relative text-5xl font-black" style={{ textShadow: "0 2px 8px rgba(0,0,0,0.15)" }}>
-          <span className={style.text}>{dataAmount}</span>
-        </div>
+    <div className="rounded-xl overflow-hidden shadow-lg">
+      {/* Card body */}
+      <div className="relative p-4 text-center" style={{ backgroundColor: style.bodyBg }}>
+        <span className={`absolute top-3 left-3 border-2 ${style.badgeBorder} rounded-full px-3 py-0.5 text-xs font-bold`}>
+          {style.badge}
+        </span>
+        <p className={`${style.text} text-4xl font-bold mt-4`}>{dataAmount}</p>
       </div>
-      <div className="bg-[#1a1a1a] grid grid-cols-3 divide-x divide-white/10">
-        <div className="py-3 text-center"><div className="text-sm font-bold text-white">GH₵{price.toFixed(2)}</div><div className="text-[10px] text-gray-500 uppercase">Price</div></div>
-        <div className="py-3 text-center"><div className="text-sm font-bold text-white">{phone ?? "N/A"}</div><div className="text-[10px] text-gray-500 uppercase">{phone ? "Number" : "Rollover"}</div></div>
-        <div className="py-3 text-center"><div className="text-sm font-bold text-white">{formatDuration(validityDays)}</div><div className="text-[10px] text-gray-500 uppercase">Duration</div></div>
+      {/* Card footer */}
+      <div
+        className="p-2 grid grid-cols-3 gap-1 text-center"
+        style={{ backgroundColor: style.footerBg, color: style.footerText }}
+      >
+        <div>
+          <p className="text-sm font-semibold">GH₵{price.toFixed(2)}</p>
+          <p className="text-xs" style={{ color: "#9ca3af" }}>Price</p>
+        </div>
+        <div>
+          <p className="text-sm font-semibold">{phone ?? "N/A"}</p>
+          <p className="text-xs" style={{ color: "#9ca3af" }}>{phone ? "Number" : "Rollover"}</p>
+        </div>
+        <div>
+          <p className="text-sm font-semibold">{validityDays > 0 ? `${validityDays}d` : "∞"}</p>
+          <p className="text-xs" style={{ color: "#9ca3af" }}>Duration</p>
+        </div>
       </div>
     </div>
   );
