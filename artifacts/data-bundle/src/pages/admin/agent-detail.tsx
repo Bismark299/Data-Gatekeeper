@@ -12,6 +12,12 @@ import {
 } from "lucide-react";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
+interface StoreOrder {
+  id: number; bundleName: string; bundleData: string; bundleNetwork: string;
+  customerPhone: string; customerEmail: string | null;
+  sellingPrice: number; profit: number; status: string; createdAt: string;
+}
+
 interface AgentProfile {
   user: {
     id: number; name: string; email: string; phone: string | null;
@@ -30,10 +36,11 @@ interface AgentProfile {
     id: number; amount: number; status: string; method: string;
     reference: string | null; note: string | null; createdAt: string;
   }[];
+  storeOrders: StoreOrder[];
   store: { id: number; name: string; slug: string; isActive: boolean } | null;
 }
 
-type Tab = "overview" | "orders" | "deposits";
+type Tab = "overview" | "orders" | "store-orders" | "deposits";
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 const fmtDate = (iso: string) =>
@@ -200,6 +207,8 @@ function AdminAgentDetailContent() {
     qc.invalidateQueries({ queryKey: ["admin-wallets"] });
   };
 
+  const [storePage, setStorePage] = useState(1);
+
   const ordPaged = useMemo(() => {
     const src = profile?.recentOrders ?? [];
     return src.slice((ordPage - 1) * PAGE, ordPage * PAGE);
@@ -211,6 +220,12 @@ function AdminAgentDetailContent() {
     return src.slice((depPage - 1) * PAGE, depPage * PAGE);
   }, [profile, depPage]);
   const depPages = Math.max(1, Math.ceil((profile?.recentDeposits.length ?? 0) / PAGE));
+
+  const storePaged = useMemo(() => {
+    const src = profile?.storeOrders ?? [];
+    return src.slice((storePage - 1) * PAGE, storePage * PAGE);
+  }, [profile, storePage]);
+  const storePages = Math.max(1, Math.ceil((profile?.storeOrders.length ?? 0) / PAGE));
 
   if (isLoading) {
     return (
@@ -341,14 +356,15 @@ function AdminAgentDetailContent() {
 
             {/* Tabs */}
             <div className="border-b border-border -mb-1">
-              <div className="flex gap-0">
+              <div className="flex gap-0 overflow-x-auto">
                 {([
-                  { id: "overview", label: "Overview", icon: Activity },
-                  { id: "orders",   label: `Orders (${stats.totalOrders})`, icon: Package },
-                  { id: "deposits", label: `Deposits (${profile.recentDeposits.length})`, icon: CreditCard },
+                  { id: "overview",     label: "Overview",                                      icon: Activity  },
+                  { id: "orders",       label: `Orders (${stats.totalOrders})`,                 icon: Package   },
+                  ...(store ? [{ id: "store-orders" as Tab, label: `Store Orders (${profile.storeOrders.length})`, icon: Store }] : []),
+                  { id: "deposits",     label: `Deposits (${profile.recentDeposits.length})`,   icon: CreditCard },
                 ] as { id: Tab; label: string; icon: React.ElementType }[]).map(t => (
                   <button key={t.id} onClick={() => setTab(t.id)}
-                    className={`flex items-center gap-2 px-5 py-3.5 text-sm font-semibold border-b-2 transition-colors ${
+                    className={`flex items-center gap-2 px-5 py-3.5 text-sm font-semibold border-b-2 transition-colors whitespace-nowrap ${
                       tab === t.id ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"
                     }`}>
                     <t.icon className="w-4 h-4" />{t.label}
@@ -478,6 +494,66 @@ function AdminAgentDetailContent() {
                       </table>
                     </div>
                     {ordPages > 1 && <PaginationBar page={ordPage} total={ordPages} onChange={setOrdPage} />}
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* Store Orders Tab */}
+            {tab === "store-orders" && (
+              <div className="bg-card border border-border rounded-2xl overflow-hidden">
+                <div className="px-5 py-4 border-b border-border flex items-center justify-between">
+                  <h3 className="font-bold text-sm flex items-center gap-2">
+                    <Store className="w-4 h-4 text-muted-foreground" />
+                    Store Orders — {store?.name}
+                    <span className="text-muted-foreground font-normal">({profile.storeOrders.length})</span>
+                  </h3>
+                  {store && (
+                    <a href={`/s/${store.slug}`} target="_blank" rel="noopener noreferrer"
+                      className="text-xs text-primary font-semibold hover:underline flex items-center gap-1">
+                      View Store <ExternalLink className="w-3 h-3" />
+                    </a>
+                  )}
+                </div>
+                {profile.storeOrders.length === 0 ? (
+                  <div className="py-16 text-center text-sm text-muted-foreground">No store orders yet</div>
+                ) : (
+                  <>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="bg-muted/30 border-b border-border">
+                            {["#", "Bundle", "Network", "Customer Phone", "Sold For", "Profit", "Status", "Date"].map(h => (
+                              <th key={h} className="text-left px-5 py-3 text-xs font-bold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-border">
+                          {storePaged.map(o => (
+                            <tr key={o.id} className="hover:bg-muted/20 transition-colors">
+                              <td className="px-5 py-3.5 text-xs font-mono text-muted-foreground">#{o.id}</td>
+                              <td className="px-5 py-3.5">
+                                <div className="font-semibold text-foreground">{o.bundleName}</div>
+                                <div className="text-xs text-muted-foreground">{o.bundleData}</div>
+                              </td>
+                              <td className="px-5 py-3.5">
+                                <span className="text-xs font-bold uppercase px-2 py-0.5 rounded-full bg-muted text-muted-foreground">
+                                  {o.bundleNetwork}
+                                </span>
+                              </td>
+                              <td className="px-5 py-3.5 font-mono text-xs text-muted-foreground">{o.customerPhone}</td>
+                              <td className="px-5 py-3.5 font-bold text-foreground">GH₵{o.sellingPrice.toFixed(2)}</td>
+                              <td className="px-5 py-3.5 font-bold text-emerald-600">+GH₵{o.profit.toFixed(2)}</td>
+                              <td className="px-5 py-3.5">
+                                <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold capitalize ${STATUS_COLORS[o.status] ?? ""}`}>{o.status}</span>
+                              </td>
+                              <td className="px-5 py-3.5 text-xs text-muted-foreground whitespace-nowrap">{fmtDatetime(o.createdAt)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    {storePages > 1 && <PaginationBar page={storePage} total={storePages} onChange={setStorePage} />}
                   </>
                 )}
               </div>

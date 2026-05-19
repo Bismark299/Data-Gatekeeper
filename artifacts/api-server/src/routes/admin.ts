@@ -1003,21 +1003,36 @@ router.get("/admin/agents/:userId", requireAdmin, async (req, res): Promise<void
     .from(ordersTable)
     .where(and(eq(ordersTable.userId, userId), inArray(ordersTable.status, ["pending", "processing"])));
 
-  const recentOrders = await db
-    .select()
-    .from(ordersTable)
-    .where(eq(ordersTable.userId, userId))
-    .orderBy(desc(ordersTable.createdAt))
-    .limit(50);
+  const [recentOrders, recentDeposits, [store]] = await Promise.all([
+    db.select().from(ordersTable)
+      .where(eq(ordersTable.userId, userId))
+      .orderBy(desc(ordersTable.id))
+      .limit(50),
+    db.select().from(depositsTable)
+      .where(eq(depositsTable.userId, userId))
+      .orderBy(desc(depositsTable.createdAt))
+      .limit(50),
+    db.select().from(storesTable).where(eq(storesTable.userId, userId)),
+  ]);
 
-  const recentDeposits = await db
-    .select()
-    .from(depositsTable)
-    .where(eq(depositsTable.userId, userId))
-    .orderBy(desc(depositsTable.createdAt))
-    .limit(50);
-
-  const [store] = await db.select().from(storesTable).where(eq(storesTable.userId, userId));
+  const storeOrders = store
+    ? await db.select({
+        id:            storeOrdersTable.id,
+        bundleName:    storeOrdersTable.bundleName,
+        bundleData:    storeOrdersTable.bundleData,
+        bundleNetwork: storeOrdersTable.bundleNetwork,
+        customerPhone: storeOrdersTable.customerPhone,
+        customerEmail: storeOrdersTable.customerEmail,
+        sellingPrice:  storeOrdersTable.sellingPrice,
+        profit:        storeOrdersTable.profit,
+        status:        storeOrdersTable.status,
+        createdAt:     storeOrdersTable.createdAt,
+      })
+      .from(storeOrdersTable)
+      .where(eq(storeOrdersTable.storeId, store.id))
+      .orderBy(desc(storeOrdersTable.id))
+      .limit(200)
+    : [];
 
   res.json({
     user: {
@@ -1050,6 +1065,18 @@ router.get("/admin/agents/:userId", requireAdmin, async (req, res): Promise<void
       id: d.id, amount: Number(d.amount), status: d.status,
       method: d.method, reference: d.reference, note: d.note,
       createdAt: d.createdAt.toISOString(),
+    })),
+    storeOrders: storeOrders.map(o => ({
+      id: o.id,
+      bundleName:    o.bundleName,
+      bundleData:    o.bundleData,
+      bundleNetwork: o.bundleNetwork,
+      customerPhone: o.customerPhone,
+      customerEmail: o.customerEmail,
+      sellingPrice:  Number(o.sellingPrice),
+      profit:        Number(o.profit),
+      status:        o.status,
+      createdAt:     o.createdAt.toISOString(),
     })),
     store: store ? { id: store.id, name: store.name, slug: store.slug, isActive: store.isActive } : null,
   });
