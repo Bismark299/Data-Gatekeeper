@@ -313,9 +313,11 @@ export async function dispatchPendingQueue(forceDispatch = false): Promise<Dispa
  * Rate limit: delivery-status endpoint is capped at 1 req/min.
  * Poller runs every 2 min, so one check per cycle stays safely within limits.
  * Picks the stalest batch first (oldest dispatchedAt) to ensure forward progress.
+ * Checks any batch dispatched more than 2 min ago — catches missed webhooks
+ * within a single poll cycle rather than waiting 10 min.
  */
 async function checkProcessingBatches(): Promise<void> {
-  const TEN_MIN_AGO = new Date(Date.now() - 10 * 60 * 1000);
+  const TWO_MIN_AGO = new Date(Date.now() - 2 * 60 * 1000);
 
   const [batch] = await db
     .select()
@@ -323,7 +325,7 @@ async function checkProcessingBatches(): Promise<void> {
     .where(and(
       eq(topupghBatchesTable.status, "processing"),
       isNotNull(topupghBatchesTable.topupghOrderId),
-      lt(topupghBatchesTable.dispatchedAt, TEN_MIN_AGO),
+      lt(topupghBatchesTable.dispatchedAt, TWO_MIN_AGO),
     ))
     .orderBy(topupghBatchesTable.dispatchedAt)
     .limit(1);
