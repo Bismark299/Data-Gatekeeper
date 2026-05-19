@@ -47,6 +47,10 @@ export interface PublicStore {
   store: { id: number; name: string; slug: string; description: string; colorTheme: string; };
   bundles: StoreBundle[];
 }
+export interface MyOrder {
+  id: number; bundleId: number | null; bundleName: string; bundleData: string;
+  network: string | null; price: number; status: string; phoneNumber: string; createdAt: string;
+}
 
 export const storeApi = {
   getMyStore: () => request<Store | null>("GET", "/stores/my"),
@@ -69,6 +73,7 @@ export const storeApi = {
     request<{ ok: boolean }>("POST", "/stores/my/momo-details", data),
   deleteMomoDetails: () =>
     request<{ ok: boolean }>("DELETE", "/stores/my/momo-details"),
+  getMyOrders: () => request<MyOrder[]>("GET", "/orders"),
   bulkOrder: (data: { items: { phone: string; gb: number }[]; network: string }) =>
     request<{ processed: number; skipped: { phone: string; gb: number; reason: string }[]; totalCost: number; orders: unknown[] }>("POST", "/orders/bulk", data),
   // Public

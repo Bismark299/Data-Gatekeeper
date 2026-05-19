@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { storeApi, type Store, type StoreBundle, type StoreStats } from "@/lib/storeApi";
+import { storeApi, type Store, type StoreBundle, type StoreStats, type MyOrder } from "@/lib/storeApi";
 import { useListBundles, getGetWalletBalanceQueryKey } from "@workspace/api-client-react";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { useAuth } from "@/context/AuthContext";
@@ -167,7 +167,7 @@ function CreateStoreForm({ onCreated }: { onCreated: (s: Store) => void }) {
 function StoreDashboard({ store: initialStore }: { store: Store }) {
   const qc = useQueryClient();
   const { user } = useAuth();
-  const [tab, setTab] = useState<"overview" | "bundles" | "orders" | "settings" | "withdrawals">("overview");
+  const [tab, setTab] = useState<"overview" | "bundles" | "orders" | "my-orders" | "settings" | "withdrawals">("overview");
   const [copied, setCopied] = useState(false);
 
   const { data: storeData } = useQuery<Store | null>({ queryKey: ["myStore"], queryFn: storeApi.getMyStore, initialData: initialStore });
@@ -175,6 +175,7 @@ function StoreDashboard({ store: initialStore }: { store: Store }) {
   const { data: stats } = useQuery<StoreStats>({ queryKey: ["myStoreStats"], queryFn: storeApi.getStats, refetchInterval: 30000, staleTime: 15_000 });
   const { data: storeBundles = [] } = useQuery<StoreBundle[]>({ queryKey: ["myStoreBundles"], queryFn: storeApi.getBundles, refetchInterval: 30000 });
   const { data: orders = [] } = useQuery({ queryKey: ["myStoreOrders"], queryFn: storeApi.getOrders, refetchInterval: 30000, staleTime: 15_000 });
+  const { data: myOrders = [] } = useQuery<MyOrder[]>({ queryKey: ["myOrders"], queryFn: storeApi.getMyOrders, refetchInterval: 30000, staleTime: 15_000 });
   const { data: withdrawals = [] } = useQuery({ queryKey: ["myStoreWithdrawals"], queryFn: storeApi.getWithdrawals, refetchInterval: 30000 });
 
   const storeUrl = `${window.location.origin}/s/${store.slug}`;
@@ -187,11 +188,12 @@ function StoreDashboard({ store: initialStore }: { store: Store }) {
   };
 
   const TABS = [
-    { id: "overview" as const, label: "Overview", icon: BarChart3 },
-    { id: "bundles" as const, label: "Bundles", icon: Package },
-    { id: "orders" as const, label: "Orders", icon: ListOrdered },
-    { id: "withdrawals" as const, label: "Earnings", icon: PiggyBank },
-    { id: "settings" as const, label: "Settings", icon: Settings },
+    { id: "overview" as const,   label: "Overview",     icon: BarChart3    },
+    { id: "bundles" as const,    label: "Bundles",      icon: Package      },
+    { id: "orders" as const,     label: "Store Sales",  icon: ListOrdered  },
+    { id: "my-orders" as const,  label: "My Orders",    icon: ShoppingBag  },
+    { id: "withdrawals" as const,label: "Earnings",     icon: PiggyBank    },
+    { id: "settings" as const,   label: "Settings",     icon: Settings     },
   ];
 
   return (
@@ -250,6 +252,7 @@ function StoreDashboard({ store: initialStore }: { store: Store }) {
       {tab === "overview" && <OverviewTab stats={stats} orders={orders} storeBundles={storeBundles} />}
       {tab === "bundles" && <BundlesTab storeBundles={storeBundles} store={store} userRole={user?.role ?? "user"} />}
       {tab === "orders" && <OrdersTab orders={orders} />}
+      {tab === "my-orders" && <MyOrdersTab orders={myOrders} />}
       {tab === "withdrawals" && <WithdrawalsTab stats={stats} withdrawals={withdrawals} store={store} />}
       {tab === "settings" && <SettingsTab store={store} />}
     </div>
@@ -767,6 +770,102 @@ function OrdersTab({ orders }: { orders: any[] }) {
                   <td className="px-4 py-3"><span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700">Paid</span></td>
                   <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${STATUS_COLORS[o.status] ?? "bg-gray-100"}`}>{o.status}</span></td>
                   <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(o.createdAt).toLocaleString("en-GH", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true })}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── My Orders Tab ────────────────────────────────────────────────────────────
+function MyOrdersTab({ orders }: { orders: MyOrder[] }) {
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const [phoneFilter, setPhoneFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState(todayStr);
+
+  const filtered = orders.filter(o => {
+    if (phoneFilter && !o.phoneNumber.includes(phoneFilter.trim())) return false;
+    if (statusFilter !== "all" && o.status !== statusFilter) return false;
+    if (dateFrom && new Date(o.createdAt) < new Date(dateFrom)) return false;
+    if (dateTo && new Date(o.createdAt) > new Date(dateTo + "T23:59:59")) return false;
+    return true;
+  });
+
+  const hasFilters = phoneFilter || statusFilter !== "all" || dateFrom;
+  const totalCost = filtered.reduce((s, o) => s + o.price, 0);
+
+  return (
+    <div className="bg-card border border-border rounded-2xl overflow-hidden">
+      <div className="px-5 py-4 border-b border-border flex flex-wrap items-center gap-3">
+        <div className="mr-auto">
+          <h3 className="font-bold text-foreground">My Orders</h3>
+          <p className="text-xs text-muted-foreground">
+            {filtered.length} order{filtered.length !== 1 ? "s" : ""}
+            {filtered.length > 0 && ` · GH₵${totalCost.toFixed(2)} spent`}
+          </p>
+        </div>
+        <input placeholder="Filter by phone…" value={phoneFilter} onChange={e => setPhoneFilter(e.target.value)}
+          className="h-8 w-full sm:w-40 text-sm font-mono rounded-lg border border-border bg-background px-3" />
+        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
+          className="h-8 rounded-lg border border-border bg-background px-2 text-xs">
+          <option value="all">All status</option>
+          <option value="pending">Pending</option>
+          <option value="processing">Processing</option>
+          <option value="completed">Completed</option>
+          <option value="failed">Failed</option>
+        </select>
+        <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+          className="h-8 w-full sm:w-auto rounded-lg border border-border bg-background px-2 text-xs" title="From date" />
+        <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+          className="h-8 w-full sm:w-auto rounded-lg border border-border bg-background px-2 text-xs" title="To date" />
+        {hasFilters && (
+          <button onClick={() => { setPhoneFilter(""); setStatusFilter("all"); setDateFrom(""); setDateTo(todayStr); }}
+            className="text-xs text-muted-foreground hover:text-foreground underline">Clear</button>
+        )}
+      </div>
+      {filtered.length === 0 ? (
+        <div className="p-12 text-center">
+          <ShoppingBag className="w-12 h-12 text-muted-foreground mx-auto mb-3" />
+          <p className="text-muted-foreground">{orders.length === 0 ? "No orders yet" : "No orders match your filters"}</p>
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border bg-muted/40">
+                {["#", "Bundle", "Network", "Phone", "Amount", "Status", "Date"].map(h => (
+                  <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {filtered.map(o => (
+                <tr key={o.id} className="hover:bg-muted/30 transition-colors">
+                  <td className="px-4 py-3 font-mono text-xs text-muted-foreground">#{o.id}</td>
+                  <td className="px-4 py-3">
+                    <div className="font-semibold text-foreground">{o.bundleName}</div>
+                    <div className="text-xs text-muted-foreground">{o.bundleData}</div>
+                  </td>
+                  <td className="px-4 py-3">
+                    {o.network ? (
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${NETWORK_COLORS[o.network] ?? "bg-gray-100 text-gray-700"}`}>
+                        {NETWORK_LABELS[o.network] ?? o.network}
+                      </span>
+                    ) : <span className="text-xs text-muted-foreground">—</span>}
+                  </td>
+                  <td className="px-4 py-3 font-mono text-xs">{o.phoneNumber}</td>
+                  <td className="px-4 py-3 font-semibold">GH₵{o.price.toFixed(2)}</td>
+                  <td className="px-4 py-3">
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${STATUS_COLORS[o.status] ?? "bg-gray-100"}`}>{o.status}</span>
+                  </td>
+                  <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">
+                    {new Date(o.createdAt).toLocaleString("en-GH", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true })}
+                  </td>
                 </tr>
               ))}
             </tbody>
