@@ -747,7 +747,7 @@ router.post("/s/paystack/webhook", async (req, res) => {
 // Admin: list all stores
 router.get("/admin/stores", requireAuth, async (req, res) => {
   if (req.session.userRole !== "admin") { res.status(403).json({ error: "Forbidden" }); return; }
-  const stores = await db.select().from(storesTable).orderBy(desc(storesTable.createdAt));
+  const stores = await db.select().from(storesTable).orderBy(desc(storesTable.id));
 
   // Enrich each store with aggregate stats
   const enriched = await Promise.all(stores.map(async store => {
@@ -809,7 +809,7 @@ router.get("/admin/stores/:storeId/orders", requireAuth, async (req, res) => {
     createdAt: storeOrdersTable.createdAt,
   }).from(storeOrdersTable)
     .where(eq(storeOrdersTable.storeId, storeId))
-    .orderBy(desc(storeOrdersTable.createdAt));
+    .orderBy(desc(storeOrdersTable.id));
 
   res.json(rows.map(o => ({
     ...o,
@@ -850,7 +850,7 @@ router.get("/admin/store-orders", requireAuth, async (req, res) => {
     .innerJoin(storesTable,  eq(storeOrdersTable.storeId,  storesTable.id))
     .leftJoin(usersTable,    eq(storesTable.userId,         usersTable.id))
     .leftJoin(bundlesTable,  eq(storeOrdersTable.bundleId,  bundlesTable.id))
-    .orderBy(desc(storeOrdersTable.createdAt));
+    .orderBy(desc(storeOrdersTable.id));
   res.json(rows.map(o => {
     const sellingPrice = parseFloat(o.sellingPrice as any);
     const basePrice    = parseFloat(o.basePrice as any);
