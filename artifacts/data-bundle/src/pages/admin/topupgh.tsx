@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import {
   Menu, RefreshCw, Loader2, Package2, Zap, CheckCircle2, AlertCircle,
   Clock, Send, Wifi, Info, ChevronDown, ChevronUp, AlertTriangle,
-  BarChart3, PackageSearch, ArrowRight, Search, Hash, Phone,
+  BarChart3, ArrowRight, Search, Hash, Phone, Filter, X,
 } from "lucide-react";
 
 export default function AdminTopupgh() {
@@ -89,11 +89,10 @@ function timeSince(d: string) {
 
 // ─── Tabs ─────────────────────────────────────────────────────────────────────
 
-type Tab = "queue" | "products" | "batches" | "reconcile" | "search";
+type Tab = "queue" | "batches" | "reconcile" | "search";
 
 const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: "queue",     label: "Queue",     icon: Clock },
-  { id: "products",  label: "Products",  icon: PackageSearch },
   { id: "batches",   label: "Batches",   icon: BarChart3 },
   { id: "reconcile", label: "Reconcile", icon: ArrowRight },
   { id: "search",    label: "Search",    icon: Search },
@@ -230,92 +229,6 @@ function QueueTab() {
   );
 }
 
-// ─── Products Tab ─────────────────────────────────────────────────────────────
-
-function ProductsTab() {
-  const [networkFilter, setNetworkFilter] = useState<"" | "mtn" | "at" | "telecel">("");
-  const { toast } = useToast();
-
-  const { data, isLoading, refetch } = useQuery<{ success: boolean; products: Product[]; total: number }>({
-    queryKey: ["topupgh-products", networkFilter],
-    queryFn: () => {
-      const url = networkFilter ? `/api/admin/topupgh/products?network=${networkFilter}` : "/api/admin/topupgh/products";
-      return fetch(url, { credentials: "include" }).then(async r => {
-        const d = await r.json();
-        if (!r.ok) throw new Error((d as { error?: string }).error ?? `HTTP ${r.status}`);
-        return d;
-      });
-    },
-    retry: false,
-    onError: (e: unknown) => toast({ title: e instanceof Error ? e.message : "Failed to load products", variant: "destructive" }),
-  } as Parameters<typeof useQuery>[0]);
-
-  const NETWORK_BADGES = {
-    mtn:    { label: "MTN",     color: "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-400" },
-    at:     { label: "AT",      color: "bg-blue-100 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400" },
-    telecel:{ label: "Telecel", color: "bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400" },
-  };
-
-  return (
-    <div className="space-y-5">
-      {/* Filter row */}
-      <div className="flex items-center gap-2 flex-wrap">
-        {(["", "mtn", "at", "telecel"] as const).map(n => (
-          <button
-            key={n}
-            onClick={() => setNetworkFilter(n)}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
-              networkFilter === n
-                ? "bg-primary text-primary-foreground border-primary"
-                : "bg-card text-muted-foreground border-border hover:border-primary/40"
-            }`}
-          >
-            {n === "" ? "All Networks" : n.toUpperCase()}
-          </button>
-        ))}
-        <Button variant="outline" size="sm" onClick={() => refetch()} className="gap-1.5 h-7 text-xs ml-auto">
-          <RefreshCw className="w-3 h-3" /> Refresh
-        </Button>
-      </div>
-
-      {isLoading ? (
-        <div className="py-16 flex items-center justify-center">
-          <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
-        </div>
-      ) : !data?.products?.length ? (
-        <div className="py-16 text-center bg-card border border-border rounded-2xl">
-          <PackageSearch className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
-          <p className="text-sm text-muted-foreground">No products found</p>
-          <p className="text-xs text-muted-foreground mt-1">Check your API credentials in Settings</p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-          {data.products.map(p => {
-            const badge = NETWORK_BADGES[p.network];
-            return (
-              <div key={p.id} className={`bg-card border rounded-2xl p-4 space-y-2.5 transition-all ${p.in_stock ? "border-border" : "border-muted opacity-60"}`}>
-                <div className="flex items-center justify-between">
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${badge?.color ?? "bg-muted text-muted-foreground"}`}>
-                    {badge?.label ?? p.network.toUpperCase()}
-                  </span>
-                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${p.in_stock ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400" : "bg-muted text-muted-foreground"}`}>
-                    {p.in_stock ? "IN STOCK" : "OUT"}
-                  </span>
-                </div>
-                <div>
-                  <div className="text-sm font-semibold text-foreground leading-tight">{p.name}</div>
-                  <div className="text-xs text-muted-foreground mt-0.5">{p.data_size}</div>
-                </div>
-                <div className="text-lg font-bold text-foreground">GH₵{parseFloat(p.price).toFixed(2)}</div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
 // ─── Batches Tab ──────────────────────────────────────────────────────────────
 
 function ExpandedBatch({ batchId }: { batchId: number }) {
@@ -366,14 +279,33 @@ function ExpandedBatch({ batchId }: { batchId: number }) {
 
 function BatchesTab() {
   const [statusFilter, setStatusFilter] = useState("");
-  const [page, setPage] = useState(1);
-  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [dateFrom, setDateFrom]         = useState("");
+  const [dateTo, setDateTo]             = useState("");
+  const [phoneFilter, setPhoneFilter]   = useState("");
+  const [phoneInput, setPhoneInput]     = useState("");
+  const [page, setPage]                 = useState(1);
+  const [expandedId, setExpandedId]     = useState<number | null>(null);
+
+  const hasDateOrPhone = dateFrom || dateTo || phoneFilter;
+
+  const applyPhone = () => {
+    setPhoneFilter(phoneInput.trim());
+    setPage(1);
+  };
+
+  const clearAll = () => {
+    setStatusFilter(""); setDateFrom(""); setDateTo("");
+    setPhoneFilter(""); setPhoneInput(""); setPage(1);
+  };
 
   const { data, isLoading, refetch } = useQuery<BatchesData>({
-    queryKey: ["topupgh-batches", page, statusFilter],
+    queryKey: ["topupgh-batches", page, statusFilter, dateFrom, dateTo, phoneFilter],
     queryFn: () => {
       const p = new URLSearchParams({ page: String(page), pageSize: "20" });
       if (statusFilter) p.set("status", statusFilter);
+      if (dateFrom)     p.set("from", dateFrom);
+      if (dateTo)       p.set("to", dateTo);
+      if (phoneFilter)  p.set("phone", phoneFilter);
       return fetch(`/api/admin/topupgh/batches?${p}`, { credentials: "include" }).then(r => r.json());
     },
   });
@@ -382,7 +314,7 @@ function BatchesTab() {
 
   return (
     <div className="space-y-5">
-      {/* Filters */}
+      {/* Status filter pills */}
       <div className="flex items-center gap-2 flex-wrap">
         {statuses.map(s => (
           <button
@@ -400,6 +332,86 @@ function BatchesTab() {
         <Button variant="outline" size="sm" onClick={() => refetch()} className="gap-1.5 h-7 text-xs ml-auto">
           <RefreshCw className="w-3 h-3" /> Refresh
         </Button>
+      </div>
+
+      {/* Date + phone filters */}
+      <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
+        <div className="flex items-center gap-2">
+          <Filter className="w-3.5 h-3.5 text-muted-foreground" />
+          <span className="text-xs font-semibold text-foreground">Filters</span>
+          {hasDateOrPhone && (
+            <button
+              onClick={clearAll}
+              className="ml-auto flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <X className="w-3 h-3" /> Clear filters
+            </button>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-3">
+          {/* Date from */}
+          <div className="flex flex-col gap-1">
+            <label className="text-[11px] font-semibold text-muted-foreground">From</label>
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={e => { setDateFrom(e.target.value); setPage(1); }}
+              className="h-8 rounded-lg border border-input bg-background px-2 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          </div>
+          {/* Date to */}
+          <div className="flex flex-col gap-1">
+            <label className="text-[11px] font-semibold text-muted-foreground">To</label>
+            <input
+              type="date"
+              value={dateTo}
+              min={dateFrom || undefined}
+              onChange={e => { setDateTo(e.target.value); setPage(1); }}
+              className="h-8 rounded-lg border border-input bg-background px-2 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          </div>
+          {/* Phone number */}
+          <div className="flex flex-col gap-1 flex-1 min-w-[180px]">
+            <label className="text-[11px] font-semibold text-muted-foreground">Phone Number</label>
+            <div className="flex gap-1.5">
+              <Input
+                placeholder="e.g. 0241234567"
+                value={phoneInput}
+                onChange={e => setPhoneInput(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && applyPhone()}
+                className="h-8 text-xs font-mono"
+              />
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={applyPhone}
+                disabled={!phoneInput.trim()}
+                className="h-8 px-3 text-xs gap-1"
+              >
+                <Search className="w-3 h-3" />
+              </Button>
+              {phoneFilter && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => { setPhoneFilter(""); setPhoneInput(""); setPage(1); }}
+                  className="h-8 px-2 text-xs text-muted-foreground"
+                >
+                  <X className="w-3 h-3" />
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
+        {/* Active filter badges */}
+        {hasDateOrPhone && (
+          <div className="flex items-center gap-2 flex-wrap pt-0.5">
+            <span className="text-[11px] text-muted-foreground">Active:</span>
+            {dateFrom && <span className="text-[11px] bg-primary/10 text-primary px-2 py-0.5 rounded-full font-medium">From {dateFrom}</span>}
+            {dateTo   && <span className="text-[11px] bg-primary/10 text-primary px-2 py-0.5 rounded-full font-medium">To {dateTo}</span>}
+            {phoneFilter && <span className="text-[11px] bg-orange-100 text-orange-700 dark:bg-orange-900/20 dark:text-orange-400 px-2 py-0.5 rounded-full font-mono font-medium">{phoneFilter}</span>}
+          </div>
+        )}
       </div>
 
       {/* Table */}
@@ -1041,7 +1053,6 @@ function AdminTopupghContent() {
 
           {/* Tab content */}
           {activeTab === "queue"     && <QueueTab />}
-          {activeTab === "products"  && <ProductsTab />}
           {activeTab === "batches"   && <BatchesTab />}
           {activeTab === "reconcile" && <ReconcileTab />}
           {activeTab === "search"    && <SearchTab />}

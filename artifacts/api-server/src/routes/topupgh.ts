@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { eq, and, isNull, isNotNull, desc, inArray } from "drizzle-orm";
+import { eq, and, isNull, isNotNull, desc, inArray, gte, lte, sql } from "drizzle-orm";
 import { db, ordersTable, bundlesTable, topupghBatchesTable } from "@workspace/db";
 import { requireAdmin } from "../middlewares/auth";
 import { logger } from "../lib/logger";
@@ -127,17 +127,37 @@ router.get("/admin/topupgh/batches", requireAdmin, async (req, res): Promise<voi
   const page     = Math.max(1, parseInt(String(req.query.page ?? "1")));
   const pageSize = Math.min(100, Math.max(1, parseInt(String(req.query.pageSize ?? "20"))));
   const status   = req.query.status as string | undefined;
+  const from     = req.query.from   as string | undefined;
+  const to       = req.query.to     as string | undefined;
+  const phone    = (req.query.phone as string | undefined)?.trim();
 
-  const conditions = status ? [eq(topupghBatchesTable.status, status)] : [];
+  const conditions = [];
+  if (status) conditions.push(eq(topupghBatchesTable.status, status));
+  if (from)   conditions.push(gte(topupghBatchesTable.createdAt, new Date(from)));
+  if (to) {
+    const toDate = new Date(to);
+    toDate.setHours(23, 59, 59, 999);
+    conditions.push(lte(topupghBatchesTable.createdAt, toDate));
+  }
+  if (phone) {
+    conditions.push(
+      sql`${topupghBatchesTable.id} IN (
+        SELECT topupgh_batch_id FROM orders
+        WHERE phone_number = ${phone} AND topupgh_batch_id IS NOT NULL
+      )`
+    );
+  }
+
+  const where = conditions.length ? and(...conditions) : undefined;
 
   const [batches, countRow] = await Promise.all([
     db.select()
       .from(topupghBatchesTable)
-      .where(conditions.length ? conditions[0] : undefined)
+      .where(where)
       .orderBy(desc(topupghBatchesTable.createdAt))
       .limit(pageSize)
       .offset((page - 1) * pageSize),
-    db.$count(topupghBatchesTable, conditions.length ? conditions[0] : undefined),
+    db.$count(topupghBatchesTable, where),
   ]);
 
   res.json({
