@@ -250,8 +250,8 @@ router.get("/admin/orders", requireAdmin, async (req, res): Promise<void> => {
     .leftJoin(usersTable, eq(usersTable.id, ordersTable.userId));
 
   const rows = conditions.length > 0
-    ? await baseQuery.where(and(...conditions)).orderBy(desc(ordersTable.createdAt)).limit(500)
-    : await baseQuery.orderBy(desc(ordersTable.createdAt)).limit(500);
+    ? await baseQuery.where(and(...conditions)).orderBy(desc(ordersTable.id)).limit(500)
+    : await baseQuery.orderBy(desc(ordersTable.id)).limit(500);
 
   res.json(rows.map(r => formatOrder(r.order, r.network, r.userName)));
 });
