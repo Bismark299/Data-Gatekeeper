@@ -93,13 +93,12 @@ Contact your account manager or email **support@databundle.com**.
       Bundle: {
         type: "object",
         properties: {
-          id:           { type: "integer", example: 3 },
-          name:         { type: "string",  example: "MTN 5GB" },
-          description:  { type: "string",  example: "5GB data bundle" },
-          dataAmount:   { type: "string",  example: "5GB" },
-          validityDays: { type: "integer", example: 30 },
-          price:        { type: "string",  example: "15.00", description: "Price in GH₵ (based on your account role)" },
-          network:      { type: "string",  example: "mtn", enum: ["mtn", "telecel", "at-ishare", "at-bigtime"] },
+          id:          { type: "integer", example: 3 },
+          name:        { type: "string",  example: "MTN 5GB" },
+          description: { type: "string",  example: "5GB data bundle" },
+          dataAmount:  { type: "string",  example: "5GB" },
+          price:       { type: "string",  example: "15.00", description: "Price in GH₵ (based on your account role)" },
+          network:     { type: "string",  example: "mtn", enum: ["mtn", "telecel", "at-ishare", "at-bigtime"], description: "MTN · Telecel · AT iShare · AT Big-Time" },
         },
       },
       OrderRequest: {
@@ -155,7 +154,7 @@ Contact your account manager or email **support@databundle.com**.
             name: "network",
             in: "query",
             required: false,
-            description: "Filter by network",
+            description: "Filter by network: MTN, Telecel, AT iShare, AT Big-Time",
             schema: { type: "string", enum: ["mtn", "telecel", "at-ishare", "at-bigtime"] },
           },
         ],
@@ -353,7 +352,6 @@ router.get("/bundles", async (req, res) => {
         name:         bundlesTable.name,
         description:  bundlesTable.description,
         dataAmount:   bundlesTable.dataAmount,
-        validityDays: bundlesTable.validityDays,
         price:        bundlesTable.price,
         dealerPrice:  bundlesTable.dealerPrice,
         agentPrice:   bundlesTable.agentPrice,
@@ -377,13 +375,12 @@ router.get("/bundles", async (req, res) => {
           role === "agent"  ? b.agentPrice  :
           b.price;
         return {
-          id:           b.id,
-          name:         b.name,
-          description:  b.description,
-          dataAmount:   b.dataAmount,
-          validityDays: b.validityDays,
-          price:        effectivePrice ?? b.price,
-          network:      b.network,
+          id:          b.id,
+          name:        b.name,
+          description: b.description,
+          dataAmount:  b.dataAmount,
+          price:       effectivePrice ?? b.price,
+          network:     b.network,
         };
       }),
       total: bundles.length,
