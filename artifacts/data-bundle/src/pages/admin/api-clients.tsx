@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import React, { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { AdminSidebar } from "@/components/AdminSidebar";
@@ -386,8 +386,8 @@ export default function ApiClientsPage() {
                     </TableHeader>
                     <TableBody>
                       {apiUsers.map(u => (
-                        <>
-                          <TableRow key={u.id} className="group">
+                        <React.Fragment key={u.id}>
+                          <TableRow className="group">
                             {/* User */}
                             <TableCell>
                               <div className="font-medium text-sm text-gray-900">{u.name}</div>
@@ -466,9 +466,9 @@ export default function ApiClientsPage() {
 
                           {/* Expanded orders */}
                           {expandedId === u.id && (
-                            <UserOrdersRow key={`orders-${u.id}`} userId={u.id} />
+                            <UserOrdersRow userId={u.id} />
                           )}
-                        </>
+                        </React.Fragment>
                       ))}
                     </TableBody>
                   </Table>
