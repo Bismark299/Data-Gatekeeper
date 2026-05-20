@@ -493,10 +493,23 @@ export function startTopupghPoller(): void {
       const { enabled, apiKey, apiSecret } = await getTopupghSettings();
       if (!enabled || !apiKey || !apiSecret) return;
 
-      // Dispatch pending queue
-      const result = await dispatchPendingQueue();
-      if (result.dispatched) {
-        logger.info({ batchId: result.batchId, ordersCount: result.ordersCount, topupghOrderId: result.topupghOrderId }, "TopUpGH batch dispatched");
+      // Drain the pending queue — dispatch sequential sub-batches until empty or below minBatch
+      let batchesDispatched = 0;
+      while (true) {
+        const result = await dispatchPendingQueue();
+        if (result.dispatched) {
+          batchesDispatched++;
+          logger.info(
+            { batchId: result.batchId, ordersCount: result.ordersCount, topupghOrderId: result.topupghOrderId, batchNumber: batchesDispatched },
+            "TopUpGH batch dispatched",
+          );
+          // Continue loop — there may be more pending orders to drain
+        } else {
+          if (result.reason !== "empty_queue" && result.reason !== "below_minimum" && result.reason !== "disabled" && result.reason !== "not_configured") {
+            logger.warn({ reason: result.reason, ordersCount: result.ordersCount }, "TopUpGH dispatch stopped");
+          }
+          break;
+        }
       }
 
       // Backup status checks for stuck processing batches

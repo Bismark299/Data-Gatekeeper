@@ -50,8 +50,10 @@ function WalletContent() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  const { data: wallet, isLoading: balanceLoading } = useGetWalletBalance();
-  const { data: deposits } = useListDeposits();
+  const { data: wallet, isLoading: balanceLoading } = useGetWalletBalance(
+    { query: { refetchInterval: 12_000 } } as any,
+  );
+  const { data: deposits } = useListDeposits({ query: { refetchInterval: 15_000 } } as any);
   const { data: momoInfo }  = useGetMomoInfo();
   const initPaystack        = useInitializePaystackDeposit();
   const verifyMutation      = useVerifyPaystackDeposit();
