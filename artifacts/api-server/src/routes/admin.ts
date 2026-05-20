@@ -6,7 +6,9 @@ import {
 import {
   db, usersTable, bundlesTable, ordersTable, walletsTable, depositsTable,
   storesTable, storeOrdersTable, settingsTable, walletLedgerTable,
+  apiClientsTable, apiOrdersTable,
 } from "@workspace/db";
+import { generateApiKey } from "../lib/apiKeyAuth";
 import {
   getMcbisSettings, mcbisGetBalance, dispatchToMcbis,
 } from "../lib/mcbis";
@@ -1405,6 +1407,177 @@ router.post("/admin/mcbis/dispatch-store/:orderId", requireAdmin, async (req, re
   }
 
   res.json({ dispatched: outcome.dispatched, reason: outcome.dispatched ? undefined : (outcome as { reason: string }).reason, orderId });
+});
+
+// ─── API Client Management ─────────────────────────────────────────────────────
+
+function formatApiClient(c: typeof apiClientsTable.$inferSelect, includeFullKey?: string) {
+  return {
+    id:            c.id,
+    name:          c.name,
+    email:         c.email,
+    keyDisplay:    `dk_live_${c.keyPrefix}${"•".repeat(16)}`,
+    creditBalance: c.creditBalance,
+    isActive:      c.isActive,
+    notes:         c.notes ?? null,
+    lastUsedAt:    c.lastUsedAt?.toISOString() ?? null,
+    createdAt:     c.createdAt.toISOString(),
+    ...(includeFullKey ? { apiKey: includeFullKey } : {}),
+  };
+}
+
+// List all API clients
+router.get("/admin/api-clients", requireAdmin, async (_req, res) => {
+  const clients = await db
+    .select()
+    .from(apiClientsTable)
+    .orderBy(desc(apiClientsTable.createdAt));
+  res.json({ clients: clients.map(c => formatApiClient(c)) });
+});
+
+// Create a new API client
+router.post("/admin/api-clients", requireAdmin, async (req, res) => {
+  const { name, email, notes } = req.body as { name?: string; email?: string; notes?: string };
+  if (!name || !email) {
+    res.status(400).json({ error: "name and email are required" });
+    return;
+  }
+
+  const { raw, hash, prefix } = generateApiKey();
+
+  const [client] = await db
+    .insert(apiClientsTable)
+    .values({ name, email, keyHash: hash, keyPrefix: prefix, notes: notes ?? null })
+    .returning();
+
+  res.status(201).json(formatApiClient(client, raw));
+});
+
+// Update an API client (name, email, notes, creditBalance, isActive)
+router.put("/admin/api-clients/:id", requireAdmin, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+
+  const { name, email, notes, creditBalance, isActive } = req.body as {
+    name?: string; email?: string; notes?: string;
+    creditBalance?: string; isActive?: boolean;
+  };
+
+  const updates: Partial<typeof apiClientsTable.$inferInsert> = {};
+  if (name            !== undefined) updates.name          = name;
+  if (email           !== undefined) updates.email         = email;
+  if (notes           !== undefined) updates.notes         = notes;
+  if (isActive        !== undefined) updates.isActive      = isActive;
+  if (creditBalance   !== undefined) {
+    const num = parseFloat(creditBalance);
+    if (isNaN(num) || num < 0) { res.status(400).json({ error: "Invalid creditBalance" }); return; }
+    updates.creditBalance = num.toFixed(2);
+  }
+
+  if (Object.keys(updates).length === 0) {
+    res.status(400).json({ error: "No fields to update" });
+    return;
+  }
+
+  const [client] = await db
+    .update(apiClientsTable)
+    .set(updates)
+    .where(eq(apiClientsTable.id, id))
+    .returning();
+
+  if (!client) { res.status(404).json({ error: "API client not found" }); return; }
+  res.json(formatApiClient(client));
+});
+
+// Refresh (regenerate) the API key for a client — returns the new key once
+router.post("/admin/api-clients/:id/refresh-key", requireAdmin, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+
+  const { raw, hash, prefix } = generateApiKey();
+
+  const [client] = await db
+    .update(apiClientsTable)
+    .set({ keyHash: hash, keyPrefix: prefix })
+    .where(eq(apiClientsTable.id, id))
+    .returning();
+
+  if (!client) { res.status(404).json({ error: "API client not found" }); return; }
+  res.json(formatApiClient(client, raw));
+});
+
+// Add credit to an API client's balance
+router.post("/admin/api-clients/:id/credit", requireAdmin, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+
+  const amount = parseFloat(req.body.amount);
+  if (isNaN(amount) || amount <= 0) {
+    res.status(400).json({ error: "amount must be a positive number" });
+    return;
+  }
+
+  const [client] = await db
+    .update(apiClientsTable)
+    .set({ creditBalance: sql`credit_balance + ${amount.toFixed(2)}::numeric` })
+    .where(eq(apiClientsTable.id, id))
+    .returning();
+
+  if (!client) { res.status(404).json({ error: "API client not found" }); return; }
+  res.json(formatApiClient(client));
+});
+
+// Delete an API client
+router.delete("/admin/api-clients/:id", requireAdmin, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+
+  const [deleted] = await db
+    .delete(apiClientsTable)
+    .where(eq(apiClientsTable.id, id))
+    .returning({ id: apiClientsTable.id });
+
+  if (!deleted) { res.status(404).json({ error: "API client not found" }); return; }
+  res.json({ success: true });
+});
+
+// List orders for a specific API client
+router.get("/admin/api-clients/:id/orders", requireAdmin, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+
+  const { page, pageSize, offset } = parsePage(req.query as Record<string, unknown>);
+
+  const [{ total }] = await db
+    .select({ total: count() })
+    .from(apiOrdersTable)
+    .where(eq(apiOrdersTable.apiClientId, id));
+
+  const orders = await db
+    .select()
+    .from(apiOrdersTable)
+    .where(eq(apiOrdersTable.apiClientId, id))
+    .orderBy(desc(apiOrdersTable.createdAt))
+    .limit(pageSize)
+    .offset(offset);
+
+  res.json({
+    orders: orders.map(o => ({
+      id:            o.id,
+      reference:     o.reference,
+      bundleName:    o.bundleName,
+      bundleData:    o.bundleData,
+      bundleNetwork: o.bundleNetwork,
+      phoneNumber:   o.phoneNumber,
+      price:         o.price,
+      status:        o.status,
+      mcbisReference: o.mcbisReference,
+      createdAt:     o.createdAt.toISOString(),
+    })),
+    total,
+    page,
+    pageSize,
+  });
 });
 
 export default router;

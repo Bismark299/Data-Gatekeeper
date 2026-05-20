@@ -144,10 +144,22 @@ const orderLimiter = rateLimit({
   message: { error: "Too many orders. Please slow down." },
 });
 
+const publicApiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  // Key by API key header so each client gets its own bucket; fall back to IP
+  keyGenerator: (req) => (req.headers["x-api-key"] as string | undefined) ?? req.ip ?? "unknown",
+  validate: { keyGeneratorIpFallback: false }, // suppress IPv6 warning — key is the API key, not raw IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Rate limit exceeded. Maximum 60 requests per minute per API key." },
+});
+
 app.use("/api/auth", authLimiter);
 app.use("/api/wallet", walletLimiter);
 app.use("/api/orders", orderLimiter);
 app.use("/api/cart/checkout", orderLimiter);
+app.use("/api/v1", publicApiLimiter);
 app.use("/api", apiLimiter);
 
 app.use("/api", router);

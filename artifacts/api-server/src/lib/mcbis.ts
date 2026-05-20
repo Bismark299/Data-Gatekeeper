@@ -19,7 +19,7 @@
 import { eq, and, isNotNull, isNull, inArray, lt } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import axios from "axios";
-import { db, settingsTable, ordersTable, storeOrdersTable, bundlesTable, storesTable } from "@workspace/db";
+import { db, settingsTable, ordersTable, storeOrdersTable, apiOrdersTable, bundlesTable, storesTable } from "@workspace/db";
 
 const mcbisAxios = axios.create({
   timeout: 15_000, // 15-second hard limit per request
@@ -172,6 +172,7 @@ export async function dispatchToMcbis(opts: {
   phone: string;
   bundleData: string;
   isStoreOrder?: boolean;
+  isApiOrder?: boolean;
 }): Promise<DispatchOutcome> {
   const { enabled, apiKey } = await getMcbisSettings();
   if (!enabled || !apiKey) return { dispatched: false, reason: "disabled" };
@@ -183,7 +184,7 @@ export async function dispatchToMcbis(opts: {
   const amountGb = parseGb(opts.bundleData);
   if (amountGb <= 0) return { dispatched: false, reason: "bad_data" };
 
-  const prefix   = opts.isStoreOrder ? "SO" : "PO";
+  const prefix   = opts.isApiOrder ? "AO" : opts.isStoreOrder ? "SO" : "PO";
   const lockRef  = `LOCK-${prefix}-${opts.orderId}`;
   const finalRef = `${prefix}-${opts.orderId}-${Date.now()}`;
 
@@ -191,7 +192,17 @@ export async function dispatchToMcbis(opts: {
   // Two concurrent callers (poller + admin) race on a single UPDATE.
   // The loser gets 0 rows back and returns immediately — no double-send.
   let locked = false;
-  if (opts.isStoreOrder) {
+  if (opts.isApiOrder) {
+    const rows = await db.update(apiOrdersTable)
+      .set({ mcbisReference: lockRef })
+      .where(and(
+        eq(apiOrdersTable.id, opts.orderId),
+        isNull(apiOrdersTable.mcbisReference),
+        eq(apiOrdersTable.status, "pending"),
+      ))
+      .returning({ id: apiOrdersTable.id });
+    locked = rows.length > 0;
+  } else if (opts.isStoreOrder) {
     const rows = await db.update(storeOrdersTable)
       .set({ mcbisReference: lockRef })
       .where(and(
@@ -214,6 +225,17 @@ export async function dispatchToMcbis(opts: {
   }
   if (!locked) return { dispatched: false, reason: "already_dispatched" };
 
+  // Helper to release lock on this order
+  const releaseLock = async () => {
+    if (opts.isApiOrder) {
+      await db.update(apiOrdersTable).set({ mcbisReference: null }).where(eq(apiOrdersTable.id, opts.orderId));
+    } else if (opts.isStoreOrder) {
+      await db.update(storeOrdersTable).set({ mcbisReference: null }).where(eq(storeOrdersTable.id, opts.orderId));
+    } else {
+      await db.update(ordersTable).set({ mcbisReference: null }).where(eq(ordersTable.id, opts.orderId));
+    }
+  };
+
   try {
     const result = await mcbisPlaceOrder({
       apiKey,
@@ -224,12 +246,7 @@ export async function dispatchToMcbis(opts: {
     });
 
     if (!result.accepted) {
-      // Release lock so the order can be retried
-      if (opts.isStoreOrder) {
-        await db.update(storeOrdersTable).set({ mcbisReference: null }).where(eq(storeOrdersTable.id, opts.orderId));
-      } else {
-        await db.update(ordersTable).set({ mcbisReference: null }).where(eq(ordersTable.id, opts.orderId));
-      }
+      await releaseLock();
       const msg = result.message.toLowerCase();
       if (msg.includes("insufficient") || msg.includes("balance") || msg.includes("fund") || msg.includes("wallet")) {
         return { dispatched: false, reason: "insufficient_funds" };
@@ -239,12 +256,7 @@ export async function dispatchToMcbis(opts: {
 
     return { dispatched: true, reference: finalRef };
   } catch {
-    // Release lock on exception so the order can be retried
-    if (opts.isStoreOrder) {
-      await db.update(storeOrdersTable).set({ mcbisReference: null }).where(eq(storeOrdersTable.id, opts.orderId));
-    } else {
-      await db.update(ordersTable).set({ mcbisReference: null }).where(eq(ordersTable.id, opts.orderId));
-    }
+    await releaseLock();
     return { dispatched: false, reason: "api_error" };
   }
 }
@@ -430,7 +442,69 @@ export function startMcbisPoller(): void {
         } catch { /* retry next cycle */ }
         await sleep(DISPATCH_DELAY_MS);
       }
+      // ── 5. Retry pending API client MTN orders (cap 5, 500 ms apart, 30 s grace) ──
+      const pendingApi = await db
+        .select({
+          id:         apiOrdersTable.id,
+          phone:      apiOrdersTable.phoneNumber,
+          bundleData: apiOrdersTable.bundleData,
+          network:    apiOrdersTable.bundleNetwork,
+          createdAt:  apiOrdersTable.createdAt,
+        })
+        .from(apiOrdersTable)
+        .where(and(
+          eq(apiOrdersTable.status, "pending"),
+          isNull(apiOrdersTable.mcbisReference),
+          eq(apiOrdersTable.bundleNetwork, "mtn"),
+          lt(apiOrdersTable.createdAt, graceThreshold),
+        ))
+        .orderBy(apiOrdersTable.createdAt)
+        .limit(RETRY_CAP);
+
+      for (const o of pendingApi) {
+        try {
+          const outcome = await dispatchToMcbis({
+            orderId:    o.id,
+            network:    o.network,
+            phone:      o.phone,
+            bundleData: o.bundleData,
+            isApiOrder: true,
+          });
+          if (outcome.dispatched) {
+            await db.update(apiOrdersTable)
+              .set({ status: "processing", mcbisReference: outcome.reference })
+              .where(eq(apiOrdersTable.id, o.id));
+          } else if (outcome.reason === "insufficient_funds") {
+            break;
+          }
+        } catch { /* retry next cycle */ }
+        await sleep(DISPATCH_DELAY_MS);
+      }
       } // end mcbisBalance > 0 guard
+
+      // ── 6. Check status of processing API orders (cap 30, 100 ms apart) ──
+      const apiProcessing = await db
+        .select({ id: apiOrdersTable.id, ref: apiOrdersTable.mcbisReference })
+        .from(apiOrdersTable)
+        .where(and(
+          eq(apiOrdersTable.status, "processing"),
+          isNotNull(apiOrdersTable.mcbisReference),
+        ))
+        .orderBy(apiOrdersTable.createdAt)
+        .limit(STATUS_CHECK_CAP);
+
+      for (const o of apiProcessing) {
+        if (!o.ref) continue;
+        try {
+          const s = await mcbisCheckStatus(apiKey, o.ref);
+          if (s === "success" || s === "completed") {
+            await db.update(apiOrdersTable).set({ status: "completed" }).where(eq(apiOrdersTable.id, o.id));
+          } else if (s === "failed") {
+            await db.update(apiOrdersTable).set({ status: "failed" }).where(eq(apiOrdersTable.id, o.id));
+          }
+        } catch { /* transient — retry next cycle */ }
+        await sleep(STATUS_DELAY_MS);
+      }
     } catch { /* top-level guard */ }
     finally { _pollRunning = false; }
   };
