@@ -4,23 +4,24 @@
  * Mounted at /api/v1  (registered in routes/index.ts)
  *
  * Endpoints:
- *   GET  /api/v1/docs              — Swagger UI (interactive docs)
- *   GET  /api/v1/openapi.json      — Raw OpenAPI 3.0 spec
- *   GET  /api/v1/account           — API client info + credit balance   [requires key]
- *   GET  /api/v1/bundles           — List active bundles                [public]
- *   POST /api/v1/orders            — Place an order                     [requires key]
- *   GET  /api/v1/orders/:reference — Get order status                   [requires key]
+ *   GET  /api/v1/docs         — Swagger UI (interactive docs)
+ *   GET  /api/v1/openapi.json — Raw OpenAPI 3.0 spec
+ *   GET  /api/v1/account      — User info + wallet balance   [requires key]
+ *   GET  /api/v1/bundles      — List active bundles          [public]
+ *   POST /api/v1/orders       — Place an order               [requires key]
+ *   GET  /api/v1/orders/:id   — Get order status             [requires key]
  */
 
 import { Router, type IRouter } from "express";
 import { eq, and, isNull, isNotNull, desc } from "drizzle-orm";
-import { sql } from "drizzle-orm";
-import { db, apiClientsTable, apiOrdersTable, bundlesTable } from "@workspace/db";
+import {
+  db, usersTable, walletsTable, walletLedgerTable, ordersTable, bundlesTable,
+} from "@workspace/db";
 import { requireApiKey } from "../lib/apiKeyAuth";
 import { logger } from "../lib/logger";
 import { dispatchToMcbis } from "../lib/mcbis";
+import { getOrCreateWallet, insertLedgerEntry } from "./wallet";
 import { z } from "zod";
-import crypto from "crypto";
 
 const router: IRouter = Router();
 
@@ -42,13 +43,13 @@ X-API-Key: dk_live_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 \`\`\`
 API keys are issued and managed by the DataBundle admin team. Contact support to get your key.
 
-## Credits
-Orders are charged against your **credit balance**. Add credit by contacting the admin team.
+## Wallet Balance
+Orders are charged against your **wallet balance**. Top up your wallet via the DataBundle platform.
 A \`402 Payment Required\` response means your balance is insufficient.
 
 ## Order Fulfillment
 Orders are typically fulfilled within **2–15 minutes** after placement.
-Poll \`GET /orders/{reference}\` to track progress.
+Poll \`GET /orders/{id}\` to track progress.
 
 ## Rate Limits
 60 requests per minute per API key. Exceeding this returns \`429 Too Many Requests\`.
@@ -75,19 +76,18 @@ Contact your account manager or email **support@databundle.com**.
       Error: {
         type: "object",
         properties: {
-          error: { type: "string", example: "Insufficient credit balance" },
+          error: { type: "string", example: "Insufficient wallet balance" },
         },
       },
       Account: {
         type: "object",
         properties: {
-          id:            { type: "integer",  example: 1 },
-          name:          { type: "string",   example: "Acme Corp" },
-          email:         { type: "string",   example: "acme@example.com" },
-          creditBalance: { type: "string",   example: "150.00", description: "Available credit in GH₵" },
-          isActive:      { type: "boolean",  example: true },
+          id:            { type: "integer",  example: 42 },
+          name:          { type: "string",   example: "Kwame Mensah" },
+          email:         { type: "string",   example: "kwame@example.com" },
+          role:          { type: "string",   example: "dealer" },
+          walletBalance: { type: "string",   example: "150.00", description: "Available wallet balance in GH₵" },
           lastUsedAt:    { type: "string",   format: "date-time", nullable: true },
-          createdAt:     { type: "string",   format: "date-time" },
         },
       },
       Bundle: {
@@ -98,7 +98,7 @@ Contact your account manager or email **support@databundle.com**.
           description:  { type: "string",  example: "5GB data valid for 30 days" },
           dataAmount:   { type: "string",  example: "5GB" },
           validityDays: { type: "integer", example: 30 },
-          price:        { type: "string",  example: "15.00", description: "Price in GH₵" },
+          price:        { type: "string",  example: "15.00", description: "Price in GH₵ (your role's rate)" },
           network:      { type: "string",  example: "mtn", enum: ["mtn", "telecel", "at-ishare", "at-bigtime"] },
           category:     { type: "string",  example: "Monthly" },
         },
@@ -108,21 +108,20 @@ Contact your account manager or email **support@databundle.com**.
         required: ["bundleId", "phoneNumber"],
         properties: {
           bundleId:    { type: "integer", example: 3, description: "Bundle ID from GET /bundles" },
-          phoneNumber: { type: "string",  example: "0241234567", description: "Recipient's Ghana phone number (10 digits, no country code)" },
+          phoneNumber: { type: "string",  example: "0241234567", description: "Recipient's Ghana phone number (10 digits)" },
         },
       },
       Order: {
         type: "object",
         properties: {
-          reference:    { type: "string",  example: "AO-12-1716210000000" },
-          bundleName:   { type: "string",  example: "MTN 5GB Monthly" },
-          bundleData:   { type: "string",  example: "5GB" },
-          bundleNetwork: { type: "string", example: "mtn" },
-          phoneNumber:  { type: "string",  example: "0241234567" },
-          price:        { type: "string",  example: "15.00" },
-          status:       { type: "string",  example: "pending", enum: ["pending", "processing", "completed", "failed"] },
-          createdAt:    { type: "string",  format: "date-time" },
-          updatedAt:    { type: "string",  format: "date-time" },
+          id:          { type: "integer", example: 101 },
+          bundleName:  { type: "string",  example: "MTN 5GB Monthly" },
+          bundleData:  { type: "string",  example: "5GB" },
+          network:     { type: "string",  example: "mtn" },
+          phoneNumber: { type: "string",  example: "0241234567" },
+          price:       { type: "string",  example: "15.00" },
+          status:      { type: "string",  example: "pending", enum: ["pending", "processing", "completed", "failed"] },
+          createdAt:   { type: "string",  format: "date-time" },
         },
       },
     },
@@ -131,7 +130,7 @@ Contact your account manager or email **support@databundle.com**.
     "/account": {
       get: {
         summary: "Get account info",
-        description: "Returns your API client profile and current credit balance.",
+        description: "Returns your user profile and current wallet balance.",
         operationId: "getAccount",
         security: [{ ApiKeyAuth: [] }],
         responses: {
@@ -149,7 +148,7 @@ Contact your account manager or email **support@databundle.com**.
     "/bundles": {
       get: {
         summary: "List available bundles",
-        description: "Returns all active bundles, optionally filtered by network. No authentication required.",
+        description: "Returns all active bundles, optionally filtered by network. No authentication required. Prices reflect your account role.",
         operationId: "listBundles",
         security: [],
         parameters: [
@@ -192,9 +191,9 @@ Contact your account manager or email **support@databundle.com**.
         description: `
 Place a data bundle order for a phone number.
 
-- The bundle price is deducted from your **credit balance** immediately.
+- The bundle price is deducted from your **wallet balance** immediately.
 - Returns \`402\` if your balance is insufficient.
-- The order is fulfilled asynchronously. Poll \`GET /orders/{reference}\` for status.
+- The order is fulfilled asynchronously. Poll \`GET /orders/{id}\` for status.
         `.trim(),
         operationId: "createOrder",
         security: [{ ApiKeyAuth: [] }],
@@ -210,11 +209,11 @@ Place a data bundle order for a phone number.
                 schema: {
                   type: "object",
                   properties: {
-                    reference:     { type: "string",  example: "AO-12-1716210000000" },
+                    orderId:       { type: "integer", example: 101 },
                     status:        { type: "string",  example: "pending" },
                     price:         { type: "string",  example: "15.00" },
-                    creditBalance: { type: "string",  example: "135.00", description: "Remaining credit after deduction" },
-                    message:       { type: "string",  example: "Order placed. Poll /orders/{reference} for status." },
+                    walletBalance: { type: "string",  example: "135.00", description: "Remaining wallet balance" },
+                    message:       { type: "string",  example: "Order placed. Poll GET /api/v1/orders/101 for status." },
                   },
                 },
               },
@@ -225,7 +224,7 @@ Place a data bundle order for a phone number.
             content: { "application/json": { schema: { "$ref": "#/components/schemas/Error" } } },
           },
           402: {
-            description: "Insufficient credit balance",
+            description: "Insufficient wallet balance",
             content: { "application/json": { schema: { "$ref": "#/components/schemas/Error" } } },
           },
           401: {
@@ -239,19 +238,19 @@ Place a data bundle order for a phone number.
         },
       },
     },
-    "/orders/{reference}": {
+    "/orders/{id}": {
       get: {
         summary: "Get order status",
-        description: "Returns the current status of an order placed by this API client.",
+        description: "Returns the current status of an order placed by your account.",
         operationId: "getOrder",
         security: [{ ApiKeyAuth: [] }],
         parameters: [
           {
-            name: "reference",
+            name: "id",
             in: "path",
             required: true,
-            description: "Order reference returned by POST /orders",
-            schema: { type: "string", example: "AO-12-1716210000000" },
+            description: "Order ID returned by POST /orders",
+            schema: { type: "integer", example: 101 },
           },
         ],
         responses: {
@@ -322,26 +321,32 @@ router.get("/docs", (_req, res) => {
   res.send(SWAGGER_HTML);
 });
 
-// Raw OpenAPI spec (used by Swagger UI and integrations)
+// Raw OpenAPI spec
 router.get("/openapi.json", (_req, res) => {
   res.json(OPENAPI_SPEC);
 });
 
-// Account info
-router.get("/account", requireApiKey, (req, res) => {
-  const c = req.apiClient!;
-  res.json({
-    id:            c.id,
-    name:          c.name,
-    email:         c.email,
-    creditBalance: c.creditBalance,
-    isActive:      c.isActive,
-    lastUsedAt:    c.lastUsedAt?.toISOString() ?? null,
-    createdAt:     c.createdAt.toISOString(),
-  });
+// Account info — returns user profile + wallet balance
+router.get("/account", requireApiKey, async (req, res) => {
+  const user = req.apiUser!;
+  try {
+    const wallet = await getOrCreateWallet(user.id);
+    res.json({
+      id:            user.id,
+      name:          user.name,
+      email:         user.email,
+      role:          user.role,
+      walletBalance: wallet.balance,
+      lastUsedAt:    user.apiKeyLastUsedAt?.toISOString() ?? null,
+    });
+  } catch (err) {
+    req.log.error({ err }, "publicApi: get account");
+    res.status(500).json({ error: "Internal server error" });
+  }
 });
 
 // List active bundles — public, no auth required
+// Price shown is the caller's role rate (requires key) or dealer rate (no key)
 router.get("/bundles", async (req, res) => {
   try {
     const { network, category } = req.query as { network?: string; category?: string };
@@ -357,19 +362,39 @@ router.get("/bundles", async (req, res) => {
         description:  bundlesTable.description,
         dataAmount:   bundlesTable.dataAmount,
         validityDays: bundlesTable.validityDays,
-        price:        bundlesTable.dealerPrice,
+        price:        bundlesTable.price,
+        dealerPrice:  bundlesTable.dealerPrice,
+        agentPrice:   bundlesTable.agentPrice,
         network:      bundlesTable.network,
         category:     bundlesTable.category,
       })
       .from(bundlesTable)
-      .where(and(...conditions as [typeof conditions[0], ...typeof conditions]))
+      .where(and(
+        eq(bundlesTable.isActive, true),
+        ...(network  ? [eq(bundlesTable.network,  network)]  : []),
+        ...(category ? [eq(bundlesTable.category, category)] : []),
+      ))
       .orderBy(bundlesTable.network, bundlesTable.category, bundlesTable.price);
 
+    const role = req.apiUser?.role ?? "dealer";
+
     res.json({
-      bundles: bundles.map(b => ({
-        ...b,
-        price: b.price ?? "0.00",
-      })),
+      bundles: bundles.map(b => {
+        const effectivePrice =
+          role === "dealer" ? b.dealerPrice :
+          role === "agent"  ? b.agentPrice  :
+          b.price;
+        return {
+          id:           b.id,
+          name:         b.name,
+          description:  b.description,
+          dataAmount:   b.dataAmount,
+          validityDays: b.validityDays,
+          price:        effectivePrice ?? b.price,
+          network:      b.network,
+          category:     b.category,
+        };
+      }),
       total: bundles.length,
     });
   } catch (err) {
@@ -378,7 +403,7 @@ router.get("/bundles", async (req, res) => {
   }
 });
 
-// Place an order
+// Place an order — deducts from user's wallet, writes to ordersTable
 const placeOrderSchema = z.object({
   bundleId:    z.number().int().positive(),
   phoneNumber: z.string().min(10).max(15).regex(/^\d+$/, "Phone number must be digits only"),
@@ -392,10 +417,9 @@ router.post("/orders", requireApiKey, async (req, res) => {
   }
 
   const { bundleId, phoneNumber } = parsed.data;
-  const client = req.apiClient!;
+  const user = req.apiUser!;
 
   try {
-    // Fetch the bundle
     const [bundle] = await db.select().from(bundlesTable).where(
       and(eq(bundlesTable.id, bundleId), eq(bundlesTable.isActive, true)),
     );
@@ -404,115 +428,140 @@ router.post("/orders", requireApiKey, async (req, res) => {
       return;
     }
 
-    // Use dealerPrice if available, else regular price
-    const price = parseFloat(bundle.dealerPrice ?? bundle.price);
-    const currentBalance = parseFloat(client.creditBalance);
+    const rawPrice =
+      user.role === "dealer" ? bundle.dealerPrice :
+      user.role === "agent"  ? bundle.agentPrice  :
+      bundle.price;
 
-    if (currentBalance < price) {
-      res.status(402).json({
-        error: "Insufficient credit balance",
-        required: price.toFixed(2),
-        available: currentBalance.toFixed(2),
-      });
+    if (rawPrice == null) {
+      res.status(400).json({ error: `This bundle is not priced for ${user.role} accounts. Contact admin.` });
       return;
     }
 
-    // Atomic: deduct credit + insert order
-    const reference = `AO-${client.id}-${Date.now()}-${crypto.randomBytes(3).toString("hex")}`;
+    const price = parseFloat(rawPrice);
 
-    const [order] = await db.transaction(async (tx) => {
-      // Re-check + lock balance
-      const [locked] = await tx
-        .select({ creditBalance: apiClientsTable.creditBalance })
-        .from(apiClientsTable)
-        .where(eq(apiClientsTable.id, client.id))
+    await getOrCreateWallet(user.id);
+
+    let order: typeof ordersTable.$inferSelect;
+    let newWalletBalance: string;
+
+    order = await db.transaction(async (tx) => {
+      const [wallet] = await tx
+        .select()
+        .from(walletsTable)
+        .where(eq(walletsTable.userId, user.id))
         .for("update");
 
-      const balance = parseFloat(locked.creditBalance);
-      if (balance < price) throw new Error("INSUFFICIENT");
+      if (!wallet) throw Object.assign(new Error("Wallet not found"), { status: 404 });
 
-      await tx.update(apiClientsTable)
-        .set({ creditBalance: sql`credit_balance - ${price.toFixed(2)}::numeric` })
-        .where(eq(apiClientsTable.id, client.id));
+      const balance = parseFloat(wallet.balance);
+      if (balance < price) {
+        throw Object.assign(
+          new Error(`Insufficient balance. Need GH₵${price.toFixed(2)}, have GH₵${balance.toFixed(2)}`),
+          { status: 402 },
+        );
+      }
 
-      return tx.insert(apiOrdersTable)
+      newWalletBalance = (balance - price).toFixed(2);
+      await tx
+        .update(walletsTable)
+        .set({ balance: newWalletBalance })
+        .where(eq(walletsTable.userId, user.id));
+
+      const [created] = await tx
+        .insert(ordersTable)
         .values({
-          apiClientId:   client.id,
-          reference,
-          bundleId:      bundle.id,
-          bundleName:    bundle.name,
-          bundleData:    bundle.dataAmount,
-          bundleNetwork: bundle.network,
-          price:         price.toFixed(2),
-          phoneNumber,
-          status:        "pending",
+          userId:      user.id,
+          bundleId:    bundle.id,
+          bundleName:  bundle.name,
+          bundleData:  bundle.dataAmount,
+          price:       rawPrice,
+          buyingCost:  bundle.price,
+          status:      "pending",
+          phoneNumber: phoneNumber.trim(),
         })
         .returning();
+
+      await insertLedgerEntry(
+        tx,
+        user.id,
+        -price,
+        "debit",
+        "api_order",
+        `order-${created.id}`,
+        `${bundle.name} → ${phoneNumber.trim()} (API)`,
+      );
+
+      return created;
     });
 
-    // Attempt immediate dispatch via McBIS (fire-and-forget — poller handles retries)
+    // Fire-and-forget McBIS dispatch
     dispatchToMcbis({
-      orderId:     order.id,
-      network:     bundle.network,
-      phone:       phoneNumber,
-      bundleData:  bundle.dataAmount,
-      isApiOrder:  true,
+      orderId:    order.id,
+      network:    bundle.network,
+      phone:      order.phoneNumber,
+      bundleData: order.bundleData,
     }).then(async (outcome) => {
       if (outcome.dispatched) {
-        await db.update(apiOrdersTable)
+        await db.update(ordersTable)
           .set({ status: "processing", mcbisReference: outcome.reference })
-          .where(eq(apiOrdersTable.id, order.id));
+          .where(eq(ordersTable.id, order.id));
       }
     }).catch(() => {});
 
-    const newBalance = currentBalance - price;
-
     res.status(201).json({
-      reference,
+      orderId:       order.id,
       status:        "pending",
       price:         price.toFixed(2),
-      creditBalance: newBalance.toFixed(2),
-      message:       `Order placed. Poll GET /api/v1/orders/${reference} for status.`,
+      walletBalance: newWalletBalance!,
+      message:       `Order placed. Poll GET /api/v1/orders/${order.id} for status.`,
     });
   } catch (err: unknown) {
-    if (err instanceof Error && err.message === "INSUFFICIENT") {
-      res.status(402).json({ error: "Insufficient credit balance" });
+    const e = err as { message?: string; status?: number };
+    if (e.status === 402 || e.status === 404) {
+      res.status(e.status).json({ error: e.message ?? "Order failed" });
       return;
     }
-    logger.error({ err, clientId: client.id }, "publicApi: place order");
+    logger.error({ err, userId: user.id }, "publicApi: place order");
     res.status(500).json({ error: "Internal server error" });
   }
 });
 
-// Get order by reference
-router.get("/orders/:reference", requireApiKey, async (req, res) => {
-  const { reference } = req.params;
-  const client = req.apiClient!;
+// Get order by ID — must belong to the authenticated user
+router.get("/orders/:id", requireApiKey, async (req, res) => {
+  const orderId = parseInt(req.params.id as string, 10);
+  if (isNaN(orderId)) {
+    res.status(400).json({ error: "Invalid order ID" });
+    return;
+  }
+
+  const user = req.apiUser!;
 
   try {
-    const [order] = await db
-      .select()
-      .from(apiOrdersTable)
+    const [row] = await db
+      .select({ order: ordersTable, network: bundlesTable.network })
+      .from(ordersTable)
+      .leftJoin(bundlesTable, eq(bundlesTable.id, ordersTable.bundleId))
       .where(and(
-        eq(apiOrdersTable.reference, reference),
-        eq(apiOrdersTable.apiClientId, client.id),
+        eq(ordersTable.id, orderId),
+        eq(ordersTable.userId, user.id),
       ));
 
-    if (!order) {
+    if (!row) {
       res.status(404).json({ error: "Order not found" });
       return;
     }
 
+    const o = row.order;
     res.json({
-      reference:     order.reference,
-      bundleName:    order.bundleName,
-      bundleData:    order.bundleData,
-      bundleNetwork: order.bundleNetwork,
-      phoneNumber:   order.phoneNumber,
-      price:         order.price,
-      status:        order.status,
-      createdAt:     order.createdAt.toISOString(),
-      updatedAt:     order.updatedAt.toISOString(),
+      id:          o.id,
+      bundleName:  o.bundleName,
+      bundleData:  o.bundleData,
+      network:     row.network ?? null,
+      phoneNumber: o.phoneNumber,
+      price:       o.price,
+      status:      o.status,
+      createdAt:   o.createdAt.toISOString(),
     });
   } catch (err) {
     req.log.error({ err }, "publicApi: get order");
@@ -521,4 +570,4 @@ router.get("/orders/:reference", requireApiKey, async (req, res) => {
 });
 
 export { router as publicApiRouter };
-export { isNull, isNotNull, desc }; // re-export for mcbis poller usage
+export { isNull, isNotNull, desc };

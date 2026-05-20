@@ -1,12 +1,12 @@
 import crypto from "crypto";
-import { eq, and } from "drizzle-orm";
-import { db, apiClientsTable } from "@workspace/db";
+import { eq, and, isNull } from "drizzle-orm";
+import { db, usersTable } from "@workspace/db";
 import type { Request, Response, NextFunction } from "express";
 
 declare global {
   namespace Express {
     interface Request {
-      apiClient?: typeof apiClientsTable.$inferSelect;
+      apiUser?: typeof usersTable.$inferSelect;
     }
   }
 }
@@ -31,22 +31,26 @@ export async function requireApiKey(req: Request, res: Response, next: NextFunct
   }
 
   const hash = hashApiKey(key);
-  const [client] = await db
+  const [user] = await db
     .select()
-    .from(apiClientsTable)
-    .where(and(eq(apiClientsTable.keyHash, hash), eq(apiClientsTable.isActive, true)));
+    .from(usersTable)
+    .where(and(
+      eq(usersTable.apiKeyHash, hash),
+      eq(usersTable.isActive, true),
+      isNull(usersTable.deletedAt),
+    ));
 
-  if (!client) {
+  if (!user) {
     res.status(401).json({ error: "Invalid or inactive API key" });
     return;
   }
 
-  // Update lastUsedAt fire-and-forget (non-blocking)
-  db.update(apiClientsTable)
-    .set({ lastUsedAt: new Date() })
-    .where(eq(apiClientsTable.id, client.id))
+  // Update lastUsedAt fire-and-forget
+  db.update(usersTable)
+    .set({ apiKeyLastUsedAt: new Date() })
+    .where(eq(usersTable.id, user.id))
     .catch(() => {});
 
-  req.apiClient = client;
+  req.apiUser = user;
   next();
 }

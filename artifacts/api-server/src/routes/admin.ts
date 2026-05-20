@@ -6,7 +6,6 @@ import {
 import {
   db, usersTable, bundlesTable, ordersTable, walletsTable, depositsTable,
   storesTable, storeOrdersTable, settingsTable, walletLedgerTable,
-  apiClientsTable, apiOrdersTable,
 } from "@workspace/db";
 import { generateApiKey } from "../lib/apiKeyAuth";
 import {
@@ -1409,170 +1408,157 @@ router.post("/admin/mcbis/dispatch-store/:orderId", requireAdmin, async (req, re
   res.json({ dispatched: outcome.dispatched, reason: outcome.dispatched ? undefined : (outcome as { reason: string }).reason, orderId });
 });
 
-// ─── API Client Management ─────────────────────────────────────────────────────
+// ─── API Key Management (user-based) ──────────────────────────────────────────
 
-function formatApiClient(c: typeof apiClientsTable.$inferSelect, includeFullKey?: string) {
-  return {
-    id:            c.id,
-    name:          c.name,
-    email:         c.email,
-    keyDisplay:    `dk_live_${c.keyPrefix}${"•".repeat(16)}`,
-    creditBalance: c.creditBalance,
-    isActive:      c.isActive,
-    notes:         c.notes ?? null,
-    lastUsedAt:    c.lastUsedAt?.toISOString() ?? null,
-    createdAt:     c.createdAt.toISOString(),
-    ...(includeFullKey ? { apiKey: includeFullKey } : {}),
-  };
-}
+// List all users who have API keys — specific route before parameterized
+router.get("/admin/api-clients/all-users", requireAdmin, async (_req, res) => {
+  const users = await db
+    .select({
+      id:    usersTable.id,
+      name:  usersTable.name,
+      email: usersTable.email,
+      role:  usersTable.role,
+      hasKey: usersTable.apiKeyHash,
+    })
+    .from(usersTable)
+    .where(isNull(usersTable.deletedAt))
+    .orderBy(usersTable.name);
 
-// List all API clients
+  res.json({
+    users: users.map(u => ({
+      id:     u.id,
+      name:   u.name,
+      email:  u.email,
+      role:   u.role,
+      hasKey: u.hasKey !== null,
+    })),
+  });
+});
+
 router.get("/admin/api-clients", requireAdmin, async (_req, res) => {
-  const clients = await db
-    .select()
-    .from(apiClientsTable)
-    .orderBy(desc(apiClientsTable.createdAt));
-  res.json({ clients: clients.map(c => formatApiClient(c)) });
+  const users = await db
+    .select({
+      id:         usersTable.id,
+      name:       usersTable.name,
+      email:      usersTable.email,
+      role:       usersTable.role,
+      isActive:   usersTable.isActive,
+      keyPrefix:  usersTable.apiKeyPrefix,
+      lastUsedAt: usersTable.apiKeyLastUsedAt,
+      createdAt:  usersTable.createdAt,
+    })
+    .from(usersTable)
+    .where(and(isNotNull(usersTable.apiKeyHash), isNull(usersTable.deletedAt)))
+    .orderBy(desc(usersTable.createdAt));
+
+  res.json({
+    users: users.map(u => ({
+      id:         u.id,
+      name:       u.name,
+      email:      u.email,
+      role:       u.role,
+      isActive:   u.isActive,
+      keyDisplay: u.keyPrefix ? `dk_live_${u.keyPrefix}${"•".repeat(16)}` : null,
+      lastUsedAt: u.lastUsedAt?.toISOString() ?? null,
+      createdAt:  u.createdAt.toISOString(),
+    })),
+  });
 });
 
-// Create a new API client
-router.post("/admin/api-clients", requireAdmin, async (req, res) => {
-  const { name, email, notes } = req.body as { name?: string; email?: string; notes?: string };
-  if (!name || !email) {
-    res.status(400).json({ error: "name and email are required" });
-    return;
-  }
+// Generate an API key for an existing user (or regenerate if they already have one)
+router.post("/admin/api-clients/generate", requireAdmin, async (req, res) => {
+  const { userId } = req.body as { userId?: unknown };
+  const id = typeof userId === "number" ? userId : parseInt(String(userId), 10);
+  if (!id || isNaN(id)) { res.status(400).json({ error: "userId is required" }); return; }
 
   const { raw, hash, prefix } = generateApiKey();
 
-  const [client] = await db
-    .insert(apiClientsTable)
-    .values({ name, email, keyHash: hash, keyPrefix: prefix, notes: notes ?? null })
-    .returning();
+  const [user] = await db
+    .update(usersTable)
+    .set({ apiKeyHash: hash, apiKeyPrefix: prefix, apiKeyLastUsedAt: null })
+    .where(and(eq(usersTable.id, id), isNull(usersTable.deletedAt)))
+    .returning({
+      id:    usersTable.id,
+      name:  usersTable.name,
+      email: usersTable.email,
+      role:  usersTable.role,
+    });
 
-  res.status(201).json(formatApiClient(client, raw));
+  if (!user) { res.status(404).json({ error: "User not found" }); return; }
+
+  res.status(201).json({ ...user, apiKey: raw, keyDisplay: `dk_live_${prefix}${"•".repeat(16)}` });
 });
 
-// Update an API client (name, email, notes, creditBalance, isActive)
-router.put("/admin/api-clients/:id", requireAdmin, async (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
-
-  const { name, email, notes, creditBalance, isActive } = req.body as {
-    name?: string; email?: string; notes?: string;
-    creditBalance?: string; isActive?: boolean;
-  };
-
-  const updates: Partial<typeof apiClientsTable.$inferInsert> = {};
-  if (name            !== undefined) updates.name          = name;
-  if (email           !== undefined) updates.email         = email;
-  if (notes           !== undefined) updates.notes         = notes;
-  if (isActive        !== undefined) updates.isActive      = isActive;
-  if (creditBalance   !== undefined) {
-    const num = parseFloat(creditBalance);
-    if (isNaN(num) || num < 0) { res.status(400).json({ error: "Invalid creditBalance" }); return; }
-    updates.creditBalance = num.toFixed(2);
-  }
-
-  if (Object.keys(updates).length === 0) {
-    res.status(400).json({ error: "No fields to update" });
-    return;
-  }
-
-  const [client] = await db
-    .update(apiClientsTable)
-    .set(updates)
-    .where(eq(apiClientsTable.id, id))
-    .returning();
-
-  if (!client) { res.status(404).json({ error: "API client not found" }); return; }
-  res.json(formatApiClient(client));
-});
-
-// Refresh (regenerate) the API key for a client — returns the new key once
+// Refresh (regenerate) the API key for a user — returns the new key once
 router.post("/admin/api-clients/:id/refresh-key", requireAdmin, async (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  const userId = parseInt(req.params.id as string, 10);
+  if (isNaN(userId)) { res.status(400).json({ error: "Invalid userId" }); return; }
 
   const { raw, hash, prefix } = generateApiKey();
 
-  const [client] = await db
-    .update(apiClientsTable)
-    .set({ keyHash: hash, keyPrefix: prefix })
-    .where(eq(apiClientsTable.id, id))
-    .returning();
+  const [user] = await db
+    .update(usersTable)
+    .set({ apiKeyHash: hash, apiKeyPrefix: prefix, apiKeyLastUsedAt: null })
+    .where(and(eq(usersTable.id, userId), isNotNull(usersTable.apiKeyHash)))
+    .returning({
+      id:    usersTable.id,
+      name:  usersTable.name,
+      email: usersTable.email,
+      role:  usersTable.role,
+    });
 
-  if (!client) { res.status(404).json({ error: "API client not found" }); return; }
-  res.json(formatApiClient(client, raw));
+  if (!user) { res.status(404).json({ error: "User not found or has no API key" }); return; }
+
+  res.json({ ...user, apiKey: raw, keyDisplay: `dk_live_${prefix}${"•".repeat(16)}` });
 });
 
-// Add credit to an API client's balance
-router.post("/admin/api-clients/:id/credit", requireAdmin, async (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+// Revoke (clear) the API key for a user
+router.delete("/admin/api-clients/:id/revoke", requireAdmin, async (req, res) => {
+  const userId = parseInt(req.params.id as string, 10);
+  if (isNaN(userId)) { res.status(400).json({ error: "Invalid userId" }); return; }
 
-  const amount = parseFloat(req.body.amount);
-  if (isNaN(amount) || amount <= 0) {
-    res.status(400).json({ error: "amount must be a positive number" });
-    return;
-  }
+  const [user] = await db
+    .update(usersTable)
+    .set({ apiKeyHash: null, apiKeyPrefix: null, apiKeyLastUsedAt: null })
+    .where(eq(usersTable.id, userId))
+    .returning({ id: usersTable.id });
 
-  const [client] = await db
-    .update(apiClientsTable)
-    .set({ creditBalance: sql`credit_balance + ${amount.toFixed(2)}::numeric` })
-    .where(eq(apiClientsTable.id, id))
-    .returning();
+  if (!user) { res.status(404).json({ error: "User not found" }); return; }
 
-  if (!client) { res.status(404).json({ error: "API client not found" }); return; }
-  res.json(formatApiClient(client));
-});
-
-// Delete an API client
-router.delete("/admin/api-clients/:id", requireAdmin, async (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
-
-  const [deleted] = await db
-    .delete(apiClientsTable)
-    .where(eq(apiClientsTable.id, id))
-    .returning({ id: apiClientsTable.id });
-
-  if (!deleted) { res.status(404).json({ error: "API client not found" }); return; }
   res.json({ success: true });
 });
 
-// List orders for a specific API client
+// List recent orders for a specific API user
 router.get("/admin/api-clients/:id/orders", requireAdmin, async (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  const userId = parseInt(req.params.id as string, 10);
+  if (isNaN(userId)) { res.status(400).json({ error: "Invalid userId" }); return; }
 
   const { page, pageSize, offset } = parsePage(req.query as Record<string, unknown>);
 
   const [{ total }] = await db
     .select({ total: count() })
-    .from(apiOrdersTable)
-    .where(eq(apiOrdersTable.apiClientId, id));
+    .from(ordersTable)
+    .where(eq(ordersTable.userId, userId));
 
-  const orders = await db
-    .select()
-    .from(apiOrdersTable)
-    .where(eq(apiOrdersTable.apiClientId, id))
-    .orderBy(desc(apiOrdersTable.createdAt))
+  const rows = await db
+    .select({ order: ordersTable, network: bundlesTable.network })
+    .from(ordersTable)
+    .leftJoin(bundlesTable, eq(bundlesTable.id, ordersTable.bundleId))
+    .where(eq(ordersTable.userId, userId))
+    .orderBy(desc(ordersTable.createdAt))
     .limit(pageSize)
     .offset(offset);
 
   res.json({
-    orders: orders.map(o => ({
-      id:            o.id,
-      reference:     o.reference,
-      bundleName:    o.bundleName,
-      bundleData:    o.bundleData,
-      bundleNetwork: o.bundleNetwork,
-      phoneNumber:   o.phoneNumber,
-      price:         o.price,
-      status:        o.status,
-      mcbisReference: o.mcbisReference,
-      createdAt:     o.createdAt.toISOString(),
+    orders: rows.map(({ order: o, network }) => ({
+      id:          o.id,
+      bundleName:  o.bundleName,
+      bundleData:  o.bundleData,
+      network:     network ?? null,
+      phoneNumber: o.phoneNumber,
+      price:       o.price,
+      status:      o.status,
+      createdAt:   o.createdAt.toISOString(),
     })),
     total,
     page,

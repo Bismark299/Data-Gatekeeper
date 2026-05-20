@@ -14,6 +14,9 @@ export const usersTable = pgTable("users", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
   deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  apiKeyHash:      text("api_key_hash").unique(),
+  apiKeyPrefix:    text("api_key_prefix"),
+  apiKeyLastUsedAt: timestamp("api_key_last_used_at", { withTimezone: true }),
 });
 
 export const insertUserSchema = createInsertSchema(usersTable).omit({
@@ -21,6 +24,9 @@ export const insertUserSchema = createInsertSchema(usersTable).omit({
   createdAt: true,
   updatedAt: true,
   deletedAt: true,
+  apiKeyHash: true,
+  apiKeyPrefix: true,
+  apiKeyLastUsedAt: true,
 });
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof usersTable.$inferSelect;
