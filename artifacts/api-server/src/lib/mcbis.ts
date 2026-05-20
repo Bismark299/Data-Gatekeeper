@@ -16,7 +16,7 @@
  *   DATAHUB_API_URL   — Base URL for McbisSolution API (default: https://datahub.mcbissolution.com/api/v1)
  */
 
-import { eq, and, isNotNull, isNull, inArray, lt } from "drizzle-orm";
+import { eq, and, isNotNull, isNull, inArray } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import axios from "axios";
 import { db, settingsTable, ordersTable, storeOrdersTable, bundlesTable, storesTable } from "@workspace/db";
@@ -274,7 +274,6 @@ export function startMcbisPoller(): void {
   const RETRY_CAP             = 5;       // max new dispatch attempts per cycle
   const STATUS_DELAY_MS       = 100;     // ms between status-check calls
   const DISPATCH_DELAY_MS     = 500;     // ms between dispatch calls
-  const GRACE_PERIOD_MS       = 30 * 1000;             // 30 s — don't retry brand-new orders
 
   const poll = async () => {
     if (_pollRunning) return; // skip if previous cycle still running
@@ -282,9 +281,6 @@ export function startMcbisPoller(): void {
     try {
       const { enabled, autoSync, apiKey } = await getMcbisSettings();
       if (!enabled || !autoSync || !apiKey) return; // toggle-gated
-
-      const now             = Date.now();
-      const graceThreshold  = new Date(now - GRACE_PERIOD_MS);
 
       // ── 1. Check status of processing platform orders (cap 30, 100 ms apart) ──
       const platformProcessing = await db
@@ -366,7 +362,6 @@ export function startMcbisPoller(): void {
           eq(ordersTable.status, "pending"),
           isNull(ordersTable.mcbisReference),
           eq(bundlesTable.network, "mtn"),
-          lt(ordersTable.createdAt, graceThreshold), // 5-min grace: skip brand-new orders
         ))
         .orderBy(ordersTable.createdAt)
         .limit(RETRY_CAP);
@@ -405,7 +400,6 @@ export function startMcbisPoller(): void {
           eq(storeOrdersTable.status, "paid"),
           isNull(storeOrdersTable.mcbisReference),
           eq(storeOrdersTable.bundleNetwork, "mtn"),
-          lt(storeOrdersTable.createdAt, graceThreshold),
         ))
         .orderBy(storeOrdersTable.createdAt)
         .limit(RETRY_CAP);

@@ -4,6 +4,7 @@ import { requireAuth } from "../middlewares/auth";
 import { eq, and } from "drizzle-orm";
 import { AddToCartBody } from "@workspace/api-zod";
 import { getOrCreateWallet, insertLedgerEntry } from "./wallet";
+import { dispatchToMcbis } from "../lib/mcbis";
 
 const router = Router();
 
@@ -123,7 +124,7 @@ router.post("/checkout", requireAuth, async (req, res) => {
 
   await getOrCreateWallet(userId);
 
-  let result: { orders: object[]; totalCharged: number; remainingBalance: number };
+  let result: { orders: object[]; totalCharged: number; remainingBalance: number; _dispatch: { orderId: number; network: string; phone: string; bundleData: string }[] };
 
   try {
     result = await db.transaction(async (tx) => {
@@ -144,6 +145,7 @@ router.post("/checkout", requireAuth, async (req, res) => {
           createdAt: cartItemsTable.createdAt,
           bundleName: bundlesTable.name,
           bundleData: bundlesTable.dataAmount,
+          bundleNetwork: bundlesTable.network,
           basePrice:   bundlesTable.price,
           agentPrice:  bundlesTable.agentPrice,
           dealerPrice: bundlesTable.dealerPrice,
@@ -239,6 +241,12 @@ router.post("/checkout", requireAuth, async (req, res) => {
         })),
         totalCharged: total,
         remainingBalance: parseFloat(newBalance),
+        _dispatch: orders.map((o, i) => ({
+          orderId:    o.id,
+          network:    resolvedItems[i]?.bundleNetwork ?? "",
+          phone:      o.phoneNumber,
+          bundleData: o.bundleData,
+        })),
       };
     });
   } catch (err: unknown) {
@@ -247,7 +255,21 @@ router.post("/checkout", requireAuth, async (req, res) => {
     return;
   }
 
-  res.json(result);
+  // Fire-and-forget: dispatch each order to McBIS immediately after checkout
+  const { _dispatch, ...responseResult } = result;
+  _dispatch.forEach(({ orderId, network, phone, bundleData }) => {
+    dispatchToMcbis({ orderId, network, phone, bundleData })
+      .then(async (outcome) => {
+        if (outcome.dispatched) {
+          await db.update(ordersTable)
+            .set({ status: "processing", mcbisReference: outcome.reference })
+            .where(eq(ordersTable.id, orderId));
+        }
+      })
+      .catch(() => {});
+  });
+
+  res.json(responseResult);
 });
 
 export { router as cartRouter };

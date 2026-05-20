@@ -91,6 +91,20 @@ router.post("/orders", requireAdmin, async (req, res): Promise<void> => {
     })
     .returning();
 
+  // Fire-and-forget McBIS dispatch
+  dispatchToMcbis({
+    orderId:    order.id,
+    network:    bundle.network,
+    phone:      order.phoneNumber,
+    bundleData: order.bundleData,
+  }).then(async (outcome) => {
+    if (outcome.dispatched) {
+      await db.update(ordersTable)
+        .set({ status: "processing", mcbisReference: outcome.reference })
+        .where(eq(ordersTable.id, order.id));
+    }
+  }).catch(() => {});
+
   res.status(201).json(formatOrder(order));
 });
 
@@ -196,9 +210,7 @@ router.post("/orders/purchase", requireAuth, async (req, res): Promise<void> => 
     return;
   }
 
-  res.status(201).json(formatOrder(order));
-
-  // Auto-dispatch MTN orders to McbisSolution (fire-and-forget after response)
+  // Fire-and-forget McBIS dispatch
   dispatchToMcbis({
     orderId:    order.id,
     network:    bundle.network,
@@ -206,13 +218,13 @@ router.post("/orders/purchase", requireAuth, async (req, res): Promise<void> => 
     bundleData: order.bundleData,
   }).then(async (outcome) => {
     if (outcome.dispatched) {
-      // Accepted by McbisSolution → mark processing and store reference for polling
       await db.update(ordersTable)
         .set({ status: "processing", mcbisReference: outcome.reference })
         .where(eq(ordersTable.id, order.id));
     }
-    // dispatched=false → leave as "pending" (admin handles manually)
-  }).catch(() => {/* non-fatal */});
+  }).catch(() => {});
+
+  res.status(201).json(formatOrder(order));
 });
 
 // ─── BULK ORDER ──────────────────────────────────────────────────────────────
