@@ -1,4 +1,4 @@
-import { Switch, Route, Router as WouterRouter } from "wouter";
+import { Switch, Route, Router as WouterRouter, Redirect } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -29,36 +29,9 @@ import Shop from "@/pages/shop";
 import StoreManager from "@/pages/store-manager";
 import PublicStore from "@/pages/public-store";
 import Profile from "@/pages/profile";
-import Landing from "@/pages/landing";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { CheckoutSuccessDialog } from "@/components/CheckoutSuccessDialog";
 import { useCart } from "@/context/CartContext";
-import { useAuth } from "@/context/AuthContext";
-import { useLocation } from "wouter";
-import { useEffect } from "react";
-
-function HomeRoute() {
-  const { isAuthenticated, isAdmin, isLoading } = useAuth();
-  const [, setLocation] = useLocation();
-
-  useEffect(() => {
-    if (!isLoading && isAuthenticated) {
-      setLocation(isAdmin ? "/admin" : "/dashboard");
-    }
-  }, [isAuthenticated, isAdmin, isLoading, setLocation]);
-
-  if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <div className="w-8 h-8 border-4 border-primary/30 border-t-primary rounded-full animate-spin" />
-      </div>
-    );
-  }
-
-  if (isAuthenticated) return null;
-
-  return <Landing />;
-}
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -78,7 +51,7 @@ const queryClient = new QueryClient({
 function Router() {
   return (
     <Switch>
-      <Route path="/" component={HomeRoute} />
+      <Route path="/">{() => <Redirect to="/login" />}</Route>
       <Route path="/login" component={Login} />
       <Route path="/register" component={Register} />
       <Route path="/bundles">{() => <ProtectedRoute><Bundles /></ProtectedRoute>}</Route>
