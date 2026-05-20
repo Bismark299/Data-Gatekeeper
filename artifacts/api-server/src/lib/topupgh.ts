@@ -491,6 +491,13 @@ export function startTopupghPoller(): void {
     _pollRunning = true;
     try {
       const { enabled, apiKey, apiSecret } = await getTopupghSettings();
+
+      // Always check in-flight batches even when disabled — protects orders already
+      // sent to TopUpGH before the switch, in case a webhook was missed.
+      if (apiKey && apiSecret) {
+        await checkProcessingBatches();
+      }
+
       if (!enabled || !apiKey || !apiSecret) return;
 
       // Drain the pending queue — dispatch sequential sub-batches until empty or below minBatch
@@ -511,9 +518,6 @@ export function startTopupghPoller(): void {
           break;
         }
       }
-
-      // Backup status checks for stuck processing batches
-      await checkProcessingBatches();
 
     } catch (e) {
       logger.error({ err: e }, "TopUpGH poller error");
