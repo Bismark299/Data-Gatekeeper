@@ -15,7 +15,7 @@ import { useToast } from "@/hooks/use-toast";
 const registerSchema = z.object({
   name: z.string().min(2, "Name must be at least 2 characters"),
   email: z.string().email("Valid email required"),
-  phone: z.string().min(10, "Phone number is required"),
+  phone: z.string().regex(/^\d{10}$/, "Phone number must be exactly 10 digits"),
   password: z.string().min(6, "Password must be at least 6 characters"),
   confirmPassword: z.string(),
 }).refine(d => d.password === d.confirmPassword, {
@@ -80,7 +80,19 @@ export default function Register() {
 
             <div className="space-y-1.5">
               <Label htmlFor="phone">Phone number</Label>
-              <Input id="phone" type="tel" placeholder="+1234567890" {...register("phone")} data-testid="input-phone" />
+              <Input
+                id="phone"
+                type="tel"
+                inputMode="numeric"
+                placeholder="0XXXXXXXXX"
+                maxLength={10}
+                {...register("phone")}
+                onChange={(e) => {
+                  e.target.value = e.target.value.replace(/\D/g, "").slice(0, 10);
+                  register("phone").onChange(e);
+                }}
+                data-testid="input-phone"
+              />
               {errors.phone && <p className="text-xs text-destructive">{errors.phone.message}</p>}
             </div>
 
