@@ -94,13 +94,12 @@ Contact your account manager or email **support@databundle.com**.
         type: "object",
         properties: {
           id:           { type: "integer", example: 3 },
-          name:         { type: "string",  example: "MTN 5GB Monthly" },
-          description:  { type: "string",  example: "5GB data valid for 30 days" },
+          name:         { type: "string",  example: "MTN 5GB" },
+          description:  { type: "string",  example: "5GB data bundle" },
           dataAmount:   { type: "string",  example: "5GB" },
           validityDays: { type: "integer", example: 30 },
-          price:        { type: "string",  example: "15.00", description: "Price in GH₵ (your role's rate)" },
+          price:        { type: "string",  example: "15.00", description: "Price in GH₵ (based on your account role)" },
           network:      { type: "string",  example: "mtn", enum: ["mtn", "telecel", "at-ishare", "at-bigtime"] },
-          category:     { type: "string",  example: "Monthly" },
         },
       },
       OrderRequest: {
@@ -158,13 +157,6 @@ Contact your account manager or email **support@databundle.com**.
             required: false,
             description: "Filter by network",
             schema: { type: "string", enum: ["mtn", "telecel", "at-ishare", "at-bigtime"] },
-          },
-          {
-            name: "category",
-            in: "query",
-            required: false,
-            description: "Filter by category (e.g. Daily, Weekly, Monthly)",
-            schema: { type: "string" },
           },
         ],
         responses: {
@@ -392,7 +384,6 @@ router.get("/bundles", async (req, res) => {
           validityDays: b.validityDays,
           price:        effectivePrice ?? b.price,
           network:      b.network,
-          category:     b.category,
         };
       }),
       total: bundles.length,
