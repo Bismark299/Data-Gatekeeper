@@ -2,29 +2,11 @@ import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Navbar } from "@/components/Navbar";
-import { useListBundles } from "@workspace/api-client-react";
-import { Wifi, Zap, Shield, Headphones, ArrowRight } from "lucide-react";
+import { Wifi, ArrowRight } from "lucide-react";
 
 const WA_CHANNEL = "https://whatsapp.com/channel/0029Vb8GspW4CrfcOKiWBX1u";
 
-const NETWORK_COLORS: Record<string, { bg: string; text: string; label: string }> = {
-  mtn:          { bg: "bg-yellow-400",  text: "text-gray-900", label: "MTN" },
-  telecel:      { bg: "bg-red-600",     text: "text-white",    label: "Telecel" },
-  "at-ishare":  { bg: "bg-blue-600",    text: "text-white",    label: "AT iShare" },
-  "at-bigtime": { bg: "bg-green-700",   text: "text-white",    label: "AT Big-Time" },
-};
-
-const features = [
-  { icon: Zap, title: "Instant Activation", desc: "Your data bundle activates within seconds of purchase." },
-  { icon: Shield, title: "Secure Payments", desc: "Bank-grade security protects every transaction." },
-  { icon: Headphones, title: "24/7 Support", desc: "Our team is always ready to help you stay connected." },
-  { icon: Wifi, title: "Wide Coverage", desc: "Nationwide network coverage for uninterrupted connectivity." },
-];
-
 export default function Landing() {
-  const { data: bundles } = useListBundles({});
-  const featuredBundles = bundles?.slice(0, 3) ?? [];
-
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <Navbar />
@@ -52,71 +34,6 @@ export default function Landing() {
                 Create Account
               </Button>
             </Link>
-          </div>
-        </div>
-      </section>
-
-      <section className="py-16 bg-background">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-12">
-            <h2 className="text-2xl md:text-3xl font-bold text-foreground mb-3">Popular Plans</h2>
-            <p className="text-muted-foreground">Most-loved bundles by our customers</p>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {featuredBundles.map((bundle, i) => {
-              const net = NETWORK_COLORS[bundle.network ?? ""] ?? { bg: "bg-primary", text: "text-white", label: bundle.network ?? "" };
-              return (
-                <div
-                  key={bundle.id}
-                  className="relative rounded-2xl border border-border bg-card overflow-hidden flex flex-col transition-all hover:shadow-lg"
-                  data-testid={`card-bundle-${bundle.id}`}
-                >
-                  {i === 1 && (
-                    <div className="absolute top-3 right-3 z-10">
-                      <Badge className="bg-primary text-primary-foreground">Most Popular</Badge>
-                    </div>
-                  )}
-                  <div className={`${net.bg} ${net.text} px-5 py-4`}>
-                    <div className={`text-xs font-bold uppercase tracking-widest opacity-70 mb-1`}>{net.label}</div>
-                    <div className="text-3xl font-extrabold">{bundle.dataAmount}</div>
-                  </div>
-                  <div className="p-5 flex flex-col flex-1 gap-4">
-                    <div className="text-2xl font-extrabold text-foreground">GH₵{bundle.price}</div>
-                    <Link href="/bundles" className="mt-auto">
-                      <Button className="w-full" variant={i === 1 ? "default" : "outline"} data-testid={`button-select-${bundle.id}`}>
-                        Get This Plan
-                      </Button>
-                    </Link>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          <div className="text-center mt-8">
-            <Link href="/bundles">
-              <Button variant="ghost" className="gap-2" data-testid="button-view-all">
-                View all plans <ArrowRight className="w-4 h-4" />
-              </Button>
-            </Link>
-          </div>
-        </div>
-      </section>
-
-      <section className="py-16 bg-muted/30">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-12">
-            <h2 className="text-2xl md:text-3xl font-bold text-foreground mb-3">Why Choose DataBundle</h2>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-            {features.map((f) => (
-              <div key={f.title} className="bg-card rounded-2xl border border-border p-6 flex flex-col gap-3 hover:shadow-md transition-shadow">
-                <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
-                  <f.icon className="w-5 h-5 text-primary" />
-                </div>
-                <h3 className="font-semibold text-foreground">{f.title}</h3>
-                <p className="text-sm text-muted-foreground">{f.desc}</p>
-              </div>
-            ))}
           </div>
         </div>
       </section>
