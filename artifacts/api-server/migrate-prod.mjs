@@ -12,6 +12,15 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejec
 await pool.query("ALTER TABLE deposits ALTER COLUMN user_id DROP NOT NULL");
 console.log("✓ deposits.user_id is now nullable");
 
+// Add API key columns to users table (idempotent)
+await pool.query(`
+  ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS api_key_hash TEXT UNIQUE,
+    ADD COLUMN IF NOT EXISTS api_key_prefix TEXT,
+    ADD COLUMN IF NOT EXISTS api_key_last_used_at TIMESTAMPTZ
+`);
+console.log("✓ users api_key columns exist");
+
 // Ensure settings table exists
 await pool.query(`
   CREATE TABLE IF NOT EXISTS settings (
