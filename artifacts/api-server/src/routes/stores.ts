@@ -808,7 +808,11 @@ router.get("/admin/stores/:storeId/orders", requireAuth, async (req, res) => {
     paystackReference: storeOrdersTable.paystackReference,
     createdAt: storeOrdersTable.createdAt,
   }).from(storeOrdersTable)
-    .where(eq(storeOrdersTable.storeId, storeId))
+    .where(and(
+      eq(storeOrdersTable.storeId, storeId),
+      // Hide orders where payment was never initiated (pending + no paystack ref)
+      ne(storeOrdersTable.paystackReference, ""),
+    ))
     .orderBy(desc(storeOrdersTable.id));
 
   res.json(rows.map(o => ({

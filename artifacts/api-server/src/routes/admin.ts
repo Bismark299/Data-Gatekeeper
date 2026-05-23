@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import {
-  eq, count, sum, desc, gte, and, ilike, inArray, isNull, isNotNull, lt,
+  eq, count, sum, desc, gte, and, ilike, inArray, isNull, isNotNull, lt, ne,
   type SQL, sql,
 } from "drizzle-orm";
 import {
@@ -1018,19 +1018,23 @@ router.get("/admin/agents/:userId", requireAdmin, async (req, res): Promise<void
 
   const storeOrders = store
     ? await db.select({
-        id:            storeOrdersTable.id,
-        bundleName:    storeOrdersTable.bundleName,
-        bundleData:    storeOrdersTable.bundleData,
-        bundleNetwork: storeOrdersTable.bundleNetwork,
-        customerPhone: storeOrdersTable.customerPhone,
-        customerEmail: storeOrdersTable.customerEmail,
-        sellingPrice:  storeOrdersTable.sellingPrice,
-        profit:        storeOrdersTable.profit,
-        status:        storeOrdersTable.status,
-        createdAt:     storeOrdersTable.createdAt,
+        id:                storeOrdersTable.id,
+        bundleName:        storeOrdersTable.bundleName,
+        bundleData:        storeOrdersTable.bundleData,
+        bundleNetwork:     storeOrdersTable.bundleNetwork,
+        customerPhone:     storeOrdersTable.customerPhone,
+        customerEmail:     storeOrdersTable.customerEmail,
+        sellingPrice:      storeOrdersTable.sellingPrice,
+        profit:            storeOrdersTable.profit,
+        status:            storeOrdersTable.status,
+        paystackReference: storeOrdersTable.paystackReference,
+        createdAt:         storeOrdersTable.createdAt,
       })
       .from(storeOrdersTable)
-      .where(eq(storeOrdersTable.storeId, store.id))
+      .where(and(
+        eq(storeOrdersTable.storeId, store.id),
+        ne(storeOrdersTable.paystackReference, ""),
+      ))
       .orderBy(desc(storeOrdersTable.id))
       .limit(200)
     : [];
@@ -1068,16 +1072,17 @@ router.get("/admin/agents/:userId", requireAdmin, async (req, res): Promise<void
       createdAt: d.createdAt.toISOString(),
     })),
     storeOrders: storeOrders.map(o => ({
-      id: o.id,
-      bundleName:    o.bundleName,
-      bundleData:    o.bundleData,
-      bundleNetwork: o.bundleNetwork,
-      customerPhone: o.customerPhone,
-      customerEmail: o.customerEmail,
-      sellingPrice:  Number(o.sellingPrice),
-      profit:        Number(o.profit),
-      status:        o.status,
-      createdAt:     o.createdAt.toISOString(),
+      id:                o.id,
+      bundleName:        o.bundleName,
+      bundleData:        o.bundleData,
+      bundleNetwork:     o.bundleNetwork,
+      customerPhone:     o.customerPhone,
+      customerEmail:     o.customerEmail,
+      sellingPrice:      Number(o.sellingPrice),
+      profit:            Number(o.profit),
+      status:            o.status,
+      paystackReference: o.paystackReference,
+      createdAt:         o.createdAt.toISOString(),
     })),
     store: store ? { id: store.id, name: store.name, slug: store.slug, isActive: store.isActive } : null,
   });

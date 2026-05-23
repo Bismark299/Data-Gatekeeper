@@ -252,7 +252,7 @@ function AdminStoresContent() {
                       <table className="w-full text-sm">
                         <thead>
                           <tr className="border-b border-border bg-muted/20">
-                            {([["#","hidden sm:table-cell"],["Data",""],["Network","hidden sm:table-cell"],["Phone",""],["Revenue","hidden sm:table-cell"],["Profit","hidden sm:table-cell"],["Status",""],["Date","hidden sm:table-cell"],["Actions",""]] as [string,string][]).map(([h,cls]) => (
+                            {([["#","hidden sm:table-cell"],["Data",""],["Network","hidden sm:table-cell"],["Phone",""],["Revenue","hidden sm:table-cell"],["Profit","hidden sm:table-cell"],["Status",""],["Paystack Ref","hidden md:table-cell"],["Date","hidden sm:table-cell"],["Actions",""]] as [string,string][]).map(([h,cls]) => (
                               <th key={h} className={`text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap ${cls}`}>{h}</th>
                             ))}
                           </tr>
@@ -277,6 +277,9 @@ function AdminStoresContent() {
                                   <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${STATUS_COLORS[o.status] ?? ""}`}>
                                     {o.status}
                                   </span>
+                                </td>
+                                <td className="hidden md:table-cell px-4 py-3 font-mono text-[10px] text-muted-foreground max-w-[140px] truncate" title={o.paystackReference || undefined}>
+                                  {o.paystackReference || <span className="italic opacity-50">—</span>}
                                 </td>
                                 <td className="hidden sm:table-cell px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(o.createdAt)}</td>
                                 <td className="px-4 py-3">
