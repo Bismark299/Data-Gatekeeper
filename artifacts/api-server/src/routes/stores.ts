@@ -556,26 +556,8 @@ router.post("/s/:slug/checkout", async (req, res) => {
   const reference = `STORE-${store.id}-${Date.now()}`;
   const callbackUrl = `${DOMAIN}/s/${slug}?ref=${reference}`;
 
-  // Create pending store_order first
-  const [storeOrder] = await db.insert(storeOrdersTable).values({
-    storeId: store.id,
-    storeBundleId: sb.id,
-    bundleId: bundle.id,
-    bundleName: bundle.name,
-    bundleData: bundle.dataAmount,
-    bundleNetwork: bundle.network,
-    bundleValidityDays: bundle.validityDays,
-    customerPhone: parsed.data.customerPhone,
-    customerEmail: parsed.data.customerEmail,
-    sellingPrice: sellingPrice.toFixed(2),
-    basePrice: basePrice.toFixed(2),
-    agentCost: agentCost.toFixed(2),
-    profit: profit.toFixed(2),
-    paystackReference: reference,
-    status: "pending",
-  }).returning();
-
-  // Initialize Paystack
+  // Order record is NOT created here — only created at verify/webhook time.
+  // Customers who open Paystack and cancel/close without paying leave no trace.
   const paystackRes = await fetch("https://api.paystack.co/transaction/initialize", {
     method: "POST",
     headers: {
@@ -587,11 +569,21 @@ router.post("/s/:slug/checkout", async (req, res) => {
       amount: Math.round(chargedPrice * 100),
       reference,
       callback_url: callbackUrl,
+      // Store all order data in metadata so we can reconstruct at verify/webhook time
       metadata: {
-        storeOrderId: storeOrder.id,
-        storeId: store.id,
-        bundleName: bundle.name,
-        customerPhone: parsed.data.customerPhone,
+        storeId:            store.id,
+        storeBundleId:      sb.id,
+        bundleId:           bundle.id,
+        bundleName:         bundle.name,
+        bundleData:         bundle.dataAmount,
+        bundleNetwork:      bundle.network,
+        bundleValidityDays: bundle.validityDays,
+        customerPhone:      parsed.data.customerPhone,
+        customerEmail:      parsed.data.customerEmail ?? null,
+        sellingPrice:       sellingPrice.toFixed(2),
+        basePrice:          basePrice.toFixed(2),
+        agentCost:          agentCost.toFixed(2),
+        profit:             profit.toFixed(2),
       },
     }),
   });
@@ -599,7 +591,7 @@ router.post("/s/:slug/checkout", async (req, res) => {
   const psData = await paystackRes.json() as { status: boolean; data?: { authorization_url: string; access_code: string } };
   if (!psData.status) { res.status(502).json({ error: "Payment gateway error. Please try again." }); return; }
 
-  res.json({ authorizationUrl: psData.data!.authorization_url, reference, storeOrderId: storeOrder.id });
+  res.json({ authorizationUrl: psData.data!.authorization_url, reference, storeOrderId: null });
 });
 
 router.get("/s/:slug/orders", async (req, res) => {
@@ -638,55 +630,88 @@ router.post("/s/:slug/verify", async (req, res) => {
   const { ref } = req.body as { ref?: string };
   if (!ref) { res.status(400).json({ error: "Reference required" }); return; }
 
-  // Quick existence check outside the transaction (avoids holding locks during the Paystack call)
+  // Quick existence check — may be null if this is the first call after payment
   const [preCheck] = await db.select({ id: storeOrdersTable.id, status: storeOrdersTable.status })
     .from(storeOrdersTable).where(eq(storeOrdersTable.paystackReference, ref));
-  if (!preCheck) { res.status(404).json({ error: "Order not found" }); return; }
 
-  // If already fully processed, return immediately without locking
-  if (preCheck.status === "completed") {
+  // Already fully processed — return immediately
+  if (preCheck?.status === "completed") {
     const [order] = await db.select().from(storeOrdersTable).where(eq(storeOrdersTable.id, preCheck.id));
     res.json(formatStoreOrder(order));
     return;
   }
 
-  // Verify payment with Paystack (network call — outside the DB transaction to avoid long-held locks)
+  // Verify payment with Paystack (network call — outside DB transaction to avoid long-held locks)
   const psRes = await fetch(`https://api.paystack.co/transaction/verify/${ref}`, {
     headers: { Authorization: `Bearer ${PAYSTACK_SECRET}` },
   });
-  const psData = await psRes.json() as { status: boolean; data?: { status: string; amount: number } };
+  type StoreOrderMeta = {
+    storeId: number; storeBundleId: number; bundleId: number;
+    bundleName: string; bundleData: string; bundleNetwork: string; bundleValidityDays: number;
+    customerPhone: string; customerEmail: string | null;
+    sellingPrice: string; basePrice: string; agentCost: string; profit: string;
+  };
+  const psData = await psRes.json() as {
+    status: boolean;
+    data?: { status: string; amount: number; metadata?: StoreOrderMeta };
+  };
 
   if (!psData.status || psData.data?.status !== "success") {
-    // Mark order as cancelled so it doesn't linger as "pending" in the owner's view
-    await db.update(storeOrdersTable)
-      .set({ status: "cancelled" })
-      .where(and(eq(storeOrdersTable.id, preCheck.id), eq(storeOrdersTable.status, "pending")));
+    // Payment failed/cancelled — if a record somehow exists, cancel it
+    if (preCheck) {
+      await db.update(storeOrdersTable)
+        .set({ status: "cancelled" })
+        .where(and(eq(storeOrdersTable.id, preCheck.id), eq(storeOrdersTable.status, "pending")));
+    }
     res.status(402).json({ error: "Payment not successful" });
     return;
   }
 
-  // Atomically transition to "paid" — FOR UPDATE prevents two concurrent
-  // successful verifications from both writing, ensuring exactly-once transition.
+  // Payment confirmed — create or transition the order record atomically.
+  // onConflictDoNothing handles the webhook + verify race (both may fire simultaneously).
   const updated = await db.transaction(async (tx) => {
-    const [locked] = await tx
-      .select()
-      .from(storeOrdersTable)
-      .where(eq(storeOrdersTable.id, preCheck.id))
-      .for("update");
+    if (!preCheck) {
+      // First time we learn of this payment — create the record now from metadata
+      const meta = psData.data!.metadata;
+      if (!meta?.storeId) return null;
+      const [created] = await tx.insert(storeOrdersTable).values({
+        storeId:            meta.storeId,
+        storeBundleId:      meta.storeBundleId,
+        bundleId:           meta.bundleId,
+        bundleName:         meta.bundleName,
+        bundleData:         meta.bundleData,
+        bundleNetwork:      meta.bundleNetwork,
+        bundleValidityDays: meta.bundleValidityDays,
+        customerPhone:      meta.customerPhone,
+        customerEmail:      meta.customerEmail ?? undefined,
+        sellingPrice:       meta.sellingPrice,
+        basePrice:          meta.basePrice,
+        agentCost:          meta.agentCost,
+        profit:             meta.profit,
+        paystackReference:  ref,
+        status:             "paid",
+      }).onConflictDoNothing().returning();
+      if (!created) {
+        // Webhook beat us — fetch the record it created
+        const [existing] = await tx.select().from(storeOrdersTable).where(eq(storeOrdersTable.paystackReference, ref));
+        return existing ?? null;
+      }
+      return created;
+    }
 
+    // Record already exists — lock and transition from pending → paid
+    const [locked] = await tx.select().from(storeOrdersTable)
+      .where(eq(storeOrdersTable.id, preCheck.id)).for("update");
     if (!locked) return null;
-    // Any status other than "pending" means payment was already handled
     if (locked.status !== "pending") return locked;
-
-    const [u] = await tx
-      .update(storeOrdersTable)
+    const [u] = await tx.update(storeOrdersTable)
       .set({ status: "paid" })
       .where(eq(storeOrdersTable.id, locked.id))
       .returning();
     return u;
   });
 
-  if (!updated) { res.status(404).json({ error: "Order not found" }); return; }
+  if (!updated) { res.status(500).json({ error: "Order could not be created" }); return; }
   res.json(formatStoreOrder(updated));
 
   // Dispatch only for freshly-paid orders (status just became "paid")
@@ -699,39 +724,82 @@ router.post("/s/:slug/verify", async (req, res) => {
       isStoreOrder: true,
     }).then(async (outcome) => {
       if (outcome.dispatched) {
-        // Payment confirmed + McbisSolution accepted → now truly "processing"
         await db.update(storeOrdersTable)
           .set({ status: "processing", mcbisReference: outcome.reference })
           .where(eq(storeOrdersTable.id, updated.id));
       }
-      // not dispatched → stays "paid"; poller will retry every 30 s
     }).catch(() => {/* non-fatal */});
   }
 });
 
 // ─── PAYSTACK WEBHOOK (store orders) ─────────────────────────────────────────
 
+type StoreOrderMeta = {
+  storeId: number; storeBundleId: number; bundleId: number;
+  bundleName: string; bundleData: string; bundleNetwork: string; bundleValidityDays: number;
+  customerPhone: string; customerEmail: string | null;
+  sellingPrice: string; basePrice: string; agentCost: string; profit: string;
+};
+
 // Exported for the unified /api/paystack/webhook handler in index.ts
-export async function handleStorePaystackWebhook(body: { event: string; data: { reference: string; status: string; amount: number } }) {
+export async function handleStorePaystackWebhook(body: {
+  event: string;
+  data: { reference: string; status: string; amount: number; metadata?: StoreOrderMeta };
+}) {
   const { event, data } = body;
   if (event !== "charge.success" || !data.reference.startsWith("STORE-")) return;
 
-  const [storeOrder] = await db.select().from(storeOrdersTable).where(eq(storeOrdersTable.paystackReference, data.reference));
-  if (!storeOrder || storeOrder.status !== "pending") return;
+  const [existing] = await db.select().from(storeOrdersTable).where(eq(storeOrdersTable.paystackReference, data.reference));
 
-  await db.update(storeOrdersTable).set({ status: "paid" }).where(eq(storeOrdersTable.id, storeOrder.id));
+  // Already beyond pending — verify route handled it or it completed normally
+  if (existing && existing.status !== "pending") return;
+
+  let order = existing ?? null;
+
+  if (!order) {
+    // Order was never created (customer paid without returning to site first)
+    const meta = data.metadata;
+    if (!meta?.storeId) return;
+    const [created] = await db.insert(storeOrdersTable).values({
+      storeId:            meta.storeId,
+      storeBundleId:      meta.storeBundleId,
+      bundleId:           meta.bundleId,
+      bundleName:         meta.bundleName,
+      bundleData:         meta.bundleData,
+      bundleNetwork:      meta.bundleNetwork,
+      bundleValidityDays: meta.bundleValidityDays,
+      customerPhone:      meta.customerPhone,
+      customerEmail:      meta.customerEmail ?? undefined,
+      sellingPrice:       meta.sellingPrice,
+      basePrice:          meta.basePrice,
+      agentCost:          meta.agentCost,
+      profit:             meta.profit,
+      paystackReference:  data.reference,
+      status:             "paid",
+    }).onConflictDoNothing().returning();
+    if (!created) return; // verify route beat us to it
+    order = created;
+  } else {
+    // Existing pending order — transition to paid
+    const [updated] = await db.update(storeOrdersTable)
+      .set({ status: "paid" })
+      .where(and(eq(storeOrdersTable.id, order.id), eq(storeOrdersTable.status, "pending")))
+      .returning();
+    if (!updated) return;
+    order = updated;
+  }
 
   dispatchToMcbis({
-    orderId:      storeOrder.id,
-    network:      storeOrder.bundleNetwork,
-    phone:        storeOrder.customerPhone,
-    bundleData:   storeOrder.bundleData,
+    orderId:      order.id,
+    network:      order.bundleNetwork,
+    phone:        order.customerPhone,
+    bundleData:   order.bundleData,
     isStoreOrder: true,
   }).then(async (outcome) => {
     if (outcome.dispatched) {
       await db.update(storeOrdersTable)
         .set({ status: "processing", mcbisReference: outcome.reference })
-        .where(eq(storeOrdersTable.id, storeOrder.id));
+        .where(eq(storeOrdersTable.id, order!.id));
     }
   }).catch(() => {/* non-fatal */});
 }
