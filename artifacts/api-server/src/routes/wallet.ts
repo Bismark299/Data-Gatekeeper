@@ -243,15 +243,8 @@ router.post("/paystack/initialize", requireAuth, async (req, res) => {
     return;
   }
 
-  await db.insert(depositsTable).values({
-    userId,
-    amount: amountGhs.toFixed(2),
-    status: "pending",
-    method: "paystack",
-    reference,
-    note: `Awaiting payment confirmation (charged GH₵${chargedGhs.toFixed(2)} incl. 2% fee)`,
-  });
-
+  // Deposit record is NOT created here — only created at verify/webhook time
+  // so that abandoned/unpaid flows never pollute the admin pending queue.
   res.json({
     authorizationUrl: paystackData.data.authorization_url,
     reference: paystackData.data.reference,
@@ -277,69 +270,127 @@ router.post("/paystack/verify", requireAuth, async (req, res) => {
   const userId = req.session.userId!;
   const { reference } = parsed.data;
 
-  const [deposit] = await db
+  // Check if a deposit record already exists (created by a previous verify or webhook)
+  const [existingDeposit] = await db
     .select()
     .from(depositsTable)
     .where(eq(depositsTable.reference, reference));
 
-  if (!deposit) {
-    res.status(404).json({ error: "Deposit not found" });
-    return;
+  if (existingDeposit) {
+    if (existingDeposit.userId !== userId) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
+    if (existingDeposit.status === "completed") {
+      // Webhook or prior verify already credited the wallet — just return balance
+      const wallet = await getOrCreateWallet(userId);
+      res.json({ balance: parseFloat(wallet.balance), updatedAt: wallet.updatedAt });
+      return;
+    }
   }
 
-  if (deposit.userId !== userId) {
-    res.status(403).json({ error: "Forbidden" });
-    return;
-  }
-
-  if (deposit.status === "completed") {
-    const wallet = await getOrCreateWallet(userId);
-    res.json({ balance: parseFloat(wallet.balance), updatedAt: wallet.updatedAt });
-    return;
-  }
-
+  // Ask Paystack for the ground truth
   const verifyRes = await fetch(`https://api.paystack.co/transaction/verify/${reference}`, {
     headers: { Authorization: `Bearer ${PAYSTACK_SECRET}` },
   });
 
   const verifyData = (await verifyRes.json()) as {
     status: boolean;
-    data?: { status: string; amount: number; currency: string };
+    data?: {
+      status: string;
+      amount: number; // pesewas
+      currency: string;
+      metadata?: { userId?: number; amountGhs?: number; feeGhs?: number; chargedGhs?: number };
+    };
     message?: string;
   };
 
-  if (!verifyData.status || verifyData.data?.status !== "success") {
-    // Explicitly mark the deposit as failed so it doesn't stay "pending" forever
-    if (verifyData.data?.status === "failed" || verifyData.data?.status === "abandoned") {
-      await db.update(depositsTable)
-        .set({ status: "failed", note: "Payment cancelled or failed" })
-        .where(and(eq(depositsTable.id, deposit.id), eq(depositsTable.status, "pending")));
+  const paystackStatus = verifyData.data?.status;
+
+  // Recover the wallet-credit amount (excl. fee) from metadata; fall back to deriving it
+  const amountGhs: number =
+    verifyData.data?.metadata?.amountGhs ??
+    (verifyData.data?.amount ? parseFloat((verifyData.data.amount / 100 / 1.02).toFixed(2)) : 0);
+
+  if (!verifyData.status || paystackStatus !== "success") {
+    const terminalFailure = paystackStatus === "failed" || paystackStatus === "abandoned";
+
+    if (existingDeposit) {
+      // Update an existing pending record if the payment has definitively failed
+      if (terminalFailure) {
+        await db.update(depositsTable)
+          .set({ status: "failed", note: "Payment cancelled or failed" })
+          .where(and(eq(depositsTable.id, existingDeposit.id), eq(depositsTable.status, "pending")));
+      }
+    } else if (terminalFailure && amountGhs > 0) {
+      // Payment was initiated and definitively failed — create a failed record for audit
+      await db.insert(depositsTable).values({
+        userId,
+        amount: amountGhs.toFixed(2),
+        status: "failed",
+        method: "paystack",
+        reference,
+        note: "Payment cancelled or failed",
+      }).onConflictDoNothing();
     }
+    // If no existing record and not a terminal failure: agent opened Paystack but didn't pay —
+    // do nothing; no record is created so admin sees nothing.
+
     res.status(400).json({ error: "Payment not successful yet. Please wait a moment and try again." });
     return;
   }
 
+  // Payment confirmed successful — create or update deposit and credit wallet atomically
   const wallet = await db.transaction(async (tx) => {
-    const [locked] = await tx
-      .select()
-      .from(depositsTable)
-      .where(and(eq(depositsTable.id, deposit.id), eq(depositsTable.status, "pending")))
-      .for("update");
+    if (existingDeposit) {
+      // Record already exists (created by webhook or a prior verify) — update pending → completed
+      const [locked] = await tx
+        .select()
+        .from(depositsTable)
+        .where(and(eq(depositsTable.id, existingDeposit.id), eq(depositsTable.status, "pending")))
+        .for("update");
 
-    if (!locked) {
+      if (!locked) {
+        // Another concurrent request already completed it
+        const [w] = await tx.select().from(walletsTable).where(eq(walletsTable.userId, userId));
+        return w;
+      }
+
+      await tx.update(depositsTable)
+        .set({ status: "completed", note: "Paystack payment verified" })
+        .where(eq(depositsTable.id, existingDeposit.id));
+
+      return creditWallet(userId, parseFloat(locked.amount), tx, {
+        source: "paystack",
+        reference: locked.reference ?? undefined,
+        note: `Paystack deposit of GH₵${locked.amount}`,
+      });
+    }
+
+    // No pre-existing record — create a completed deposit and credit wallet in one shot
+    const [inserted] = await tx
+      .insert(depositsTable)
+      .values({
+        userId,
+        amount: amountGhs.toFixed(2),
+        status: "completed",
+        method: "paystack",
+        reference,
+        note: "Paystack payment verified",
+      })
+      .onConflictDoNothing()
+      .returning();
+
+    if (!inserted) {
+      // Webhook fired concurrently and created the record first — wallet already credited
       const [w] = await tx.select().from(walletsTable).where(eq(walletsTable.userId, userId));
       return w;
     }
 
-    await tx
-      .update(depositsTable)
-      .set({ status: "completed", note: "Paystack payment verified" })
-      .where(eq(depositsTable.id, deposit.id));
-
-    return creditWallet(userId, parseFloat(locked.amount), tx, {
+    return creditWallet(userId, amountGhs, tx, {
       source: "paystack",
-      reference: locked.reference ?? undefined,
-      note: `Paystack deposit of GH₵${locked.amount}`,
+      reference,
+      note: `Paystack deposit of GH₵${amountGhs.toFixed(2)}`,
     });
   });
 
@@ -347,23 +398,65 @@ router.post("/paystack/verify", requireAuth, async (req, res) => {
 });
 
 // Exported for the unified /api/paystack/webhook handler in index.ts
-export async function handlePaystackWebhook(body: { event: string; data?: { reference: string; status: string } }) {
+export async function handlePaystackWebhook(body: {
+  event: string;
+  data?: {
+    reference: string;
+    status: string;
+    amount?: number; // pesewas
+    metadata?: { userId?: number; amountGhs?: number };
+  };
+}) {
   if (body.event === "charge.success" && body.data?.status === "success") {
-    const { reference } = body.data;
+    const { reference, amount: amountPesewas, metadata } = body.data;
     await db.transaction(async (tx) => {
       const [locked] = await tx
         .select()
         .from(depositsTable)
         .where(and(eq(depositsTable.reference, reference), eq(depositsTable.status, "pending")))
         .for("update");
-      if (!locked) return;
-      await tx.update(depositsTable)
-        .set({ status: "completed", note: "Auto-credited via Paystack webhook" })
-        .where(eq(depositsTable.id, locked.id));
-      await creditWallet(locked.userId, parseFloat(locked.amount), tx, {
+
+      if (locked) {
+        // Pre-existing pending record — complete it
+        await tx.update(depositsTable)
+          .set({ status: "completed", note: "Auto-credited via Paystack webhook" })
+          .where(eq(depositsTable.id, locked.id));
+        await creditWallet(locked.userId, parseFloat(locked.amount), tx, {
+          source: "paystack",
+          reference: locked.reference ?? undefined,
+          note: `Paystack webhook credit GH₵${locked.amount}`,
+        });
+        return;
+      }
+
+      // No pre-existing record (deposit not created at init time) — create it now
+      const webhookUserId = metadata?.userId;
+      if (!webhookUserId) return; // Cannot credit without knowing which user
+
+      const amountGhs: number =
+        metadata?.amountGhs ??
+        (amountPesewas ? parseFloat((amountPesewas / 100 / 1.02).toFixed(2)) : 0);
+      if (amountGhs <= 0) return;
+
+      const [inserted] = await tx
+        .insert(depositsTable)
+        .values({
+          userId: webhookUserId,
+          amount: amountGhs.toFixed(2),
+          status: "completed",
+          method: "paystack",
+          reference,
+          note: "Auto-credited via Paystack webhook",
+        })
+        .onConflictDoNothing()
+        .returning();
+
+      if (!inserted) return; // Verify route already created and completed it
+
+      await creditWallet(webhookUserId, amountGhs, tx, {
         source: "paystack",
-        reference: locked.reference ?? undefined,
-        note: `Paystack webhook credit GH₵${locked.amount}`,
+        reference,
+        note: `Paystack webhook credit GH₵${amountGhs.toFixed(2)}`,
       });
     });
   }
