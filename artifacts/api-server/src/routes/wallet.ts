@@ -464,26 +464,33 @@ export async function handlePaystackWebhook(body: {
 
 const MomoClaimBodySchema = z.object({
   amount: z.number().positive().optional(),
-  transactionId: z.string().min(3),
+  transactionId: z.string().regex(/^\d{11}$/, "Transaction ID must be exactly 11 digits"),
 });
 router.post("/momo/claim", requireAuth, async (req, res) => {
   const parsed = MomoClaimBodySchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: "Transaction ID is required" });
+    const msg = parsed.error.issues[0]?.message ?? "Transaction ID must be exactly 11 digits";
+    res.status(400).json({ error: msg });
     return;
   }
 
   const userId = req.session.userId!;
   const { amount, transactionId } = parsed.data;
-  const webhookRef = `MOMO-SMS-EXT-${transactionId}`;
+  // Webhook now stores 11-digit transaction IDs as MOMO-TXN-{txId}.
+  // Also check the legacy MOMO-SMS-EXT-{txId} format for backwards compatibility.
+  const webhookRefTxn = `MOMO-TXN-${transactionId}`;
+  const webhookRefExt = `MOMO-SMS-EXT-${transactionId}`;
 
   // Check for existing records:
   //  - direct: user manually submitted this txId before
-  //  - webhook: android app forwarded this SMS (may be unmatched or already credited)
-  const [existingDirect, existingWebhook] = await Promise.all([
+  //  - webhook (TXN): android app forwarded this SMS with matching transaction ID
+  //  - webhook (EXT): legacy format fallback
+  const [existingDirect, existingWebhookTxn, existingWebhookExt] = await Promise.all([
     db.select().from(depositsTable).where(eq(depositsTable.reference, transactionId)),
-    db.select().from(depositsTable).where(eq(depositsTable.reference, webhookRef)),
+    db.select().from(depositsTable).where(eq(depositsTable.reference, webhookRefTxn)),
+    db.select().from(depositsTable).where(eq(depositsTable.reference, webhookRefExt)),
   ]);
+  const existingWebhookRow = existingWebhookTxn[0] ?? existingWebhookExt[0] ?? null;
 
   // Already submitted manually before
   if (existingDirect.length > 0) {
@@ -492,21 +499,19 @@ router.post("/momo/claim", requireAuth, async (req, res) => {
   }
 
   // Webhook captured this transaction
-  if (existingWebhook.length > 0) {
-    const existing = existingWebhook[0];
-
+  if (existingWebhookRow) {
     // Already credited to someone — cannot claim again
-    if (existing.status === "completed" || existing.userId !== null) {
+    if (existingWebhookRow.status === "completed" || existingWebhookRow.userId !== null) {
       res.status(400).json({ error: "This transaction was already credited to an account" });
       return;
     }
 
     // Stored as unmatched — credit it now to this user
-    const creditAmount = Number(existing.amount);
+    const creditAmount = Number(existingWebhookRow.amount);
     await db.transaction(async (tx) => {
       await tx.update(depositsTable)
         .set({ userId, status: "completed", note: `Claimed by user — wallet credited GH₵${creditAmount.toFixed(2)}`, updatedAt: new Date() })
-        .where(eq(depositsTable.reference, webhookRef));
+        .where(eq(depositsTable.reference, existingWebhookRow.reference!));
       await creditWallet(userId, creditAmount, tx, {
         source: "momo",
         reference: transactionId,
@@ -577,6 +582,18 @@ router.post("/sms-webhook", async (req, res) => {
   const parsedSender = senderMatch ? senderMatch[1].trim() : (body.sender ?? "");
   const senderPrefix = parsedSender ? `Sender: ${parsedSender}. ` : "";
 
+  // Extract the 11-digit MoMo transaction ID from the SMS text.
+  // This is the true idempotency key — the same physical MoMo transfer always
+  // has the same 11-digit transaction ID regardless of how many times the SMS
+  // is delivered or retried by the forwarder app.
+  // MTN Ghana SMS examples:
+  //   "... Trans ID: 12345678901 ..."
+  //   "... Transaction ID: 12345678901 ..."
+  //   standalone 11-digit number in the text
+  const txIdFromLabel = smsText.match(/(?:Trans(?:action)?\s*I[Dd][:\s]+)(\d{11})\b/i);
+  const txIdStandalone = smsText.match(/\b(\d{11})\b/);
+  const momoTxId: string | null = (txIdFromLabel?.[1] ?? txIdStandalone?.[1]) ?? null;
+
   // Use pre-parsed reference from app if provided (whatever agent code the customer typed)
   // Fallback: scan the raw SMS text for a standalone word that could be an agent code
   let depositCode: string | null = null;
@@ -602,9 +619,19 @@ router.post("/sms-webhook", async (req, res) => {
     return;
   }
 
-  const reference = `MOMO-SMS-EXT-${body.id}`;
+  // Deduplication strategy:
+  // 1. If we extracted a valid 11-digit MoMo transaction ID from the SMS text, use
+  //    MOMO-TXN-{txId} as the reference. This means two deliveries of the same SMS
+  //    (different forwarder message IDs) map to the exact same reference and the DB
+  //    UNIQUE constraint blocks the second insert automatically.
+  // 2. If no valid transaction ID could be parsed, fall back to the forwarder message ID.
+  //    This is weaker (different message IDs for the same transaction slip through) but
+  //    it is the best we can do without a reliable transaction ID.
+  const reference = momoTxId
+    ? `MOMO-TXN-${momoTxId}`
+    : `MOMO-SMS-EXT-${body.id}`;
 
-  // Check for duplicate by the external transaction ID
+  // Check for duplicate — covers both the TXN-based and message-ID-based references
   const [existing] = await db
     .select()
     .from(depositsTable)
