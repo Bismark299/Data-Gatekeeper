@@ -74,7 +74,7 @@ function WalletContent() {
     verifyPaystackDeposit({ data: { reference: ref } })
       .then((w) => {
         invalidate();
-        toast({ title: "Payment confirmed!", description: `New balance: GH₵${w.balance.toFixed(2)}` });
+        toast({ title: "Payment confirmed!", description: `New balance: GH₵${Number(w.balance).toFixed(2)}` });
       })
       .catch(() => {
         setPendingRef(ref);
@@ -109,7 +109,7 @@ function WalletContent() {
   const handleVerify = () => {
     verifyMutation.mutate({ data: { reference: pendingRef } }, {
       onSuccess: (w) => {
-        toast({ title: "Payment confirmed!", description: `New balance: GH₵${w.balance.toFixed(2)}` });
+        toast({ title: "Payment confirmed!", description: `New balance: GH₵${Number(w.balance).toFixed(2)}` });
         invalidate();
         setShowVerifyDialog(false);
       },
@@ -179,7 +179,7 @@ function WalletContent() {
               <div className="h-12 w-36 bg-white/20 animate-pulse rounded-xl" />
             ) : (
               <div className="text-5xl font-extrabold tracking-tight">
-                GH₵{(wallet?.balance ?? 0).toFixed(2)}
+                GH₵{Number(wallet?.balance ?? 0).toFixed(2)}
               </div>
             )}
           </div>
@@ -410,7 +410,7 @@ function WalletContent() {
                         <td className="px-5 py-3.5 text-muted-foreground text-xs font-mono truncate max-w-[140px]">
                           {d.reference || "—"}
                         </td>
-                        <td className="px-5 py-3.5 text-right font-bold text-green-600">+GH₵{d.amount.toFixed(2)}</td>
+                        <td className="px-5 py-3.5 text-right font-bold text-green-600">+GH₵{Number(d.amount).toFixed(2)}</td>
                         <td className="px-5 py-3.5">
                           <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full capitalize font-medium ${statusColor(d.status)}`}>
                             {statusIcon(d.status)}
