@@ -662,6 +662,7 @@ router.post("/admin/deposits/:id/reject", requireAdmin, async (req, res): Promis
 // ── MoMo SMS Deposits ─────────────────────────────────────────────────────────
 
 const MOMO_PREFIX = "MOMO-SMS-EXT-";
+const MOMO_TXN_PREFIX = "MOMO-TXN-";
 
 // Helper: extract sender name from stored note
 // Extracts sender name from the deposit note.
@@ -694,14 +695,17 @@ router.get("/admin/momo-deposits", requireAdmin, async (req, res): Promise<void>
     })
     .from(depositsTable)
     .leftJoin(usersTable, eq(depositsTable.userId, usersTable.id))
-    .where(sql`${depositsTable.reference} LIKE ${MOMO_PREFIX + "%"}`)
+    .where(eq(depositsTable.method, "momo"))
     .orderBy(desc(depositsTable.createdAt))
     .limit(1000);
 
   res.json(rows.map(d => {
-    const txId = d.reference?.startsWith(MOMO_PREFIX)
-      ? d.reference.slice(MOMO_PREFIX.length)
-      : d.reference ?? "";
+    const ref = d.reference ?? "";
+    const txId = ref.startsWith(MOMO_TXN_PREFIX)
+      ? ref.slice(MOMO_TXN_PREFIX.length)
+      : ref.startsWith(MOMO_PREFIX)
+      ? ref.slice(MOMO_PREFIX.length)
+      : ref;
     // Try to extract agent code from note (e.g. "unknown agent code XYZAB")
     const agentMatch = d.note?.match(/agent code\s+([A-Z0-9]{4,10})/i);
     const agentCode = agentMatch ? agentMatch[1] : null;
