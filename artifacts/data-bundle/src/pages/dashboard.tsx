@@ -67,7 +67,7 @@ function DashboardContent() {
   const summaryCards = [
     {
       label: "Wallet Balance",
-      value: `GH₵${(wallet?.balance ?? 0).toFixed(2)}`,
+      value: `GH₵${Number(wallet?.balance ?? 0).toFixed(2)}`,
       icon: Wallet,
       color: "bg-primary/10 text-primary",
       sub: "Available to spend",

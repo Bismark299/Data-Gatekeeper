@@ -88,7 +88,7 @@ export function Navbar() {
               <Link href="/wallet">
                 <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-primary/10 hover:bg-primary/15 transition-colors text-xs font-bold text-primary cursor-pointer">
                   <Wallet className="w-3.5 h-3.5" />
-                  GH₵{(wallet?.balance ?? 0).toFixed(2)}
+                  GH₵{Number(wallet?.balance ?? 0).toFixed(2)}
                 </div>
               </Link>
             )}
@@ -194,7 +194,7 @@ export function Navbar() {
                 <Link href="/wallet" onClick={() => setMenuOpen(false)}>
                   <Button variant="ghost" className="w-full justify-start">
                     <Wallet className="w-4 h-4 mr-2" />
-                    Wallet {wallet ? `(GH₵${wallet.balance.toFixed(2)})` : ""}
+                    Wallet {wallet ? `(GH₵${Number(wallet.balance).toFixed(2)})` : ""}
                   </Button>
                 </Link>
                 <Link href="/store-manager" onClick={() => setMenuOpen(false)}>

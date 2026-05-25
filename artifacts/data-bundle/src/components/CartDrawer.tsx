@@ -18,7 +18,7 @@ export function CartDrawer() {
   const { data: wallet } = useGetWalletBalance({ query: { enabled: isAuthenticated } });
 
   const total = cart?.reduce((s, i) => s + i.price, 0) ?? 0;
-  const balance = wallet?.balance ?? 0;
+  const balance = Number(wallet?.balance ?? 0);
   const canCheckout = balance >= total && (cart?.length ?? 0) > 0;
 
   return (
