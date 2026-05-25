@@ -313,9 +313,14 @@ router.post("/paystack/verify", requireAuth, async (req, res) => {
   const paystackStatus = verifyData.data?.status;
 
   // Recover the wallet-credit amount (excl. fee) from metadata; fall back to deriving it
-  const amountGhs: number =
+  const amountGhs: number = Number(
     verifyData.data?.metadata?.amountGhs ??
-    (verifyData.data?.amount ? parseFloat((verifyData.data.amount / 100 / 1.02).toFixed(2)) : 0);
+    (verifyData.data?.amount ? parseFloat((verifyData.data.amount / 100 / 1.02).toFixed(2)) : 0)
+  );
+  if (!Number.isFinite(amountGhs) || amountGhs < 0) {
+    res.status(502).json({ error: "Invalid amount from payment gateway" });
+    return;
+  }
 
   if (!verifyData.status || paystackStatus !== "success") {
     const terminalFailure = paystackStatus === "failed" || paystackStatus === "abandoned";
@@ -445,10 +450,11 @@ export async function handlePaystackWebhook(body: {
       const webhookUserId = metadata?.userId;
       if (!webhookUserId) return; // Cannot credit without knowing which user
 
-      const amountGhs: number =
+      const amountGhs: number = Number(
         metadata?.amountGhs ??
-        (amountPesewas ? parseFloat((amountPesewas / 100 / 1.02).toFixed(2)) : 0);
-      if (amountGhs <= 0) return;
+        (amountPesewas ? parseFloat((amountPesewas / 100 / 1.02).toFixed(2)) : 0)
+      );
+      if (!Number.isFinite(amountGhs) || amountGhs <= 0) return;
 
       const [inserted] = await tx
         .insert(depositsTable)
