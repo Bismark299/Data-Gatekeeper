@@ -546,18 +546,11 @@ router.post("/momo/claim", requireAuth, async (req, res) => {
     return;
   }
 
-  // No webhook record — create pending claim for admin to verify
-  await db.insert(depositsTable).values({
-    userId,
-    amount: amount != null ? amount.toFixed(2) : "0.00",
-    status: "pending",
-    method: "momo",
-    reference: transactionId,
-    note: "Manual claim — pending admin review",
-  });
-
-  res.json({
-    message: "Claim submitted. Your deposit will be reviewed and credited within a few minutes.",
+  // No webhook record found — reject. We will not create speculative pending rows
+  // for transaction IDs that don't exist in our system.
+  void amount;
+  res.status(404).json({
+    error: "Transaction ID not found. Make sure you entered the correct 11-digit ID from the MoMo SMS. If the payment is recent, wait a moment and try again.",
   });
 });
 
