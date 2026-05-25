@@ -164,6 +164,21 @@ app.use("/api", apiLimiter);
 
 app.use("/api", router);
 
+// ── Global JSON error handler ─────────────────────────────────────────────────
+// Must be registered AFTER all routes. Express detects error handlers by their
+// 4-argument signature (err, req, res, next). Without this, Express falls back
+// to its built-in handler which sends HTML — never acceptable for an API server.
+app.use((err: unknown, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  const status = (err as { status?: number; statusCode?: number })?.status
+    ?? (err as { statusCode?: number })?.statusCode
+    ?? 500;
+  const message = (err as { message?: string })?.message ?? "Internal server error";
+  req.log?.error({ err }, "Unhandled error");
+  if (!res.headersSent) {
+    res.status(status).json({ error: message });
+  }
+});
+
 // ── Serve React frontend (production) ─────────────────────────────────────────
 // In production the frontend is built into artifacts/data-bundle/dist/public.
 // All non-API requests are served the SPA index.html.

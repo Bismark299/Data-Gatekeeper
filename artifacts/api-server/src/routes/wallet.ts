@@ -290,20 +290,25 @@ router.post("/paystack/verify", requireAuth, async (req, res) => {
   }
 
   // Ask Paystack for the ground truth
-  const verifyRes = await fetch(`https://api.paystack.co/transaction/verify/${reference}`, {
-    headers: { Authorization: `Bearer ${PAYSTACK_SECRET}` },
-  });
-
-  const verifyData = (await verifyRes.json()) as {
+  let verifyData: {
     status: boolean;
     data?: {
       status: string;
-      amount: number; // pesewas
+      amount: number;
       currency: string;
       metadata?: { userId?: number; amountGhs?: number; feeGhs?: number; chargedGhs?: number };
     };
     message?: string;
   };
+  try {
+    const verifyRes = await fetch(`https://api.paystack.co/transaction/verify/${reference}`, {
+      headers: { Authorization: `Bearer ${PAYSTACK_SECRET}` },
+    });
+    verifyData = await verifyRes.json() as typeof verifyData;
+  } catch {
+    res.status(502).json({ error: "Could not reach payment gateway. Please try again in a moment." });
+    return;
+  }
 
   const paystackStatus = verifyData.data?.status;
 
@@ -394,7 +399,14 @@ router.post("/paystack/verify", requireAuth, async (req, res) => {
     });
   });
 
-  res.json({ balance: parseFloat(wallet!.balance), updatedAt: wallet!.updatedAt });
+  if (!wallet) {
+    // Should not happen — creditWallet always returns the wallet row.
+    // Fallback: fetch or create the wallet and return current balance.
+    const w = await getOrCreateWallet(userId);
+    res.json({ balance: parseFloat(w.balance), updatedAt: w.updatedAt });
+    return;
+  }
+  res.json({ balance: parseFloat(wallet.balance), updatedAt: wallet.updatedAt });
 });
 
 // Exported for the unified /api/paystack/webhook handler in index.ts

@@ -642,19 +642,22 @@ router.post("/s/:slug/verify", async (req, res) => {
   }
 
   // Verify payment with Paystack (network call — outside DB transaction to avoid long-held locks)
-  const psRes = await fetch(`https://api.paystack.co/transaction/verify/${ref}`, {
-    headers: { Authorization: `Bearer ${PAYSTACK_SECRET}` },
-  });
   type StoreOrderMeta = {
     storeId: number; storeBundleId: number; bundleId: number;
     bundleName: string; bundleData: string; bundleNetwork: string; bundleValidityDays: number;
     customerPhone: string; customerEmail: string | null;
     sellingPrice: string; basePrice: string; agentCost: string; profit: string;
   };
-  const psData = await psRes.json() as {
-    status: boolean;
-    data?: { status: string; amount: number; metadata?: StoreOrderMeta };
-  };
+  let psData: { status: boolean; data?: { status: string; amount: number; metadata?: StoreOrderMeta } };
+  try {
+    const psRes = await fetch(`https://api.paystack.co/transaction/verify/${ref}`, {
+      headers: { Authorization: `Bearer ${PAYSTACK_SECRET}` },
+    });
+    psData = await psRes.json() as typeof psData;
+  } catch {
+    res.status(502).json({ error: "Could not reach payment gateway. Please try again in a moment." });
+    return;
+  }
 
   if (!psData.status || psData.data?.status !== "success") {
     // Payment failed/cancelled — if a record somehow exists, cancel it
