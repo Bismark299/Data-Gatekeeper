@@ -550,7 +550,7 @@ router.post("/momo/claim", requireAuth, async (req, res) => {
   // for transaction IDs that don't exist in our system.
   void amount;
   res.status(404).json({
-    error: "Transaction ID not found. Make sure you entered the correct 11-digit ID from the MoMo SMS. If the payment is recent, wait a moment and try again.",
+    error: "Transaction ID not found",
   });
 });
 
