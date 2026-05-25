@@ -31,16 +31,18 @@ router.post("/paystack/webhook", async (req, res) => {
     .digest("hex");
   if (hash !== sig) { res.status(401).send("Invalid signature"); return; }
 
+  // Always acknowledge immediately — Paystack retries for hours on any non-200
+  res.sendStatus(200);
+
   const { event, data } = req.body as { event: string; data?: { reference?: string } };
   if (event === "charge.success" && data?.reference) {
-    if (data.reference.startsWith("STORE-")) {
-      await handleStorePaystackWebhook(req.body);
-    } else {
-      await handlePaystackWebhook(req.body);
-    }
+    const handler = data.reference.startsWith("STORE-")
+      ? handleStorePaystackWebhook(req.body)
+      : handlePaystackWebhook(req.body);
+    handler.catch((err: unknown) => {
+      req.log.error({ err, reference: data.reference }, "Paystack webhook processing error");
+    });
   }
-
-  res.sendStatus(200);
 });
 
 router.use(healthRouter);

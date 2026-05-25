@@ -812,7 +812,9 @@ router.post("/s/paystack/webhook", async (req, res) => {
   const hash = crypto.createHmac("sha512", PAYSTACK_SECRET).update(req.rawBody ?? Buffer.from(JSON.stringify(req.body))).digest("hex");
   if (hash !== sig) { res.status(401).json({ error: "Invalid signature" }); return; }
   res.sendStatus(200);
-  await handleStorePaystackWebhook(req.body);
+  handleStorePaystackWebhook(req.body).catch((err: unknown) => {
+    req.log.error({ err }, "Store Paystack webhook processing error");
+  });
 });
 
 // Admin: list all stores
