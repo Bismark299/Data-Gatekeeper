@@ -518,6 +518,11 @@ router.post("/momo/claim", requireAuth, async (req, res) => {
 
   // Webhook captured this transaction
   if (existingWebhookRow) {
+    // Voided by admin — no user can claim this transaction
+    if (existingWebhookRow.status === "voided") {
+      res.status(400).json({ error: "This transaction has been voided and cannot be claimed" });
+      return;
+    }
     // Already credited to someone — cannot claim again
     if (existingWebhookRow.status === "completed" || existingWebhookRow.userId !== null) {
       res.status(400).json({ error: "This transaction was already credited to an account" });

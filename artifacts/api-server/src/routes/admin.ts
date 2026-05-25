@@ -756,6 +756,22 @@ router.post("/admin/momo-deposits/:id/assign", requireAdmin, async (req, res): P
   res.json({ success: true, message: `GH₵${amount.toFixed(2)} credited to ${user.name}` });
 });
 
+router.post("/admin/momo-deposits/:id/void", requireAdmin, async (req, res): Promise<void> => {
+  const id = parseInt(String(req.params.id), 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid deposit ID" }); return; }
+
+  const [deposit] = await db.select().from(depositsTable).where(eq(depositsTable.id, id));
+  if (!deposit) { res.status(404).json({ error: "Deposit not found" }); return; }
+  if (deposit.status === "completed") { res.status(400).json({ error: "Already credited — cannot void" }); return; }
+  if (deposit.status === "voided") { res.status(400).json({ error: "Already voided" }); return; }
+
+  await db.update(depositsTable)
+    .set({ status: "voided", note: `${deposit.note ?? ""}\nVoided by admin — no user can claim this transaction.`.trim(), updatedAt: new Date() })
+    .where(eq(depositsTable.id, id));
+
+  res.json({ success: true, message: "Transaction voided" });
+});
+
 // ── Stats / Revenue ───────────────────────────────────────────────────────────
 
 router.get("/admin/stats", requireAdmin, async (req, res): Promise<void> => {

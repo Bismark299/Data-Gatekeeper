@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import {
   Menu, CheckCircle2, Clock, HelpCircle, Wallet, Search,
-  ChevronLeft, ChevronRight, UserCheck, RefreshCw,
+  ChevronLeft, ChevronRight, UserCheck, RefreshCw, Ban,
 } from "lucide-react";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -50,11 +50,13 @@ const STATUS_STYLE: Record<string, string> = {
   unmatched: "bg-amber-100 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400",
   pending:   "bg-blue-100 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400",
   rejected:  "bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400",
+  voided:    "bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400",
 };
 
 const statusIcon = (s: string) => {
   if (s === "completed") return <CheckCircle2 className="w-3 h-3" />;
   if (s === "unmatched") return <HelpCircle className="w-3 h-3" />;
+  if (s === "voided") return <Ban className="w-3 h-3" />;
   return <Clock className="w-3 h-3" />;
 };
 
@@ -101,6 +103,9 @@ function AdminMomoContent() {
   const [assignUserId, setAssignUserId] = useState("");
   const [userSearch, setUserSearch]     = useState("");
 
+  // Claim (void) confirmation
+  const [claimTarget, setClaimTarget] = useState<MomoDeposit | null>(null);
+
   const { toast }   = useToast();
   const queryClient = useQueryClient();
 
@@ -142,6 +147,24 @@ function AdminMomoContent() {
       queryClient.invalidateQueries({ queryKey: ["admin-momo-deposits"] });
       setAssignTarget(null);
       setAssignUserId("");
+    },
+    onError: (e: Error) => toast({ title: e.message, variant: "destructive" }),
+  });
+
+  const claimMutation = useMutation({
+    mutationFn: async (depositId: number) => {
+      const r = await fetch(`/api/admin/momo-deposits/${depositId}/void`, {
+        method: "POST",
+        credentials: "include",
+      });
+      const d = await r.json() as { success?: boolean; message?: string; error?: string };
+      if (!r.ok) throw new Error(d.error ?? "Failed");
+      return d;
+    },
+    onSuccess: (d) => {
+      toast({ title: "Transaction claimed", description: d.message ?? "No user can claim this transaction." });
+      queryClient.invalidateQueries({ queryKey: ["admin-momo-deposits"] });
+      setClaimTarget(null);
     },
     onError: (e: Error) => toast({ title: e.message, variant: "destructive" }),
   });
@@ -324,16 +347,28 @@ function AdminMomoContent() {
                         </span>
                       </td>
                       <td className="px-4 py-3">
-                        {d.status !== "completed" && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-7 px-2.5 text-xs gap-1.5"
-                            onClick={() => { setAssignTarget(d); setAssignUserId(""); setUserSearch(""); }}
-                          >
-                            <UserCheck className="w-3.5 h-3.5" />
-                            Assign
-                          </Button>
+                        {d.status !== "completed" && d.status !== "voided" && (
+                          <div className="flex items-center gap-1.5">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 px-2.5 text-xs gap-1.5"
+                              onClick={() => { setAssignTarget(d); setAssignUserId(""); setUserSearch(""); }}
+                            >
+                              <UserCheck className="w-3.5 h-3.5" />
+                              Assign
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 px-2.5 text-xs gap-1.5 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20 border-red-200 dark:border-red-900/40"
+                              onClick={() => setClaimTarget(d)}
+                              data-testid={`button-claim-${d.id}`}
+                            >
+                              <Ban className="w-3.5 h-3.5" />
+                              Claim
+                            </Button>
+                          </div>
                         )}
                       </td>
                     </tr>
@@ -425,6 +460,38 @@ function AdminMomoContent() {
               }}
             >
               {assignMutation.isPending ? "Crediting…" : "Confirm & Credit Wallet"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Claim (Void) Confirmation Dialog ─────────────────────────────────── */}
+      <Dialog open={!!claimTarget} onOpenChange={open => { if (!open) setClaimTarget(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Claim Transaction</DialogTitle>
+            <DialogDescription>
+              This locks the transaction so <strong>no user can claim it</strong>. Use this when the deposit doesn't belong to any user (e.g. wrong number, test transaction, fraudulent claim).
+            </DialogDescription>
+          </DialogHeader>
+
+          {claimTarget && (
+            <div className="bg-muted/50 rounded-lg p-3 space-y-1.5 text-sm">
+              <div className="flex justify-between"><span className="text-muted-foreground">Transaction ID</span><span className="font-mono font-semibold">{claimTarget.txId}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Amount</span><span className="font-bold text-emerald-600">GH₵{claimTarget.amount.toFixed(2)}</span></div>
+              {claimTarget.sender && <div className="flex justify-between"><span className="text-muted-foreground">Sender</span><span className="font-semibold">{claimTarget.sender}</span></div>}
+            </div>
+          )}
+
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setClaimTarget(null)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              disabled={claimMutation.isPending}
+              onClick={() => { if (claimTarget) claimMutation.mutate(claimTarget.id); }}
+              data-testid="button-confirm-claim"
+            >
+              {claimMutation.isPending ? "Claiming…" : "Confirm Claim"}
             </Button>
           </DialogFooter>
         </DialogContent>
