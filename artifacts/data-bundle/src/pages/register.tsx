@@ -42,6 +42,7 @@ export default function Register() {
       {
         onSuccess: (res) => {
           queryClient.setQueryData(getGetMeQueryKey(), res.user);
+          void queryClient.invalidateQueries();
           toast({ title: "Account created!", description: "Welcome to DataBundle." });
           setLocation("/dashboard");
         },
