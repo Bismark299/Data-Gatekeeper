@@ -147,9 +147,12 @@ function ProfileContent() {
             <div className="space-y-1.5">
               <Label>Phone Number</Label>
               <Input
+                type="tel"
+                inputMode="numeric"
+                maxLength={10}
                 placeholder={user?.phone ?? "0244xxxxxx"}
                 value={phone}
-                onChange={e => setPhone(e.target.value)}
+                onChange={e => setPhone(e.target.value.replace(/\D/g, "").slice(0, 10))}
                 data-testid="input-profile-phone"
               />
             </div>

@@ -127,8 +127,8 @@ function CheckoutDialog({
                 <Label htmlFor="co-phone" className="text-sm font-semibold mb-1.5 block flex items-center gap-1.5">
                   <Phone className="w-3.5 h-3.5" /> Phone to Activate On
                 </Label>
-                <Input id="co-phone" type="tel" placeholder="0244xxxxxx" value={phone}
-                  onChange={e => setPhone(e.target.value)} disabled={checkout.isPending} />
+                <Input id="co-phone" type="tel" inputMode="numeric" placeholder="0244xxxxxx" maxLength={10} value={phone}
+                  onChange={e => setPhone(e.target.value.replace(/\D/g, "").slice(0, 10))} disabled={checkout.isPending} />
               </div>
               <div>
                 <Label htmlFor="co-email" className="text-sm font-semibold mb-1.5 block flex items-center gap-1.5">
@@ -465,9 +465,11 @@ export default function PublicStorePage() {
                   <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                   <Input
                     type="tel"
+                    inputMode="numeric"
+                    maxLength={10}
                     placeholder="e.g. 0244123456"
                     value={trackPhone}
-                    onChange={e => { setTrackPhone(e.target.value); setTrackedOrders(null); setTrackError(""); }}
+                    onChange={e => { setTrackPhone(e.target.value.replace(/\D/g, "").slice(0, 10)); setTrackedOrders(null); setTrackError(""); }}
                     onKeyDown={e => e.key === "Enter" && handleTrack()}
                     className="pl-9 h-10"
                   />

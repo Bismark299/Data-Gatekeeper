@@ -464,8 +464,8 @@ function AdminDashboardContent() {
                   className="text-xs text-muted-foreground hover:text-foreground px-1">All time</button>
                 <div className="relative">
                   <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-                  <Input placeholder="Phone…" value={phoneSearch}
-                    onChange={e => { setPhoneSearch(e.target.value); setPage(1); }}
+                  <Input type="tel" inputMode="numeric" maxLength={10} placeholder="Phone…" value={phoneSearch}
+                    onChange={e => { setPhoneSearch(e.target.value.replace(/\D/g, "").slice(0, 10)); setPage(1); }}
                     className="pl-8 h-8 text-xs w-36" data-testid="input-phone-search" />
                   {phoneSearch && <button className="absolute right-2 top-1/2 -translate-y-1/2" onClick={() => { setPhoneSearch(""); setPage(1); }}><X className="w-3 h-3 text-muted-foreground" /></button>}
                 </div>

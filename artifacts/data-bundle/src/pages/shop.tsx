@@ -216,8 +216,8 @@ function PurchaseDialog({
 
             <div className="space-y-1.5">
               <Label htmlFor="shop-phone">Phone to activate on</Label>
-              <Input id="shop-phone" type="tel" placeholder="0244xxxxxx" value={phone}
-                onChange={e => setPhone(e.target.value)} disabled={purchase.isPending} data-testid="input-shop-phone" />
+              <Input id="shop-phone" type="tel" inputMode="numeric" placeholder="0244xxxxxx" maxLength={10} value={phone}
+                onChange={e => setPhone(e.target.value.replace(/\D/g, "").slice(0, 10))} disabled={purchase.isPending} data-testid="input-shop-phone" />
             </div>
 
             {errMsg && (

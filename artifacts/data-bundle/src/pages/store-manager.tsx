@@ -714,7 +714,8 @@ function OrdersTab({ orders }: { orders: any[] }) {
             {" · "}{filtered.length} order{filtered.length !== 1 ? "s" : ""}
           </p>
         </div>
-        <Input placeholder="Filter by phone…" value={phoneFilter} onChange={e => setPhoneFilter(e.target.value)}
+        <Input type="tel" inputMode="numeric" maxLength={10} placeholder="Filter by phone…" value={phoneFilter}
+          onChange={e => setPhoneFilter(e.target.value.replace(/\D/g, "").slice(0, 10))}
           className="h-8 w-full sm:w-40 text-sm font-mono" />
         <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
           className="h-8 rounded-lg border border-border bg-background px-2 text-xs">

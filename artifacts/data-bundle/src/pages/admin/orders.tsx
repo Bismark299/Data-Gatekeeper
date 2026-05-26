@@ -491,7 +491,8 @@ function AdminOrdersContent() {
                     <label className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wide">Phone</label>
                     <div className="relative">
                       <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground" />
-                      <input type="text" value={storePhoneSearch} onChange={e => setStorePhoneSearch(e.target.value)}
+                      <input type="tel" inputMode="numeric" maxLength={10} value={storePhoneSearch}
+                        onChange={e => setStorePhoneSearch(e.target.value.replace(/\D/g, "").slice(0, 10))}
                         placeholder="0244..." className="h-7 pl-6 pr-2 rounded-md border border-border bg-background text-xs" />
                     </div>
                   </div>

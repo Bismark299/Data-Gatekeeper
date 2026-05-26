@@ -431,7 +431,7 @@ function AdminUsersContent() {
             </div>
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-foreground">Phone Number</label>
-              <Input value={newPhone} onChange={e => setNewPhone(e.target.value)} placeholder="0244000000" className="h-9" />
+              <Input type="tel" inputMode="numeric" maxLength={10} value={newPhone} onChange={e => setNewPhone(e.target.value.replace(/\D/g, "").slice(0, 10))} placeholder="0244000000" className="h-9" />
             </div>
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-foreground">Password *</label>
