@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db, walletsTable, depositsTable, usersTable, walletLedgerTable, settingsTable } from "@workspace/db";
 import { requireAuth, requireAdmin } from "../middlewares/auth";
-import { eq, desc, and } from "drizzle-orm";
+import { eq, desc, and, gte, ilike } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import type { NodePgTransaction } from "drizzle-orm/node-postgres";
 import { DepositToWalletBody } from "@workspace/api-zod";
@@ -656,6 +656,30 @@ router.post("/sms-webhook", async (req, res) => {
   if (existing) {
     res.json({ success: true, duplicate: true, message: "Already processed" });
     return;
+  }
+
+  // Soft dedup: same SMS can arrive twice with different forwarder message IDs.
+  // If one delivery parsed the 11-digit txId and the other did not, the reference
+  // check above misses it. As a safety net, also reject when an identical-amount
+  // deposit from the same sender already exists in the last 10 minutes.
+  if (parsedSender) {
+    const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000);
+    const [fuzzyDup] = await db
+      .select()
+      .from(depositsTable)
+      .where(
+        and(
+          eq(depositsTable.method, "momo"),
+          eq(depositsTable.amount, amount.toFixed(2)),
+          gte(depositsTable.createdAt, tenMinAgo),
+          ilike(depositsTable.note, `%Sender: ${parsedSender}%`),
+        ),
+      )
+      .limit(1);
+    if (fuzzyDup) {
+      res.json({ success: true, duplicate: true, message: "Duplicate (same sender + amount within 10min)" });
+      return;
+    }
   }
 
   // If no deposit code found, store as unmatched — user can claim later with transactionId
