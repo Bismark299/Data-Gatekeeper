@@ -756,6 +756,71 @@ router.post("/admin/momo-deposits/:id/assign", requireAdmin, async (req, res): P
   res.json({ success: true, message: `GH₵${amount.toFixed(2)} credited to ${user.name}` });
 });
 
+router.post("/admin/momo-deposits/:id/reverse", requireAdmin, async (req, res): Promise<void> => {
+  const id = parseInt(String(req.params.id), 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid deposit ID" }); return; }
+  const adminId = req.session.userId!;
+
+  try {
+    const result = await db.transaction(async (tx) => {
+      // Lock deposit row
+      const [deposit] = await tx
+        .select()
+        .from(depositsTable)
+        .where(eq(depositsTable.id, id))
+        .for("update");
+      if (!deposit) throw Object.assign(new Error("Deposit not found"), { status: 404 });
+      if (deposit.status !== "completed") throw Object.assign(new Error("Only completed deposits can be reversed"), { status: 400 });
+      if (deposit.userId == null) throw Object.assign(new Error("Deposit has no assigned user"), { status: 400 });
+      if (deposit.method !== "momo") throw Object.assign(new Error("Only MoMo deposits can be reversed here"), { status: 400 });
+
+      const amount = parseFloat(deposit.amount);
+      const userId = deposit.userId;
+
+      // Lock wallet row
+      const [wallet] = await tx
+        .select()
+        .from(walletsTable)
+        .where(eq(walletsTable.userId, userId))
+        .for("update");
+      if (!wallet) throw Object.assign(new Error("User wallet not found"), { status: 404 });
+      const currentBal = Number(wallet.balance);
+      if (currentBal < amount) {
+        throw Object.assign(
+          new Error(`Insufficient wallet balance. User has GH₵${currentBal.toFixed(2)}, deposit was GH₵${amount.toFixed(2)}. Cannot reverse — funds already spent.`),
+          { status: 400 },
+        );
+      }
+
+      // Debit the wallet
+      await tx
+        .update(walletsTable)
+        .set({ balance: sql`${walletsTable.balance} - ${amount.toFixed(2)}::numeric`, updatedAt: new Date() })
+        .where(eq(walletsTable.userId, userId));
+
+      // Immutable ledger entry
+      const reverseRef = `REVERSE-${id}`;
+      await insertLedgerEntry(tx, userId, -amount, "debit", "admin", reverseRef, `Reversed MoMo deposit #${id} (admin #${adminId})`);
+
+      // Mark deposit as reversed (preserves audit history)
+      await tx.update(depositsTable)
+        .set({
+          status: "reversed",
+          note: `${deposit.note ?? ""}\nReversed by admin #${adminId} — GH₵${amount.toFixed(2)} debited from user wallet.`.trim(),
+          updatedAt: new Date(),
+        })
+        .where(eq(depositsTable.id, id));
+
+      return { amount, userId };
+    });
+
+    res.json({ success: true, message: `Reversed: GH₵${result.amount.toFixed(2)} debited from user wallet.` });
+  } catch (err: unknown) {
+    const e = err as { message?: string; status?: number };
+    res.status(e.status ?? 500).json({ error: e.message ?? "Reversal failed" });
+  }
+});
+
 router.post("/admin/momo-deposits/:id/void", requireAdmin, async (req, res): Promise<void> => {
   const id = parseInt(String(req.params.id), 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid deposit ID" }); return; }

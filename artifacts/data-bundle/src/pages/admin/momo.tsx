@@ -106,6 +106,9 @@ function AdminMomoContent() {
   // Claim (void) confirmation
   const [claimTarget, setClaimTarget] = useState<MomoDeposit | null>(null);
 
+  // Reverse confirmation
+  const [reverseTarget, setReverseTarget] = useState<MomoDeposit | null>(null);
+
   const { toast }   = useToast();
   const queryClient = useQueryClient();
 
@@ -147,6 +150,24 @@ function AdminMomoContent() {
       queryClient.invalidateQueries({ queryKey: ["admin-momo-deposits"] });
       setAssignTarget(null);
       setAssignUserId("");
+    },
+    onError: (e: Error) => toast({ title: e.message, variant: "destructive" }),
+  });
+
+  const reverseMutation = useMutation({
+    mutationFn: async (depositId: number) => {
+      const r = await fetch(`/api/admin/momo-deposits/${depositId}/reverse`, {
+        method: "POST",
+        credentials: "include",
+      });
+      const d = await r.json() as { success?: boolean; message?: string; error?: string };
+      if (!r.ok) throw new Error(d.error ?? "Failed");
+      return d;
+    },
+    onSuccess: (d) => {
+      toast({ title: "Reversed", description: d.message });
+      queryClient.invalidateQueries({ queryKey: ["admin-momo-deposits"] });
+      setReverseTarget(null);
     },
     onError: (e: Error) => toast({ title: e.message, variant: "destructive" }),
   });
@@ -347,7 +368,7 @@ function AdminMomoContent() {
                         </span>
                       </td>
                       <td className="px-4 py-3">
-                        {d.status !== "completed" && d.status !== "voided" && (
+                        {d.status !== "completed" && d.status !== "voided" && d.status !== "reversed" && (
                           <div className="flex items-center gap-1.5">
                             <Button
                               size="sm"
@@ -369,6 +390,18 @@ function AdminMomoContent() {
                               Claim
                             </Button>
                           </div>
+                        )}
+                        {d.status === "completed" && d.userId != null && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 px-2.5 text-xs gap-1.5 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20 border-red-200 dark:border-red-900/40"
+                            onClick={() => setReverseTarget(d)}
+                            data-testid={`button-reverse-${d.id}`}
+                          >
+                            <Ban className="w-3.5 h-3.5" />
+                            Reverse
+                          </Button>
                         )}
                       </td>
                     </tr>
@@ -460,6 +493,39 @@ function AdminMomoContent() {
               }}
             >
               {assignMutation.isPending ? "Crediting…" : "Confirm & Credit Wallet"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Reverse Confirmation Dialog ──────────────────────────────────────── */}
+      <Dialog open={!!reverseTarget} onOpenChange={open => { if (!open) setReverseTarget(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Reverse Credit</DialogTitle>
+            <DialogDescription>
+              This <strong>debits the user's wallet</strong> by the deposit amount and marks the deposit as reversed. Use for duplicate credits or mistaken assignments. Fails if the user has already spent the funds.
+            </DialogDescription>
+          </DialogHeader>
+
+          {reverseTarget && (
+            <div className="bg-muted/50 rounded-lg p-3 space-y-1.5 text-sm">
+              <div className="flex justify-between"><span className="text-muted-foreground">Transaction ID</span><span className="font-mono font-semibold">{reverseTarget.txId}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Amount to debit</span><span className="font-bold text-red-600">−GH₵{reverseTarget.amount.toFixed(2)}</span></div>
+              {reverseTarget.userName && <div className="flex justify-between"><span className="text-muted-foreground">From user</span><span className="font-semibold">{reverseTarget.userName}</span></div>}
+              {reverseTarget.sender && <div className="flex justify-between"><span className="text-muted-foreground">Original sender</span><span className="font-semibold">{reverseTarget.sender}</span></div>}
+            </div>
+          )}
+
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setReverseTarget(null)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              disabled={reverseMutation.isPending}
+              onClick={() => { if (reverseTarget) reverseMutation.mutate(reverseTarget.id); }}
+              data-testid="button-confirm-reverse"
+            >
+              {reverseMutation.isPending ? "Reversing…" : "Confirm Reverse"}
             </Button>
           </DialogFooter>
         </DialogContent>
