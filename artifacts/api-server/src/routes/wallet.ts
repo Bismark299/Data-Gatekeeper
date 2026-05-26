@@ -661,9 +661,9 @@ router.post("/sms-webhook", async (req, res) => {
   // Soft dedup: same SMS can arrive twice with different forwarder message IDs.
   // If one delivery parsed the 11-digit txId and the other did not, the reference
   // check above misses it. As a safety net, also reject when an identical-amount
-  // deposit from the same sender already exists in the last 10 minutes.
+  // deposit from the same sender already exists in the last 3 minutes.
   if (parsedSender) {
-    const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000);
+    const threeMinAgo = new Date(Date.now() - 3 * 60 * 1000);
     const [fuzzyDup] = await db
       .select()
       .from(depositsTable)
@@ -671,13 +671,13 @@ router.post("/sms-webhook", async (req, res) => {
         and(
           eq(depositsTable.method, "momo"),
           eq(depositsTable.amount, amount.toFixed(2)),
-          gte(depositsTable.createdAt, tenMinAgo),
+          gte(depositsTable.createdAt, threeMinAgo),
           ilike(depositsTable.note, `%Sender: ${parsedSender}%`),
         ),
       )
       .limit(1);
     if (fuzzyDup) {
-      res.json({ success: true, duplicate: true, message: "Duplicate (same sender + amount within 10min)" });
+      res.json({ success: true, duplicate: true, message: "Duplicate (same sender + amount within 3min)" });
       return;
     }
   }
