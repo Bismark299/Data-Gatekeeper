@@ -514,7 +514,7 @@ router.get("/s/:slug", async (req, res) => {
 
 const StoreCheckoutBody = z.object({
   storeBundleId: z.number().int().positive(),
-  customerPhone: z.string().min(7),
+  customerPhone: z.string().transform(s => s.replace(/\D/g, "")).pipe(z.string().length(10, "Phone must be 10 digits")),
   customerEmail: z.string().email().optional().or(z.literal("")),
 }).transform(d => ({ ...d, customerEmail: d.customerEmail || undefined }));
 
@@ -597,11 +597,14 @@ router.post("/s/:slug/checkout", async (req, res) => {
 router.get("/s/:slug/orders", async (req, res) => {
   const { slug } = req.params;
   const { phone } = req.query as { phone?: string };
-  if (!phone || phone.trim().length < 7) {
-    res.status(400).json({ error: "Valid phone number required" }); return;
+  const phoneDigits = (phone ?? "").replace(/\D/g, "");
+  if (phoneDigits.length !== 10) {
+    res.status(400).json({ error: "Valid 10-digit phone number required" }); return;
   }
   const [store] = await db.select().from(storesTable).where(eq(storesTable.slug, slug));
   if (!store) { res.status(404).json({ error: "Store not found" }); return; }
+  // Match against either the raw stored value (legacy, may contain spaces) or the
+  // normalized digits — strip non-digits in SQL so old spaced entries still match.
   const orders = await db
     .select({
       id: storeOrdersTable.id,
@@ -616,7 +619,7 @@ router.get("/s/:slug/orders", async (req, res) => {
     .from(storeOrdersTable)
     .where(and(
       eq(storeOrdersTable.storeId, store.id),
-      eq(storeOrdersTable.customerPhone, phone.trim()),
+      sql`regexp_replace(${storeOrdersTable.customerPhone}, '\D', '', 'g') = ${phoneDigits}`,
     ))
     .orderBy(desc(storeOrdersTable.createdAt))
     .limit(50);
