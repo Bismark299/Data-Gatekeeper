@@ -1,0 +1,108 @@
+Webhooks
+Get notified the moment an order changes state — signed and verifiable.
+
+Manage your endpoints from the API Keys page. Each delivery is signed with an HMAC-SHA256 of the raw body so you can trust the source.
+
+Events
+Event	When it fires
+order.created	An API order was accepted (after balance debit).
+order.processing	Order sent to a provider that delivers asynchronously.
+order.successful	Data bundle was delivered to the recipient.
+order.failed	Order could not be fulfilled. The wallet is refunded.
+order.refunded	A previously charged order was credited back.
+Payload
+Each delivery is a POST with a JSON body of this shape:
+
+webhook-payload.json
+Copy
+{
+  "id": "evt_2b9f3a1c6b1d4f7e8a9c1b2d",
+  "event": "order.successful",
+  "createdAt": "2026-05-25T21:30:42.123Z",
+  "attempt": 1,
+  "data": {
+    "reference": "my-system-tx-9821",
+    "orderNumber": "ORD-289043",
+    "network": "MTN",
+    "recipient": "0201234567",
+    "capacity": "5GB",
+    "amount": 25.5,
+    "status": "SUCCESSFUL",
+    "createdAt": "2026-05-25T21:30:31.000Z",
+    "updatedAt": "2026-05-25T21:30:42.000Z"
+  }
+}
+The top-level id is unique per delivery — use it for idempotency. attempt starts at 1 and increments on each retry.
+
+Request headers
+X-Webhook-Id	Your webhook configuration ID
+X-Webhook-Event	Event type, e.g. order.successful
+X-Webhook-Event-Id	Same as payload id; for dedupe
+X-Webhook-Delivery	Unique delivery attempt ID
+X-Webhook-Attempt	1-based attempt number
+X-Webhook-Signature	Hex HMAC-SHA256 of the raw body, e.g. fdfd85…89b
+Verifying the signature
+The X-Webhook-Signature header is the hex HMAC-SHA256 of the raw request body, e.g.
+
+HTTP
+Copy
+X-Webhook-Signature: fdfd85360588942fe62109506dfae75fc18f4886cd1aed655632ffebad09789b
+Read the raw request body (do not re-serialize JSON).
+Compute HMAC_SHA256(secret, raw_body) and hex-encode it.
+Constant-time compare against X-Webhook-Signature.
+Dedupe on the top-level id field.
+Node.js / Express
+server.js
+Copy
+import crypto from "crypto";
+import express from "express";
+
+const app = express();
+const SECRET = process.env.GODSWAY_WEBHOOK_SECRET;
+
+// Read the raw body — required for signature verification.
+app.post(
+  "/webhooks/godsway",
+  express.raw({ type: "application/json" }),
+  (req, res) => {
+    const sig = req.header("X-Webhook-Signature") || "";
+
+    const expected = crypto
+      .createHmac("sha256", SECRET)
+      .update(req.body)
+      .digest("hex");
+
+    const ok =
+      /^[a-f0-9]{64}$/i.test(sig) &&
+      crypto.timingSafeEqual(
+        Buffer.from(expected, "hex"),
+        Buffer.from(sig, "hex")
+      );
+    if (!ok) return res.status(401).send("bad signature");
+
+    const event = JSON.parse(req.body.toString("utf8"));
+    // Idempotency: dedupe on event.id before processing.
+    res.status(200).send("ok");
+  }
+);
+PHP
+webhook.php
+Copy
+<?php
+$secret = getenv('GODSWAY_WEBHOOK_SECRET');
+$body = file_get_contents('php://input');
+$sig = $_SERVER['HTTP_X_WEBHOOK_SIGNATURE'] ?? '';
+
+$expected = hash_hmac('sha256', $body, $secret);
+if (!hash_equals($expected, $sig)) {
+    http_response_code(401);
+    exit('bad signature');
+}
+
+$event = json_decode($body, true);
+// idempotency: dedupe on $event['id']
+http_response_code(200);
+echo 'ok';
+Retries
+Any response outside 2xx (or a 10-second timeout) is treated as failure. After 10 consecutive failures the webhook is auto-disabled — re-enable it from the dashboard once you've fixed the issue.
+

@@ -1,0 +1,297 @@
+Endpoints
+The full REST reference. Every path, header, body and response shape.
+
+Filter endpoints — path, method or description…
+Expand all
+Collapse all
+
+POST
+https://console.ckgodsway.com/api/data-purchase
+Purchase internet data package - automatically debits user balance and creates transaction
+
+Headers
+Content-Type	application/json
+X-API-Key	your-api-key-here
+Request body
+networkKey	string (required) - Network identifier: 'YELLO', 'AT_PREMIUM', 'TELECEL', 'AT_BIGTIME'
+recipient	string (required) - Phone number to receive data (10 digits starting with 0)
+capacity	string (required) - Data amount in GB (e.g., '1', '2', '5')
+reference	string (optional, ≤100 chars, [A-Za-z0-9_-:.]) - Your own tracking reference.
+Responses
+200
+Data package purchased successfully
+Example response
+{
+  "success": true,
+  "message": "Order placed successfully",
+  "data": {
+    "network": "MTN",
+    "capacity": "1GB",
+    "price": 7,
+    "recipient": "0201234567",
+    "reference": "my-system-tx-9821",
+    "status": "PROCESSING",
+    "orderDate": "2024-01-15T10: 30: 00Z"
+  },
+  "balance": {
+    "previous": 100,
+    "current": 93,
+    "deducted": 7
+  }
+}
+400
+Validation error
+Missing networkKey
+{
+  "success": false,
+  "error": "networkKey is required (YELLO, MTN_PRO, AT_PREMIUM, TELECEL, AT_BIGTIME)"
+}
+Invalid networkKey
+{
+  "success": false,
+  "error": "Invalid networkKey. Must be one of: YELLO, MTN_PRO, AT_PREMIUM, TELECEL, AT_BIGTIME"
+}
+Missing recipient
+{
+  "success": false,
+  "error": "recipient phone number is required"
+}
+Invalid recipient
+{
+  "success": false,
+  "error": "Recipient must be a valid 10-digit phone number starting with 0"
+}
+Missing capacity
+{
+  "success": false,
+  "error": "capacity (data amount) is required"
+}
+Invalid capacity
+{
+  "success": false,
+  "error": "Capacity must be a positive number"
+}
+Insufficient balance
+{
+  "success": false,
+  "error": "Insufficient balance. Required: ₵7.00, Available: ₵5.00"
+}
+Invalid reference
+{
+  "success": false,
+  "error": "reference may only contain letters, numbers, and the characters _ - : ."
+}
+401
+Authentication error
+Example response
+{
+  "success": false,
+  "error": "Invalid or inactive API key"
+}
+403
+API key not linked to user account
+Example response
+{
+  "success": false,
+  "error": "API key is not linked to a user account. Please contact support."
+}
+404
+Network or bundle not found
+Network not found
+{
+  "success": false,
+  "error": "Network YELLO not found or not active"
+}
+Bundle not found
+{
+  "success": false,
+  "error": "No bundle found for 10GB on MTN. Available sizes: 1GB, 2GB, 5GB"
+}
+500
+Internal server error
+Example response
+{
+  "success": false,
+  "error": "Internal server error"
+}
+
+POST
+https://console.ckgodsway.com/api/result-checker-purchase
+Purchase one or more exam result checker cards (WASSCE, BECE, etc.).
+
+Headers
+Content-Type	application/json
+X-API-Key	your-api-key-here
+Request body
+checkerType	string (required) - Result checker name e.g. 'WASSCE' or 'BECE'. Case-insensitive. Aliases accepted: voucherType, type.
+recipient	string (optional) - Phone number to receive the cards via SMS (10 digits starting with 0). Defaults to the API key owner's phone.
+quantity	number (optional, default 1, max 30) - Number of checker cards to purchase per request.
+reference	string (optional) - Your own tracking reference.
+Responses
+400
+Validation, balance, or stock error
+Missing checkerType
+{
+  "success": false,
+  "error": "checkerType is required (e.g. 'WASSCE' or 'BECE'). See /api/external/docs for the supported list."
+}
+Invalid recipient
+{
+  "success": false,
+  "error": "recipient must be a 10-digit phone number starting with 0 (e.g. 0541234567)"
+}
+Insufficient balance
+{
+  "success": false,
+  "error": "Insufficient balance. Required: ₵17.50, Available: ₵5.00"
+}
+Insufficient stock
+{
+  "success": false,
+  "error": "Insufficient checker cards available. Requested: 10, Available: 3"
+}
+401
+Missing or invalid API key
+Example response
+{
+  "success": false,
+  "error": "Invalid or inactive API key"
+}
+404
+Unknown checker type
+Example response
+{
+  "success": false,
+  "error": "Result checker type 'NABTEB' not found"
+}
+200 (single)
+One checker purchased
+Example response
+{
+  "success": true,
+  "message": "Result checker purchased successfully",
+  "checker": {
+    "serial": "WRC123456789",
+    "pin": "1234567890",
+    "code": "WRC123456789-1234567890",
+    "type": "WASSCE",
+    "displayName": "WASSCE Results Checker",
+    "price": 17.5,
+    "purchasedAt": "2026-05-25T22: 00: 00.000Z"
+  },
+  "transaction": {
+    "id": "RCHK_1716671200000_abc123def",
+    "reference": "my-system-tx-9821",
+    "clientReference": "my-system-tx-9821",
+    "amount": 17.5,
+    "recipient": "0201234567",
+    "status": "COMPLETED"
+  },
+  "sms": {
+    "status": "sent",
+    "sent_to": "0201234567",
+    "message": "SMS sent successfully"
+  },
+  "balance": {
+    "previous": 100,
+    "current": 82.5,
+    "deducted": 17.5
+  }
+}
+200 (multiple)
+Bulk purchase returns an array of cards
+Example response
+{
+  "success": true,
+  "message": "Result checkers purchased successfully",
+  "checkers": [
+    {
+      "serial": "WRC123456789",
+      "pin": "1234567890",
+      "code": "WRC123456789-1234567890"
+    },
+    {
+      "serial": "WRC987654321",
+      "pin": "0987654321",
+      "code": "WRC987654321-0987654321"
+    }
+  ],
+  "transaction": {
+    "id": "RCHK_1716671200000_abc123def",
+    "reference": "RCHK_1716671200000_abc123def",
+    "clientReference": null,
+    "checkerType": "WASSCE",
+    "displayName": "WASSCE Results Checker",
+    "quantity": 2,
+    "amount": 35,
+    "unitPrice": 17.5,
+    "recipient": "0201234567",
+    "status": "COMPLETED"
+  },
+  "pricing": {
+    "unitPrice": 17.5,
+    "totalPrice": 35,
+    "originalTotalPrice": 35,
+    "savings": 0
+  },
+  "sms": {
+    "status": "sent",
+    "sent_to": "0201234567",
+    "message": "SMS sent successfully"
+  },
+  "balance": {
+    "previous": 100,
+    "current": 65,
+    "deducted": 35
+  }
+}
+
+https://console.ckgodsway.com/api/external/order-status
+Check order status by reference or order number
+
+Responses
+200
+Order status retrieved successfully
+Example response
+{
+  "success": true,
+  "data": {
+    "orderNumber": 12345,
+    "reference": "ORDER_abc123",
+    "status": "SUCCESSFUL",
+    "statusDescription": "Order completed successfully - data bundle delivered",
+    "network": "MTN",
+    "phoneNumber": "0241234567",
+    "dataAmount": 1024,
+    "amountPaid": 5,
+    "createdAt": "2024-01-01T10: 00: 00Z",
+    "updatedAt": "2024-01-01T10: 05: 00Z",
+    "user": {
+      "name": "John Doe",
+      "email": "john@example.com"
+    }
+  }
+}
+400
+Missing required parameters
+Example response
+{
+  "success": false,
+  "error": "Missing parameters",
+  "message": "Either 'reference' or 'orderNumber' query parameter is required"
+}
+401
+Invalid or missing API key
+Example response
+{
+  "success": false,
+  "error": "API key required",
+  "message": "Please provide your API key in the X-API-Key header or Authorization header"
+}
+404
+Order not found
+Example response
+{
+  "success": false,
+  "error": "Order not found with reference: ORDER_abc123"
+}

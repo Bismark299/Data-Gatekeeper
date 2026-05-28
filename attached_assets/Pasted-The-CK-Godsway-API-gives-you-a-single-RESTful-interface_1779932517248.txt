@@ -1,0 +1,118 @@
+The CK-Godsway API gives you a single, RESTful interface for purchasing internet data bundles across every Ghanaian network, tracking orders, and reconciling your wallet — all through a clean JSON API.
+
+Data Bundles
+Buy MTN, AirtelTigo and Telecel data with instant delivery.
+Order Tracking
+Query order status by reference or order number.
+Realtime Webhooks
+Signed callbacks the moment an order moves state.
+Purchase data
+purchase.js
+Copy
+// Purchase 1GB MTN data
+const response = await fetch('https://console.ckgodsway.com/api/data-purchase', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'X-API-Key': 'your-api-key-here'
+  },
+  body: JSON.stringify({
+    networkKey: 'YELLO',        // MTN network
+    recipient: '0201234567',    // Phone to receive data
+    capacity: '1',              // 1GB data package
+    reference: 'my-system-tx-9821' // Your own tracking reference
+  })
+});
+
+const result = await response.json();
+if (result.success) {
+  console.log('Order Number:', result.data.orderNumber);
+  console.log('Balance remaining: GHC', result.balance.current);
+} else {
+  console.log('Purchase failed:', result.error);
+}
+Check order status
+status.js
+Copy
+// Check order status by reference (GET - recommended)
+const response = await fetch(
+  'https://console.ckgodsway.com/api/order-status?reference=ORDER_12345_1635123456789',
+  { method: 'GET', headers: { 'X-API-Key': 'your-api-key-here' } }
+);
+
+const result = await response.json();
+if (result.success) {
+  console.log('Status:', result.data.status);
+  console.log('Recipient:', result.data.recipient);
+  console.log('Amount Paid: GHC', result.data.amountPaid);
+}
+Order statuses
+INITIATED
+Order has been initiated
+
+Order has been created and is in the initial stage of processing
+
+PENDING
+Order is being processed
+
+Order has been created and is awaiting processing
+
+PROCESSING
+Order sent to network provider, awaiting completion
+
+Order has been sent to the network provider and is being processed
+
+SUCCESSFUL
+Order completed successfully - data bundle delivered
+
+Data bundle has been successfully delivered to the recipient
+
+FAILED
+Order failed - please contact support or try again
+
+Order processing failed, may require manual intervention
+
+CANCELLED
+Order was cancelled
+
+Order was cancelled by user or admin
+
+Processing modes
+Automatic processing via network API
+Orders are processed automatically through the network provider's API
+
+ORDER_*
+Manual processing by admin
+Orders that failed automatic processing are handled manually by administrators
+
+manual*, m_*, manual_*
+Failed orders
+Orders that encountered errors during processing
+
+failed_*
+Available networks
+MTN
+MTN Ghana data packages
+
+networkKey: "YELLO"
+AirtelTigo Instant (iShare)
+AirtelTigo Instant data delivery
+
+networkKey: "AT_PREMIUM"
+TELECEL
+Telecel Ghana data packages
+
+networkKey: "TELECEL"
+AT - Big Time
+AT bulk data packages
+
+networkKey: "AT_BIGTIME"
+Rate limits
+API requests are rate limited to prevent abuse
+
+Per minute
+60
+Per hour
+1000
+Per day
+10000
