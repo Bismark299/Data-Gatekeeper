@@ -1,6 +1,7 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 import { startMcbisPoller } from "./lib/mcbis";
+import { startCkgodswayPoller } from "./lib/ckgodsway";
 import { startTopupghPoller } from "./lib/topupgh";
 
 const rawPort = process.env["PORT"];
@@ -27,6 +28,7 @@ app.listen(port, (err) => {
 
   // Start McbisSolution background poller (polls processing orders every 30 s)
   startMcbisPoller();
+  startCkgodswayPoller();
 
   // Start TopUpGH background poller (dispatches queued MTN orders every 2 min)
   startTopupghPoller();

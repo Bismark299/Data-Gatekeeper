@@ -4,7 +4,7 @@ import { requireAuth } from "../middlewares/auth";
 import { eq, and } from "drizzle-orm";
 import { AddToCartBody } from "@workspace/api-zod";
 import { getOrCreateWallet, insertLedgerEntry } from "./wallet";
-import { dispatchToMcbis } from "../lib/mcbis";
+import { dispatchOrder } from "../lib/dispatch";
 
 const router = Router();
 
@@ -258,11 +258,14 @@ router.post("/checkout", requireAuth, async (req, res) => {
   // Fire-and-forget: dispatch each order to McBIS immediately after checkout
   const { _dispatch, ...responseResult } = result;
   _dispatch.forEach(({ orderId, network, phone, bundleData }) => {
-    dispatchToMcbis({ orderId, network, phone, bundleData })
+    dispatchOrder({ orderId, network, phone, bundleData })
       .then(async (outcome) => {
         if (outcome.dispatched) {
+          const refCol = outcome.provider === "mcbis"
+            ? { mcbisReference: outcome.reference }
+            : { ckgodswayReference: outcome.reference };
           await db.update(ordersTable)
-            .set({ status: "processing", mcbisReference: outcome.reference })
+            .set({ status: "processing", ...refCol })
             .where(eq(ordersTable.id, orderId));
         }
       })

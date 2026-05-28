@@ -7,7 +7,7 @@ import { requireAuth } from "../middlewares/auth";
 import { eq, desc, and, ne, sql, inArray } from "drizzle-orm";
 import { z } from "zod";
 import crypto from "crypto";
-import { dispatchToMcbis } from "../lib/mcbis";
+import { dispatchOrder } from "../lib/dispatch";
 import { insertLedgerEntry } from "./wallet";
 
 const router = Router();
@@ -721,8 +721,8 @@ router.post("/s/:slug/verify", async (req, res) => {
   res.json(formatStoreOrder(updated));
 
   // Dispatch only for freshly-paid orders (status just became "paid")
-  if (updated.status === "paid" && !updated.mcbisReference) {
-    dispatchToMcbis({
+  if (updated.status === "paid" && !updated.mcbisReference && !updated.ckgodswayReference) {
+    dispatchOrder({
       orderId:      updated.id,
       network:      updated.bundleNetwork,
       phone:        updated.customerPhone,
@@ -730,8 +730,11 @@ router.post("/s/:slug/verify", async (req, res) => {
       isStoreOrder: true,
     }).then(async (outcome) => {
       if (outcome.dispatched) {
+        const refCol = outcome.provider === "mcbis"
+          ? { mcbisReference: outcome.reference }
+          : { ckgodswayReference: outcome.reference };
         await db.update(storeOrdersTable)
-          .set({ status: "processing", mcbisReference: outcome.reference })
+          .set({ status: "processing", ...refCol })
           .where(eq(storeOrdersTable.id, updated.id));
       }
     }).catch(() => {/* non-fatal */});
@@ -795,7 +798,7 @@ export async function handleStorePaystackWebhook(body: {
     order = updated;
   }
 
-  dispatchToMcbis({
+  dispatchOrder({
     orderId:      order.id,
     network:      order.bundleNetwork,
     phone:        order.customerPhone,
@@ -803,8 +806,11 @@ export async function handleStorePaystackWebhook(body: {
     isStoreOrder: true,
   }).then(async (outcome) => {
     if (outcome.dispatched) {
+      const refCol = outcome.provider === "mcbis"
+        ? { mcbisReference: outcome.reference }
+        : { ckgodswayReference: outcome.reference };
       await db.update(storeOrdersTable)
-        .set({ status: "processing", mcbisReference: outcome.reference })
+        .set({ status: "processing", ...refCol })
         .where(eq(storeOrdersTable.id, order!.id));
     }
   }).catch(() => {/* non-fatal */});

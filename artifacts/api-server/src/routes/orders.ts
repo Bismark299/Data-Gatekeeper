@@ -9,7 +9,7 @@ import {
 } from "@workspace/api-zod";
 import { requireAuth, requireAdmin } from "../middlewares/auth";
 import { getOrCreateWallet, insertLedgerEntry } from "./wallet";
-import { dispatchToMcbis } from "../lib/mcbis";
+import { dispatchOrder } from "../lib/dispatch";
 
 const router: IRouter = Router();
 
@@ -91,16 +91,19 @@ router.post("/orders", requireAdmin, async (req, res): Promise<void> => {
     })
     .returning();
 
-  // Fire-and-forget McBIS dispatch
-  dispatchToMcbis({
+  // Fire-and-forget dispatch (routed by network)
+  dispatchOrder({
     orderId:    order.id,
     network:    bundle.network,
     phone:      order.phoneNumber,
     bundleData: order.bundleData,
   }).then(async (outcome) => {
     if (outcome.dispatched) {
+      const refCol = outcome.provider === "mcbis"
+        ? { mcbisReference: outcome.reference }
+        : { ckgodswayReference: outcome.reference };
       await db.update(ordersTable)
-        .set({ status: "processing", mcbisReference: outcome.reference })
+        .set({ status: "processing", ...refCol })
         .where(eq(ordersTable.id, order.id));
     }
   }).catch(() => {});
@@ -210,16 +213,19 @@ router.post("/orders/purchase", requireAuth, async (req, res): Promise<void> => 
     return;
   }
 
-  // Fire-and-forget McBIS dispatch
-  dispatchToMcbis({
+  // Fire-and-forget dispatch (routed by network)
+  dispatchOrder({
     orderId:    order.id,
     network:    bundle.network,
     phone:      order.phoneNumber,
     bundleData: order.bundleData,
   }).then(async (outcome) => {
     if (outcome.dispatched) {
+      const refCol = outcome.provider === "mcbis"
+        ? { mcbisReference: outcome.reference }
+        : { ckgodswayReference: outcome.reference };
       await db.update(ordersTable)
-        .set({ status: "processing", mcbisReference: outcome.reference })
+        .set({ status: "processing", ...refCol })
         .where(eq(ordersTable.id, order.id));
     }
   }).catch(() => {});
@@ -347,15 +353,18 @@ router.post("/orders/bulk", requireAuth, async (req, res): Promise<void> => {
   for (let i = 0; i < inserted.length; i++) {
     const order   = inserted[i];
     const network = resolved[i].bundle.network;
-    dispatchToMcbis({
+    dispatchOrder({
       orderId:    order.id,
       network,
       phone:      order.phoneNumber,
       bundleData: order.bundleData,
     }).then(async (outcome) => {
       if (outcome.dispatched) {
+        const refCol = outcome.provider === "mcbis"
+          ? { mcbisReference: outcome.reference }
+          : { ckgodswayReference: outcome.reference };
         await db.update(ordersTable)
-          .set({ status: "processing", mcbisReference: outcome.reference })
+          .set({ status: "processing", ...refCol })
           .where(eq(ordersTable.id, order.id));
       }
     }).catch(() => {/* non-fatal */});

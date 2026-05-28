@@ -19,7 +19,7 @@ import {
 } from "@workspace/db";
 import { requireApiKey } from "../lib/apiKeyAuth";
 import { logger } from "../lib/logger";
-import { dispatchToMcbis } from "../lib/mcbis";
+import { dispatchOrder } from "../lib/dispatch";
 import { getOrCreateWallet, insertLedgerEntry } from "./wallet";
 import { z } from "zod";
 
@@ -483,16 +483,19 @@ router.post("/orders", requireApiKey, async (req, res) => {
       return created;
     });
 
-    // Fire-and-forget McBIS dispatch
-    dispatchToMcbis({
+    // Fire-and-forget dispatch (routed by network)
+    dispatchOrder({
       orderId:    order.id,
       network:    bundle.network,
       phone:      order.phoneNumber,
       bundleData: order.bundleData,
     }).then(async (outcome) => {
       if (outcome.dispatched) {
+        const refCol = outcome.provider === "mcbis"
+          ? { mcbisReference: outcome.reference }
+          : { ckgodswayReference: outcome.reference };
         await db.update(ordersTable)
-          .set({ status: "processing", mcbisReference: outcome.reference })
+          .set({ status: "processing", ...refCol })
           .where(eq(ordersTable.id, order.id));
       }
     }).catch(() => {});

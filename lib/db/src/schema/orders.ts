@@ -16,6 +16,7 @@ export const ordersTable = pgTable("orders", {
   status: text("status").notNull().default("pending"),
   phoneNumber: text("phone_number").notNull(),
   mcbisReference: text("mcbis_reference"),
+  ckgodswayReference: text("ckgodsway_reference"),
   topupghBatchId: integer("topupgh_batch_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
