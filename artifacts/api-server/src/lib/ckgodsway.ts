@@ -85,7 +85,9 @@ export async function getCkgodswaySettings(): Promise<{ enabled: boolean; autoSy
 type PurchaseResp = {
   success?: boolean;
   error?: string;
+  message?: string;
   data?: { reference?: string; status?: string; orderNumber?: number };
+  balance?: { previous?: number | string; current?: number | string; deducted?: number | string };
 };
 
 export async function ckgodswayPlaceOrder(opts: {
@@ -116,7 +118,47 @@ export async function ckgodswayPlaceOrder(opts: {
   const message  = String(data?.error ?? "");
   const echoedRef = String(data?.data?.reference ?? opts.reference);
 
+  // Cache the post-purchase wallet balance. CK Godsway has no separate balance
+  // endpoint — `balance.current` on every purchase response is our only source.
+  if (ok && data?.balance?.current != null) {
+    const raw = data.balance.current;
+    const n = typeof raw === "string" ? parseFloat(raw) : raw;
+    if (Number.isFinite(n)) {
+      cacheCkgodswayBalance(n).catch(err =>
+        logger.warn(`ckgodsway: failed to cache balance: ${err instanceof Error ? err.message : String(err)}`),
+      );
+    }
+  }
+
   return { accepted: ok, reference: echoedRef, status, message };
+}
+
+// ─── Cached balance (CK Godsway has no balance endpoint) ──────────────────────
+
+async function cacheCkgodswayBalance(balance: number): Promise<void> {
+  const value = balance.toFixed(2);
+  const at    = new Date().toISOString();
+  await db.insert(settingsTable)
+    .values([
+      { key: "ckgodsway_last_balance",    value },
+      { key: "ckgodsway_last_balance_at", value: at },
+    ])
+    .onConflictDoUpdate({
+      target: settingsTable.key,
+      set: { value: sql`excluded.value`, updatedAt: sql`now()` },
+    });
+}
+
+export async function getCachedCkgodswayBalance(): Promise<{ balance: number | null; at: string | null }> {
+  const rows = await db
+    .select({ key: settingsTable.key, value: settingsTable.value })
+    .from(settingsTable)
+    .where(inArray(settingsTable.key, ["ckgodsway_last_balance", "ckgodsway_last_balance_at"]));
+  const map = new Map(rows.map(r => [r.key, r.value]));
+  const raw = map.get("ckgodsway_last_balance");
+  const at  = map.get("ckgodsway_last_balance_at") ?? null;
+  const n   = raw != null ? parseFloat(raw) : NaN;
+  return { balance: Number.isFinite(n) ? n : null, at };
 }
 
 type StatusResp = {
@@ -124,34 +166,6 @@ type StatusResp = {
   error?: string;
   data?: { status?: string };
 };
-
-type BalanceResp = {
-  success?: boolean;
-  error?: string;
-  data?: { balance?: number | string };
-};
-
-/**
- * Fetches the live CK Godsway wallet balance for the configured API key.
- * Throws on network/auth failure so the caller can show "Unavailable".
- */
-export async function ckgodswayGetBalance(apiKey: string): Promise<number> {
-  const { data, status } = await apiRequest(() =>
-    ckgAxios.get<BalanceResp>(
-      `${CKG_BASE}/external/wallet-balance`,
-      {
-        headers: { "X-API-Key": apiKey },
-        validateStatus: () => true,
-      },
-    )
-  );
-  if (status >= 300 || !data?.success) {
-    throw new Error(data?.error ?? `HTTP ${status}`);
-  }
-  const raw = data?.data?.balance;
-  const n = typeof raw === "string" ? parseFloat(raw) : (raw ?? 0);
-  return Number.isFinite(n) ? n : 0;
-}
 
 /**
  * Returns the upstream order status string (one of:

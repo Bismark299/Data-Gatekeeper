@@ -12,7 +12,7 @@ import {
   getMcbisSettings, mcbisGetBalance, dispatchToMcbis,
 } from "../lib/mcbis";
 import {
-  getCkgodswaySettings, ckgodswayGetBalance,
+  getCkgodswaySettings, getCachedCkgodswayBalance,
 } from "../lib/ckgodsway";
 import { logger } from "../lib/logger";
 import { creditWallet, insertLedgerEntry } from "./wallet";
@@ -1422,22 +1422,21 @@ router.get("/admin/mcbis/balance", requireAdmin, async (_req, res): Promise<void
   }
 });
 
-/** GET /admin/ckgodsway/balance — fetch live wallet balance from CK Godsway */
+/**
+ * GET /admin/ckgodsway/balance — return the cached wallet balance.
+ * CK Godsway has no standalone balance endpoint — the balance is captured from
+ * the `balance.current` field on every successful /data-purchase response and
+ * cached in the settings table. Returns null balance if no purchase has been
+ * made yet (admin should make a test purchase to populate it).
+ */
 router.get("/admin/ckgodsway/balance", requireAdmin, async (_req, res): Promise<void> => {
   const { apiKey } = await getCkgodswaySettings();
   if (!apiKey) {
     res.status(400).json({ error: "CK Godsway API key not configured" });
     return;
   }
-  try {
-    const balance = await ckgodswayGetBalance(apiKey);
-    res.json({ balance });
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : "Failed to fetch balance";
-    // Log only the message — never the axios error object (it contains the API key in config.headers)
-    logger.warn(`ckgodsway balance error: ${msg}`);
-    res.status(502).json({ error: msg });
-  }
+  const { balance, at } = await getCachedCkgodswayBalance();
+  res.json({ balance, asOf: at, cached: true });
 });
 
 /** POST /admin/mcbis/dispatch/:orderId — manually dispatch a platform order */
