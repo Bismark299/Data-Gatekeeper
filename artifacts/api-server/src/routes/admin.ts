@@ -11,6 +11,9 @@ import { generateApiKey } from "../lib/apiKeyAuth";
 import {
   getMcbisSettings, mcbisGetBalance, dispatchToMcbis,
 } from "../lib/mcbis";
+import {
+  getCkgodswaySettings, ckgodswayGetBalance,
+} from "../lib/ckgodsway";
 import { logger } from "../lib/logger";
 import { creditWallet, insertLedgerEntry } from "./wallet";
 import {
@@ -1414,6 +1417,23 @@ router.get("/admin/mcbis/balance", requireAdmin, async (_req, res): Promise<void
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "Failed to fetch balance";
     logger.error({ err: e }, `mcbis balance error: ${msg}`);
+    res.status(502).json({ error: msg });
+  }
+});
+
+/** GET /admin/ckgodsway/balance — fetch live wallet balance from CK Godsway */
+router.get("/admin/ckgodsway/balance", requireAdmin, async (_req, res): Promise<void> => {
+  const { apiKey } = await getCkgodswaySettings();
+  if (!apiKey) {
+    res.status(400).json({ error: "CK Godsway API key not configured" });
+    return;
+  }
+  try {
+    const balance = await ckgodswayGetBalance(apiKey);
+    res.json({ balance });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : "Failed to fetch balance";
+    logger.error({ err: e }, `ckgodsway balance error: ${msg}`);
     res.status(502).json({ error: msg });
   }
 });

@@ -40,6 +40,7 @@ const DEFAULTS: Record<string, string> = {
   order_auto_complete: "false",
   footer_note:         "© 2025 DataBundle GH. All rights reserved.",
   mcbis_enabled:               "false",
+  ckgodsway_enabled:           "false",
   topupgh_enabled:             "false",
   topupgh_min_batch:           "5",
   topupgh_max_batch:           "50",
@@ -478,6 +479,107 @@ function McbisSolutionSection({
   );
 }
 
+function CkGodswaySection({
+  enabled,
+  onToggle,
+}: {
+  enabled: boolean;
+  onToggle: (v: boolean) => void;
+}) {
+  const [balanceState, setBalanceState] = useState<"idle" | "loading" | "ok" | "error">("idle");
+  const [balance, setBalance] = useState<number | null>(null);
+  const { toast } = useToast();
+
+  const checkBalance = async () => {
+    setBalanceState("loading");
+    try {
+      const res = await fetch("/api/admin/ckgodsway/balance", { credentials: "include" });
+      const data = await res.json() as { balance?: number; error?: string };
+      if (!res.ok) throw new Error(data.error ?? "Failed");
+      setBalance(data.balance ?? null);
+      setBalanceState("ok");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Failed to fetch balance";
+      toast({ title: msg, variant: "destructive" });
+      setBalanceState("error");
+    }
+  };
+
+  return (
+    <div className="bg-card border border-border rounded-2xl p-5 space-y-5">
+      {/* Header */}
+      <div className="flex items-start gap-3 pb-4 border-b border-border">
+        <div className="w-8 h-8 rounded-lg bg-sky-500/10 flex items-center justify-center shrink-0">
+          <Zap className="w-4 h-4 text-sky-500" />
+        </div>
+        <div className="flex-1">
+          <div className="flex items-center gap-2">
+            <h2 className="font-semibold text-foreground text-sm">CK Godsway Auto-Fulfillment</h2>
+            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${enabled ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400" : "bg-muted text-muted-foreground"}`}>
+              {enabled ? "ENABLED" : "DISABLED"}
+            </span>
+          </div>
+          <p className="text-xs text-muted-foreground">Automatically send Telecel and AirtelTigo orders to CK Godsway for instant fulfillment</p>
+        </div>
+      </div>
+
+      {/* Toggle row */}
+      <div className="flex items-center justify-between bg-muted/30 rounded-xl px-4 py-3">
+        <div>
+          <div className="text-sm font-semibold text-foreground">Enable Auto-Fulfillment</div>
+          <div className="text-xs text-muted-foreground">Telecel / AT-iShare / AT-BigTime orders are sent to CK Godsway immediately after payment</div>
+        </div>
+        <button
+          type="button"
+          onClick={() => onToggle(!enabled)}
+          className={`relative w-11 h-6 rounded-full transition-colors focus:outline-none ${enabled ? "bg-emerald-500" : "bg-muted-foreground/30"}`}
+          aria-label="Toggle CK Godsway"
+        >
+          <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${enabled ? "translate-x-5" : "translate-x-0"}`} />
+        </button>
+      </div>
+
+      {/* Network coverage + balance */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center gap-2">
+          <Wifi className="w-3.5 h-3.5 text-red-500" />
+          <span className="text-xs text-muted-foreground">Coverage: <span className="font-semibold text-foreground">Telecel, AT-iShare, AT-BigTime</span></span>
+        </div>
+        <div className="flex items-center gap-2">
+          {balanceState === "ok" && balance !== null && (
+            <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+              Wallet: GH₵{balance.toFixed(2)}
+            </span>
+          )}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={checkBalance}
+            disabled={balanceState === "loading"}
+            className="gap-1.5 h-7 text-xs"
+          >
+            {balanceState === "loading"
+              ? <Loader2 className="w-3 h-3 animate-spin" />
+              : <RefreshCw className="w-3 h-3" />}
+            Check Balance
+          </Button>
+        </div>
+      </div>
+
+      {/* Info */}
+      <div className="flex items-start gap-2.5 px-3.5 py-2.5 rounded-xl bg-sky-50 dark:bg-sky-900/10 border border-sky-200 dark:border-sky-800">
+        <Info className="w-3.5 h-3.5 text-sky-500 shrink-0 mt-0.5" />
+        <p className="text-[11px] text-sky-700 dark:text-sky-400">
+          When enabled, new Telecel / AT-iShare / AT-BigTime orders are auto-dispatched to CK Godsway after purchase/payment confirmation.
+          Orders that succeed immediately are marked <strong>completed</strong>; pending ones become <strong>processing</strong> and are polled every 10s.
+          MTN orders are unaffected — they continue to route through McbisSolution / TopUpGH.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function AdminSettingsContent() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [local, setLocal] = useState<Record<string, string>>({});
@@ -652,6 +754,19 @@ function AdminSettingsContent() {
                     ...local,
                     mcbis_enabled:   v ? "true" : "false",
                     topupgh_enabled: v ? "false" : local.topupgh_enabled,
+                  };
+                  setLocal(updated);
+                  saveMutation.mutate(updated);
+                }}
+              />
+
+              {/* CK Godsway Integration (Telecel + AT) */}
+              <CkGodswaySection
+                enabled={local.ckgodsway_enabled === "true"}
+                onToggle={v => {
+                  const updated = {
+                    ...local,
+                    ckgodsway_enabled: v ? "true" : "false",
                   };
                   setLocal(updated);
                   saveMutation.mutate(updated);

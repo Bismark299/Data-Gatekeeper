@@ -123,6 +123,34 @@ type StatusResp = {
   data?: { status?: string };
 };
 
+type BalanceResp = {
+  success?: boolean;
+  error?: string;
+  data?: { balance?: number | string };
+};
+
+/**
+ * Fetches the live CK Godsway wallet balance for the configured API key.
+ * Throws on network/auth failure so the caller can show "Unavailable".
+ */
+export async function ckgodswayGetBalance(apiKey: string): Promise<number> {
+  const { data, status } = await apiRequest(() =>
+    ckgAxios.get<BalanceResp>(
+      `${CKG_BASE}/external/wallet-balance`,
+      {
+        headers: { "X-API-Key": apiKey },
+        validateStatus: () => true,
+      },
+    )
+  );
+  if (status >= 300 || !data?.success) {
+    throw new Error(data?.error ?? `HTTP ${status}`);
+  }
+  const raw = data?.data?.balance;
+  const n = typeof raw === "string" ? parseFloat(raw) : (raw ?? 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
 /**
  * Returns the upstream order status string (one of:
  * INITIATED, PENDING, PROCESSING, SUCCESSFUL, FAILED, CANCELLED) — or "" on error.

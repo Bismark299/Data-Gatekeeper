@@ -39,8 +39,9 @@ export function AdminSidebar({ open, onClose }: AdminSidebarProps) {
     staleTime: 60_000,
   });
 
-  const mcbisEnabled  = settings?.mcbis_enabled  === "true";
-  const topupghEnabled = settings?.topupgh_enabled === "true";
+  const mcbisEnabled     = settings?.mcbis_enabled     === "true";
+  const ckgodswayEnabled = settings?.ckgodsway_enabled === "true";
+  const topupghEnabled   = settings?.topupgh_enabled   === "true";
 
   // McbisSolution wallet balance (only when mcbis is active)
   const { data: mcbisData, isLoading: mcbisLoading } = useQuery<{ balance: number | null; configured: boolean }>({
@@ -69,9 +70,27 @@ export function AdminSidebar({ open, onClose }: AdminSidebarProps) {
     retry: false,
   });
 
-  const mcbisBalance   = mcbisData?.balance ?? null;
-  const mcbisConfigured = mcbisEnabled && mcbisData?.configured !== false;
-  const topupghBalance  = topupghData?.success ? topupghData.balance : null;
+  // CK Godsway wallet balance (only when ckgodsway is active)
+  const { data: ckgData, isLoading: ckgLoading } = useQuery<{ balance: number | null; configured: boolean }>({
+    queryKey: ["ckgodsway-balance-sidebar"],
+    queryFn: async () => {
+      const r = await fetch("/api/admin/ckgodsway/balance", { credentials: "include" });
+      const d = await r.json() as { balance?: number; error?: string };
+      if (r.status === 400 && d.error?.includes("not configured")) return { balance: null, configured: false };
+      if (!r.ok) throw new Error(d.error ?? `HTTP ${r.status}`);
+      return { balance: d.balance ?? null, configured: true };
+    },
+    enabled: ckgodswayEnabled,
+    refetchInterval: ckgodswayEnabled ? 30_000 : false,
+    staleTime: 20_000,
+    retry: false,
+  });
+
+  const mcbisBalance      = mcbisData?.balance ?? null;
+  const mcbisConfigured   = mcbisEnabled && mcbisData?.configured !== false;
+  const ckgBalance        = ckgData?.balance ?? null;
+  const ckgConfigured     = ckgodswayEnabled && ckgData?.configured !== false;
+  const topupghBalance    = topupghData?.success ? topupghData.balance : null;
 
   const SidebarContent = () => (
     <div className="flex flex-col h-full bg-sidebar text-sidebar-foreground">
@@ -110,6 +129,26 @@ export function AdminSidebar({ open, onClose }: AdminSidebarProps) {
             )}
           </div>
           <div className="w-1.5 h-1.5 rounded-full bg-sky-400 shrink-0" title="Live" />
+        </div>
+      )}
+
+      {/* CK Godsway live wallet balance — shown when CK Godsway is enabled */}
+      {ckgConfigured && (
+        <div className="mx-3 mt-3 mb-1 rounded-xl bg-sidebar-accent/50 border border-sidebar-border px-3 py-2.5 flex items-center gap-2.5">
+          <div className="w-7 h-7 rounded-lg bg-red-500/15 flex items-center justify-center shrink-0">
+            <Zap className="w-3.5 h-3.5 text-red-500" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="text-[10px] font-semibold text-sidebar-foreground/40 uppercase tracking-wider leading-none mb-0.5">CK Godsway</div>
+            {ckgLoading ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-sidebar-foreground/40" />
+            ) : ckgBalance == null ? (
+              <div className="text-xs text-sidebar-foreground/40">Unavailable</div>
+            ) : (
+              <div className="text-sm font-bold text-red-500">GH₵{ckgBalance.toFixed(2)}</div>
+            )}
+          </div>
+          <div className="w-1.5 h-1.5 rounded-full bg-red-400 shrink-0" title="Live" />
         </div>
       )}
 
