@@ -10,6 +10,7 @@ import {
 import {
   Tooltip, TooltipContent, TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 export function Navbar() {
   const { isAuthenticated, isAdmin, user, signOut } = useAuth();
@@ -92,6 +93,9 @@ export function Navbar() {
                 </div>
               </Link>
             )}
+
+            {/* Theme toggle */}
+            <ThemeToggle />
 
             {/* Cart */}
             {isAuthenticated && (

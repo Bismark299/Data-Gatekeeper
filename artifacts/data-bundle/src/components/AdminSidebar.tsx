@@ -7,6 +7,7 @@ import {
   Wallet, ArrowDownCircle, BarChart3, Store, Settings, Zap, Loader2, Smartphone,
   Package2, KeyRound,
 } from "lucide-react";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 const navItems = [
   { href: "/admin",              icon: LayoutDashboard, label: "Dashboard" },
@@ -206,6 +207,10 @@ export function AdminSidebar({ open, onClose }: AdminSidebarProps) {
             <div className="text-xs text-sidebar-foreground/50 truncate">{user?.email}</div>
           </div>
         </div>
+        <ThemeToggle
+          variant="full"
+          className="w-full justify-start text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/40"
+        />
         <Button
           variant="ghost"
           size="sm"
