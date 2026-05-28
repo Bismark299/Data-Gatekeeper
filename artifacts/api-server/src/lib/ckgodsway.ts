@@ -16,8 +16,10 @@
 import { eq, and, isNotNull, isNull, inArray } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import axios from "axios";
+import crypto from "crypto";
 import { db, settingsTable, ordersTable, storeOrdersTable, bundlesTable, storesTable } from "@workspace/db";
 import { parseGb } from "./mcbis";
+import { logger } from "./logger";
 
 const ckgAxios = axios.create({
   timeout: 15_000,
@@ -255,6 +257,100 @@ export async function dispatchToCkgodsway(opts: {
   } catch {
     await releaseLock();
     return { dispatched: false, reason: "api_error" };
+  }
+}
+
+// ─── Webhook (optional — coexists with the poller as a fallback) ─────────────
+
+export type CkgodswayWebhookPayload = {
+  event?: string;
+  data?: {
+    reference?: string;
+    status?: string;
+  };
+  // Some providers send these flat — accept both shapes.
+  reference?: string;
+  status?: string;
+};
+
+/**
+ * Verify the X-Webhook-Signature header from CK Godsway.
+ * Signature = HMAC-SHA256(rawBody, webhookSecret), hex-encoded.
+ * Returns false if secret is missing or signature doesn't match.
+ */
+export function verifyCkgodswayWebhookSignature(signature: string, rawBody: Buffer): boolean {
+  const secret = process.env.CKGODSWAY_WEBHOOK_SECRET ?? "";
+  if (!secret) return false;
+  const expected = crypto.createHmac("sha256", secret).update(rawBody).digest("hex");
+  // Length check before timingSafeEqual to avoid a throw on mismatched lengths
+  const sigBuf = Buffer.from(signature, "utf8");
+  const expBuf = Buffer.from(expected, "utf8");
+  if (sigBuf.length !== expBuf.length) return false;
+  return crypto.timingSafeEqual(sigBuf, expBuf);
+}
+
+/**
+ * Process an order status webhook from CK Godsway.
+ * Idempotent — safe if the poller already moved the order.
+ * Looks up the order by ckgodsway_reference and applies the same status
+ * transitions as the poller (SUCCESSFUL → completed, FAILED/CANCELLED → failed).
+ * Store-order success credits the store's profit_balance inside a transaction.
+ */
+export async function handleCkgodswayWebhook(payload: CkgodswayWebhookPayload): Promise<void> {
+  const reference = (payload?.data?.reference ?? payload?.reference ?? "").trim();
+  const status    = (payload?.data?.status    ?? payload?.status    ?? "").toUpperCase().trim();
+  if (!reference || !status) {
+    logger.warn({ payload }, "CK Godsway webhook: missing reference or status");
+    return;
+  }
+
+  const isStoreOrder = reference.startsWith("CKG-SO-");
+  const isPlatform   = reference.startsWith("CKG-PO-");
+  if (!isStoreOrder && !isPlatform) {
+    logger.warn({ reference }, "CK Godsway webhook: unrecognized reference prefix");
+    return;
+  }
+
+  if (isPlatform) {
+    const [row] = await db
+      .select({ id: ordersTable.id, status: ordersTable.status })
+      .from(ordersTable)
+      .where(eq(ordersTable.ckgodswayReference, reference));
+    if (!row) { logger.warn({ reference }, "CK Godsway webhook: platform order not found"); return; }
+    if (row.status === "completed" || row.status === "failed") return; // idempotent
+
+    if (status === "SUCCESSFUL") {
+      await db.update(ordersTable).set({ status: "completed" }).where(eq(ordersTable.id, row.id));
+    } else if (status === "FAILED" || status === "CANCELLED") {
+      await db.update(ordersTable).set({ status: "failed" }).where(eq(ordersTable.id, row.id));
+    }
+    return;
+  }
+
+  // Store order
+  if (status === "SUCCESSFUL") {
+    await db.transaction(async (tx) => {
+      const [row] = await tx
+        .select({ id: storeOrdersTable.id, profit: storeOrdersTable.profit, storeId: storeOrdersTable.storeId, status: storeOrdersTable.status })
+        .from(storeOrdersTable)
+        .where(eq(storeOrdersTable.ckgodswayReference, reference))
+        .for("update");
+      if (!row) { logger.warn({ reference }, "CK Godsway webhook: store order not found"); return; }
+      if (row.status === "completed" || row.status === "failed") return; // idempotent
+      await tx.update(storeOrdersTable).set({ status: "completed" }).where(eq(storeOrdersTable.id, row.id));
+      const profit = parseFloat(row.profit);
+      await tx.update(storesTable)
+        .set({ profitBalance: sql`profit_balance + ${profit.toFixed(2)}::numeric` })
+        .where(eq(storesTable.id, row.storeId));
+    });
+  } else if (status === "FAILED" || status === "CANCELLED") {
+    const [row] = await db
+      .select({ id: storeOrdersTable.id, status: storeOrdersTable.status })
+      .from(storeOrdersTable)
+      .where(eq(storeOrdersTable.ckgodswayReference, reference));
+    if (!row) { logger.warn({ reference }, "CK Godsway webhook: store order not found"); return; }
+    if (row.status === "completed" || row.status === "failed") return; // idempotent
+    await db.update(storeOrdersTable).set({ status: "failed" }).where(eq(storeOrdersTable.id, row.id));
   }
 }
 

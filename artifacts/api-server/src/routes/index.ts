@@ -8,6 +8,7 @@ import { walletRouter, handlePaystackWebhook } from "./wallet";
 import { cartRouter } from "./cart";
 import { storesRouter, handleStorePaystackWebhook } from "./stores";
 import { topupghRouter } from "./topupgh";
+import { ckgodswayRouter } from "./ckgodsway";
 import { publicApiRouter } from "./publicApi";
 import crypto from "crypto";
 
@@ -54,6 +55,7 @@ router.use("/wallet", walletRouter);
 router.use("/cart", cartRouter);
 router.use(storesRouter);
 router.use(topupghRouter);
+router.use(ckgodswayRouter);
 router.use("/v1", publicApiRouter);
 
 export default router;
