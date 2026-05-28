@@ -72,5 +72,14 @@ await pool.query(`
   ALTER TABLE orders ADD COLUMN IF NOT EXISTS topupgh_batch_id INTEGER
 `);
 console.log("\u2713 orders.topupgh_batch_id column exists");
+
+// Add ckgodsway_reference columns for the CK Godsway fulfillment provider
+// (handles Telecel, AT-iShare, AT-BigTime; MTN stays on McBIS/TopUpGH)
+await pool.query(`
+  ALTER TABLE orders       ADD COLUMN IF NOT EXISTS ckgodsway_reference TEXT;
+  ALTER TABLE store_orders ADD COLUMN IF NOT EXISTS ckgodsway_reference TEXT;
+`);
+console.log("\u2713 ckgodsway_reference columns exist on orders and store_orders");
+
 await pool.end();
 console.log("✓ Migration complete");
