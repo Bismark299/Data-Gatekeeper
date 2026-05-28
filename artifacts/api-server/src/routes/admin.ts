@@ -1416,7 +1416,8 @@ router.get("/admin/mcbis/balance", requireAdmin, async (_req, res): Promise<void
     res.json({ balance });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "Failed to fetch balance";
-    logger.error({ err: e }, `mcbis balance error: ${msg}`);
+    // Log only the message — never the axios error object (it contains the Bearer token in config.headers)
+    logger.warn(`mcbis balance error: ${msg}`);
     res.status(502).json({ error: msg });
   }
 });
@@ -1433,7 +1434,8 @@ router.get("/admin/ckgodsway/balance", requireAdmin, async (_req, res): Promise<
     res.json({ balance });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "Failed to fetch balance";
-    logger.error({ err: e }, `ckgodsway balance error: ${msg}`);
+    // Log only the message — never the axios error object (it contains the API key in config.headers)
+    logger.warn(`ckgodsway balance error: ${msg}`);
     res.status(502).json({ error: msg });
   }
 });
