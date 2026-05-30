@@ -52,10 +52,10 @@ const fmtDate = (iso: string) =>
   new Date(iso).toLocaleString("en-GH", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true });
 
 function StatCard({
-  icon: Icon, label, value, moneyValue, sub, colorClass, bgClass, accent, pulse,
+  icon: Icon, label, value, moneyValue, dataValue, sub, colorClass, bgClass, accent, pulse,
 }: {
   icon: React.ElementType; label: string; value: string | number;
-  moneyValue?: string; sub: string; colorClass: string; bgClass: string; accent?: boolean; pulse?: boolean;
+  moneyValue?: string; dataValue?: string; sub: string; colorClass: string; bgClass: string; accent?: boolean; pulse?: boolean;
 }) {
   return (
     <div
@@ -78,6 +78,11 @@ function StatCard({
         {moneyValue && (
           <div className={`text-sm font-bold mt-0.5 ${accent ? "text-primary-foreground/80" : "text-emerald-600 dark:text-emerald-400"}`}>
             {moneyValue}
+            {dataValue && (
+              <span className={`ml-2 ${accent ? "text-primary-foreground/70" : "text-sky-600 dark:text-sky-400"}`}>
+                · {dataValue}
+              </span>
+            )}
           </div>
         )}
         <div className={`text-xs mt-1 flex items-center gap-1.5 ${accent ? "text-primary-foreground/60" : "text-muted-foreground"}`}>
@@ -256,6 +261,28 @@ function AdminDashboardContent() {
   const sumPrice = (orders: typeof dayOrders) =>
     `GH₵${orders.reduce((s, o) => s + Number(o.price), 0).toFixed(2)}`;
 
+  // Parse a bundle-data string (e.g. "5GB", "500MB", "1TB") into GB.
+  // Strict: only a clean "<number><unit>" string counts; anything else is 0.
+  const toGB = (raw: string): number => {
+    const m = String(raw ?? "").trim().match(/^(\d+(?:\.\d+)?)\s*(TB|GB|MB)?$/i);
+    if (!m) return 0;
+    const n = parseFloat(m[1]);
+    if (!Number.isFinite(n)) return 0;
+    const unit = (m[2] ?? "GB").toUpperCase();
+    return unit === "TB" ? n * 1024 : unit === "MB" ? n / 1024 : n;
+  };
+
+  // Total data volume of a set of orders, formatted (e.g. "500MB", "54GB", "1.5TB").
+  const sumData = (orders: Array<{ bundleData?: string | null }>) => {
+    const totalGB = orders.reduce((s, o) => s + toGB(o.bundleData ?? ""), 0);
+    if (totalGB >= 1024) return `${(totalGB / 1024).toFixed(totalGB % 1024 === 0 ? 0 : 1)}TB`;
+    if (totalGB > 0 && totalGB < 1) {
+      const mb = totalGB * 1024;
+      return `${Number.isInteger(mb) ? mb : mb.toFixed(0)}MB`;
+    }
+    return `${Number.isInteger(totalGB) ? totalGB : totalGB.toFixed(1)}GB`;
+  };
+
   const dayPending    = dayOrders.filter(o => o.status === "pending");
   const dayCompleted  = dayOrders.filter(o => o.status === "completed");
   const dayProcessing = dayOrders.filter(o => o.status === "processing");
@@ -278,9 +305,9 @@ function AdminDashboardContent() {
 
   const statCards = useMemo(() => stats ? [
     { icon: Wallet,       label: "Wallet Balance",  value: `GH₵${((stats as { totalWalletBalance?: number }).totalWalletBalance ?? 0).toFixed(2)}`, sub: "Total user wallet funds",              colorClass: "text-emerald-600", bgClass: "bg-emerald-100 dark:bg-emerald-900/20", accent: true },
-    { icon: ShoppingCart, label: "Total Orders",    value: totalOrderCount, moneyValue: sumPrice(dayOrders), sub: `${dayOrders.length} direct · ${dayStoreOrders.length} store`, colorClass: "text-violet-600",  bgClass: "bg-violet-100 dark:bg-violet-900/20" },
+    { icon: ShoppingCart, label: "Total Orders",    value: totalOrderCount, moneyValue: sumPrice(dayOrders), dataValue: sumData([...dayOrders, ...dayStoreOrders]), sub: `${dayOrders.length} direct · ${dayStoreOrders.length} store`, colorClass: "text-violet-600",  bgClass: "bg-violet-100 dark:bg-violet-900/20" },
     { icon: Clock,        label: "Pending",         value: totalPending,    sub: `${dayPending.length} direct · ${storePendingCount} store`,   colorClass: "text-amber-600",   bgClass: "bg-amber-100 dark:bg-amber-900/20",   pulse: totalPending > 0 },
-    { icon: CheckCircle2, label: "Completed",       value: totalCompleted,  moneyValue: sumPrice(dayCompleted), sub: `${dayCompleted.length} direct · ${dayStoreOrders.filter((o: any) => o.status === "completed").length} store`, colorClass: "text-teal-600",    bgClass: "bg-teal-100 dark:bg-teal-900/20" },
+    { icon: CheckCircle2, label: "Completed",       value: totalCompleted,  moneyValue: sumPrice(dayCompleted), dataValue: sumData([...dayCompleted, ...dayStoreOrders.filter((o: any) => o.status === "completed")]), sub: `${dayCompleted.length} direct · ${dayStoreOrders.filter((o: any) => o.status === "completed").length} store`, colorClass: "text-teal-600",    bgClass: "bg-teal-100 dark:bg-teal-900/20" },
     { icon: Zap,          label: "Processing",      value: totalProcessing, sub: `${dayProcessing.length} direct · ${dayStoreOrders.filter((o: any) => o.status === "processing").length} store`, colorClass: "text-sky-600", bgClass: "bg-sky-100 dark:bg-sky-900/20", pulse: totalProcessing > 0 },
     { icon: AlertCircle,  label: "Failed",          value: totalFailed,     sub: `${dayFailed.length} direct · ${dayStoreOrders.filter((o: any) => o.status === "failed" || o.status === "cancelled").length} store`, colorClass: "text-red-600",     bgClass: "bg-red-100 dark:bg-red-900/20" },
   ] : [], [stats, dayOrders, dayStoreOrders, dayPending, dayCompleted, dayProcessing, dayFailed, totalOrderCount, totalCompleted, totalPending, storePendingCount, totalProcessing, totalFailed, dateFrom, dateTo]);
