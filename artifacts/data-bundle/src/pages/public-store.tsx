@@ -143,15 +143,9 @@ function CheckoutDialog({
               const fee = +(bundle.sellingPrice * 0.02).toFixed(2);
               const total = +(bundle.sellingPrice + fee).toFixed(2);
               return (
-                <div className="rounded-xl border border-border bg-muted/40 px-3 py-2 space-y-1 text-sm">
-                  <div className="flex justify-between text-muted-foreground">
-                    <span>Bundle price</span><span>GH₵{bundle.sellingPrice.toFixed(2)}</span>
-                  </div>
-                  <div className="flex justify-between text-muted-foreground">
-                    <span>Processing fee (2%)</span><span>GH₵{fee.toFixed(2)}</span>
-                  </div>
-                  <div className="flex justify-between font-semibold text-foreground border-t border-border pt-1 mt-1">
-                    <span>Total charged</span><span>GH₵{total.toFixed(2)}</span>
+                <div className="rounded-xl border border-border bg-muted/40 px-3 py-2 text-sm">
+                  <div className="flex justify-between font-semibold text-foreground">
+                    <span>Total</span><span>GH₵{total.toFixed(2)}</span>
                   </div>
                 </div>
               );
