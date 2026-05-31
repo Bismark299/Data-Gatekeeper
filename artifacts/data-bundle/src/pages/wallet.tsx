@@ -3,7 +3,6 @@ import {
   useGetWalletBalance,
   useListDeposits,
   useInitializePaystackDeposit,
-  useVerifyPaystackDeposit,
   useClaimMomoDeposit,
   useGetMomoInfo,
   getGetWalletBalanceQueryKey,
@@ -42,6 +41,7 @@ function WalletContent() {
   const [pendingRef, setPendingRef]         = useState("");
   const [showVerifyDialog, setShowVerifyDialog] = useState(false);
   const [autoVerifying, setAutoVerifying]   = useState(false);
+  const [manualVerifying, setManualVerifying] = useState(false);
 
   // Pagination
   const [page, setPage]         = useState(1);
@@ -56,7 +56,6 @@ function WalletContent() {
   const { data: deposits } = useListDeposits({ query: { refetchInterval: 15_000 } } as any);
   const { data: momoInfo }  = useGetMomoInfo();
   const initPaystack        = useInitializePaystackDeposit();
-  const verifyMutation      = useVerifyPaystackDeposit();
   const claimMomo           = useClaimMomoDeposit();
 
   const invalidate = useCallback(() => {
@@ -65,22 +64,47 @@ function WalletContent() {
   }, [queryClient]);
 
   // Auto-verify when Paystack redirects back with ?paystack_ref=...
+  // Paystack (especially Mobile Money) often hasn't settled the charge to
+  // "success" at the moment it redirects back, so a single verify call would
+  // wrongly look like a failed transaction. We poll a few times — giving the
+  // webhook + Paystack settlement time — before falling back to the manual dialog.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const ref = params.get("paystack_ref");
     if (!ref) return;
     window.history.replaceState({}, "", window.location.pathname);
     setAutoVerifying(true);
-    verifyPaystackDeposit({ data: { reference: ref } })
-      .then((w) => {
-        invalidate();
-        toast({ title: "Payment confirmed!", description: `New balance: GH₵${Number(w.balance).toFixed(2)}` });
-      })
-      .catch(() => {
-        setPendingRef(ref);
-        setShowVerifyDialog(true);
-      })
-      .finally(() => setAutoVerifying(false));
+
+    let cancelled = false;
+    let attempt = 0;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const MAX_ATTEMPTS = 10;   // ~ up to 10 tries
+    const DELAY_MS = 4000;     // 4s apart → ~40s settlement window
+
+    const attemptVerify = () => {
+      if (cancelled) return;
+      verifyPaystackDeposit({ reference: ref })
+        .then((w) => {
+          if (cancelled) return;
+          invalidate();
+          toast({ title: "Payment confirmed!", description: `New balance: GH₵${Number(w.balance).toFixed(2)}` });
+          setAutoVerifying(false);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          attempt += 1;
+          if (attempt < MAX_ATTEMPTS) {
+            timeoutId = setTimeout(attemptVerify, DELAY_MS);
+          } else {
+            setAutoVerifying(false);
+            setPendingRef(ref);
+            setShowVerifyDialog(true);
+          }
+        });
+    };
+    attemptVerify();
+
+    return () => { cancelled = true; if (timeoutId) clearTimeout(timeoutId); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handlePaystackPay = () => {
@@ -106,17 +130,27 @@ function WalletContent() {
     });
   };
 
-  const handleVerify = () => {
-    verifyMutation.mutate({ data: { reference: pendingRef } }, {
-      onSuccess: (w) => {
+  const handleVerify = async () => {
+    setManualVerifying(true);
+    const MAX_ATTEMPTS = 6;
+    const DELAY_MS = 4000;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        const w = await verifyPaystackDeposit({ reference: pendingRef });
         toast({ title: "Payment confirmed!", description: `New balance: GH₵${Number(w.balance).toFixed(2)}` });
         invalidate();
         setShowVerifyDialog(false);
-      },
-      onError: (e: unknown) => {
-        toast({ title: (e as { message?: string })?.message ?? "Not confirmed yet — please wait a moment.", variant: "destructive" });
-      },
-    });
+        setManualVerifying(false);
+        return;
+      } catch (e) {
+        if (attempt === MAX_ATTEMPTS) {
+          toast({ title: (e as { message?: string })?.message ?? "Not confirmed yet — please wait a moment and try again.", variant: "destructive" });
+        } else {
+          await new Promise((r) => setTimeout(r, DELAY_MS));
+        }
+      }
+    }
+    setManualVerifying(false);
   };
 
   const handleMomoClaim = () => {
@@ -490,8 +524,8 @@ function WalletContent() {
           </div>
           <DialogFooter className="gap-2">
             <Button variant="outline" onClick={() => setShowVerifyDialog(false)}>Close</Button>
-            <Button onClick={handleVerify} disabled={verifyMutation.isPending} data-testid="button-confirm-payment">
-              {verifyMutation.isPending ? <><RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" />Checking…</> : "Confirm Payment"}
+            <Button onClick={handleVerify} disabled={manualVerifying} data-testid="button-confirm-payment">
+              {manualVerifying ? <><RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" />Checking…</> : "Confirm Payment"}
             </Button>
           </DialogFooter>
         </DialogContent>

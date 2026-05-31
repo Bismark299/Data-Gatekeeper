@@ -1,0 +1,2 @@
+- [Orval client body shapes](orval-client-body-shapes.md) — generated direct fn takes body directly; mutation hook takes `{ data: body }`. Mixing them silently 400s.
+- [Paystack settlement polling](paystack-settlement-polling.md) — MoMo redirect-back often pre-settlement; verify must poll/retry, not fail on first try. Backend dual-path is idempotent.

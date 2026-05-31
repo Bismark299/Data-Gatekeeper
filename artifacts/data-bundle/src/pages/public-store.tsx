@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useParams, Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { storeApi, type PublicStore, type StoreBundle } from "@/lib/storeApi";
@@ -196,14 +196,40 @@ function OrderStatusCard({
   const [order, setOrder] = useState<any>(null);
   const [error, setError] = useState("");
 
-  const verify = async () => {
+  const cancelledRef = useRef(false);
+
+  // Paystack (especially Mobile Money) often hasn't settled to "success" at the
+  // moment it redirects the customer back, so a single verify would wrongly show
+  // a failed payment. Poll a few times before surfacing an error.
+  const verify = async (poll = false) => {
     setLoading(true); setError("");
-    try { const o = await storeApi.verifyPayment(slug, reference); setOrder(o); }
-    catch (e) { setError((e as Error).message ?? "Verification failed"); }
-    finally { setLoading(false); }
+    const MAX_ATTEMPTS = poll ? 10 : 1;
+    const DELAY_MS = 4000;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      if (cancelledRef.current) return;
+      try {
+        const o = await storeApi.verifyPayment(slug, reference);
+        if (cancelledRef.current) return;
+        setOrder(o);
+        setLoading(false);
+        return;
+      } catch (e) {
+        if (cancelledRef.current) return;
+        if (attempt === MAX_ATTEMPTS) {
+          setError((e as Error).message ?? "Verification failed");
+          setLoading(false);
+        } else {
+          await new Promise((r) => setTimeout(r, DELAY_MS));
+        }
+      }
+    }
   };
 
-  useEffect(() => { verify(); }, [reference]);
+  useEffect(() => {
+    cancelledRef.current = false;
+    verify(true);
+    return () => { cancelledRef.current = true; };
+  }, [reference]);
 
   if (loading) return (
     <div className="flex flex-col items-center justify-center py-20 gap-4">
@@ -217,7 +243,7 @@ function OrderStatusCard({
       <XCircle className="w-12 h-12 text-red-500" />
       <p className="font-semibold text-foreground">Payment could not be verified</p>
       <p className="text-sm text-muted-foreground">{error}</p>
-      <Button onClick={verify} variant="outline" className="gap-2"><RotateCcw className="w-4 h-4" /> Retry</Button>
+      <Button onClick={() => verify(true)} variant="outline" className="gap-2"><RotateCcw className="w-4 h-4" /> Retry</Button>
     </div>
   );
 
