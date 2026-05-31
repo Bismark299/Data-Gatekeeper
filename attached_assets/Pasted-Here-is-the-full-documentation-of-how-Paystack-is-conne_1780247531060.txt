@@ -1,0 +1,107 @@
+Here is the full documentation of how Paystack is connected and used on this platform:
+
+Paystack Integration — KemDataplus
+Configuration
+Paystack credentials are loaded in this priority order:
+
+Environment variables — PAYSTACK_SECRET_KEY and PAYSTACK_PUBLIC_KEY (preferred for production)
+settings.json fallback — adminSettings.paystackSecretKey and adminSettings.paystackPublicKey
+The secret key is used server-side only and never exposed to the browser. The public key is served to the frontend via GET /api/paystack/public-key.
+
+There is also a toggle — siteSettings.paystackEnabled in settings.json — that the admin can flip to enable/disable Paystack without touching credentials.
+
+What Paystack Is Used For
+Paystack handles two distinct money flows on this platform:
+
+Flow	Direction	Who pays
+Agent wallet top-up	Customer → Platform	Agents funding their own wallet
+Storefront order payment	Customer → Store	End-customers buying from an agent's store
+And one outbound flow:
+
+Flow	Direction	Who receives
+Profit payout	Platform → Agent	Weekly MoMo transfer of earned profit
+Flow 1 — Agent Wallet Top-Up
+This is how agents add money to their wallet using a card or bank.
+
+Step 1 — Frontend asks for the fee breakdown
+
+The agent types an amount (minimum GHS 5, maximum GHS 10,000). The wallet page calculates a 2% processing fee on top and shows the total. When submitted, it calls:
+
+POST /api/paystack/initialize
+
+Step 2 — Server creates a Paystack transaction
+
+The server:
+
+Calculates the fee: subtotal × 2% = processingFee, total = subtotal + fee
+Calls Paystack's POST /transaction/initialize with the total amount in pesewas
+Embeds userId, amountGHS (subtotal — what gets credited), and totalPaidGHS in the Paystack metadata
+Creates a PendingPayment record in the database with status PENDING
+Returns the Paystack authorizationUrl to the browser
+The reference format is: KDP_<first8charsOfUserId>_<timestamp>
+
+Step 3 — Customer pays on Paystack's hosted page
+
+The browser redirects the customer to Paystack's checkout page (https://checkout.paystack.com/...). Paystack handles the actual card/bank transaction.
+
+Step 4 — Wallet is credited (two paths, both run)
+
+Paystack notifies your server in two ways — both are handled to ensure no payment is missed:
+
+Path A — Webhook (automatic, no user action needed)
+
+Paystack sends a POST to:
+
+POST /api/paystack/webhook
+
+This endpoint:
+
+Reads the raw request body before any JSON parsing (critical for signature verification)
+Verifies the X-Paystack-Signature header using HMAC-SHA512 with your secret key — rejects anything that doesn't match
+On a charge.success event, reads amountGHS from metadata (the subtotal, not the total paid)
+Credits the wallet in a single atomic database transaction: updates the wallet balance, creates a Transaction record (PS_<reference>), and marks the PendingPayment as COMPLETED
+Always returns HTTP 200 to Paystack regardless of what happens internally — this prevents Paystack from retrying
+Path B — Frontend verify (runs after redirect back)
+
+After Paystack redirects the customer back to /pages/wallet.html?payment=callback, the browser automatically calls:
+
+GET /api/paystack/verify/<reference>
+
+The server calls Paystack's verify API, confirms payment success, and runs the same wallet-crediting logic. The crediting function checks for an existing Transaction record first — if the webhook already ran, it skips crediting silently (idempotency). If the webhook hasn't run yet (slow network, webhook delay), this path credits the wallet immediately so the user doesn't wait.
+
+Flow 2 — Storefront Order Payment
+When an end-customer buys from an agent's storefront and pays online:
+
+Reference format: STF_<first8charsOfOrderId>_<timestamp>
+Metadata type is storefront_order instead of wallet_topup
+On webhook charge.success, the system:
+Marks the StorefrontOrder as paymentStatus: PAID
+Triggers order fulfillment (calls the data bundle API)
+Credits the agent's profit to their wallet once the bundle is delivered
+Flow 3 — Profit Payouts (Outbound Transfer)
+When the admin triggers weekly profit payouts to agents:
+
+Server calls Paystack's POST /transferrecipient to register the agent's MoMo number as a recipient (MTN, VOD, or ATL network codes)
+Then calls POST /transfer to send the money from your Paystack balance to that MoMo number
+If Paystack requires an OTP (account security setting), the OTP is collected and POST /transfer/finalize_transfer is called
+Paystack then sends webhook events back:
+
+Webhook event	What happens
+transfer.success	Payout marked as completed in DB
+transfer.failed	Payout marked as failed, admin alerted
+transfer.reversed	Payout marked as reversed, admin alerted
+Security Measures
+Webhook signature verification — every incoming webhook is verified with HMAC-SHA512. Requests with an invalid or missing signature are rejected with a 401
+Idempotency — the system checks both the PendingPayment table and the Transaction table before crediting. A reference can only ever credit a wallet once
+Secret key never exposed — the public key is the only Paystack key sent to the browser. The secret key stays server-side
+Amount crediting uses metadata subtotal — the wallet is credited the subtotal the agent intended to deposit, not the full amount they paid (which includes the 2% fee)
+Raw body preserved for webhook — the webhook route is mounted before express.json() so the raw body is available intact for signature hashing
+API Endpoints Summary
+Endpoint	Auth	Purpose
+GET /api/paystack/public-key	None	Frontend fetches public key on page load
+POST /api/paystack/initialize	User login	Start a wallet top-up
+GET /api/paystack/verify/:ref	User login	Confirm payment after redirect
+POST /api/paystack/webhook	None (signature)	Receive Paystack events
+GET /api/paystack/history	User login	User's completed payment history
+GET /api/paystack/admin/balance	Admin only	Check your Paystack account balance
+GET /api/paystack/test	Admin only	Test that credentials are working
