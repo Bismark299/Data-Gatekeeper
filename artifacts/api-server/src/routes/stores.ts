@@ -14,11 +14,11 @@ import {
   processWithdrawalTransfer,
   WITHDRAWAL_FEE as PAYOUT_FEE,
 } from "../lib/storeWithdrawals";
+import { getAppOrigin } from "../lib/origin";
 
 const router = Router();
 
 const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET_KEY ?? "";
-const DOMAIN = process.env.APP_ORIGIN ?? "http://localhost:5173";
 
 function slugify(text: string): string {
   return text
@@ -499,7 +499,7 @@ router.post("/s/:slug/checkout", async (req, res) => {
   const profit = +(sellingPrice - agentCost).toFixed(2);
 
   const reference = `STORE-${store.id}-${Date.now()}`;
-  const callbackUrl = `${DOMAIN}/s/${slug}?ref=${reference}`;
+  const callbackUrl = `${getAppOrigin(req)}/s/${slug}?ref=${reference}`;
 
   // Order record is NOT created here — only created at verify/webhook time.
   // Customers who open Paystack and cancel/close without paying leave no trace.

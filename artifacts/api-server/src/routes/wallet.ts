@@ -7,6 +7,7 @@ import type { NodePgTransaction } from "drizzle-orm/node-postgres";
 import { DepositToWalletBody } from "@workspace/api-zod";
 import { z } from "zod";
 import crypto from "crypto";
+import { getAppOrigin } from "../lib/origin";
 
 // Union type that accepts both the top-level db and a transaction context
 type DbOrTx = typeof db | NodePgTransaction<any, any>;
@@ -213,8 +214,7 @@ router.post("/paystack/initialize", requireAuth, async (req, res) => {
   const amountPesewas = Math.round(chargedGhs * 100); // what Paystack charges the customer
   const reference = `DB-PS-${userId}-${Date.now()}`;
 
-  const appOrigin = process.env.APP_ORIGIN ?? "http://localhost:5173";
-  const callbackUrl = `${appOrigin}/wallet?paystack_ref=${reference}`;
+  const callbackUrl = `${getAppOrigin(req)}/wallet?paystack_ref=${reference}`;
 
   const paystackRes = await fetch("https://api.paystack.co/transaction/initialize", {
     method: "POST",
