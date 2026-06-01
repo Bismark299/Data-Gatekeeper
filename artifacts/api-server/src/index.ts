@@ -3,6 +3,7 @@ import { logger } from "./lib/logger";
 import { startMcbisPoller } from "./lib/mcbis";
 import { startCkgodswayPoller } from "./lib/ckgodsway";
 import { startTopupghPoller } from "./lib/topupgh";
+import { startWithdrawalReconciler } from "./lib/storeWithdrawals";
 
 const rawPort = process.env["PORT"];
 
@@ -32,4 +33,7 @@ app.listen(port, (err) => {
 
   // Start TopUpGH background poller (dispatches queued MTN orders every 2 min)
   startTopupghPoller();
+
+  // Settle agent withdrawals stuck in "processing" if a transfer webhook is missed
+  startWithdrawalReconciler();
 });

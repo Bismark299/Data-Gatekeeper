@@ -1,0 +1,120 @@
+Store Profit Withdrawal — Full Documentation
+Stage 1 — How Profit Accumulates
+Before any withdrawal happens, profit must exist. Every time an end-customer completes a purchase from an agent's storefront, the system calculates the difference between the agent's selling price and their cost price. That margin is recorded in a PendingProfit entry linked to the agent with status PENDING.
+
+Profit is not added to the agent's wallet directly — it sits in PendingProfit as an uncredited earning until the agent withdraws it.
+
+Admin adjustments can also add or subtract from an agent's balance at any time outside of this flow.
+
+Stage 2 — Agent Requests a Withdrawal
+The agent goes to their wallet/earnings page and requests a withdrawal amount.
+
+Before the request is created:
+
+The system verifies the agent's MoMo number with Paystack (GET /bank/resolve) to confirm the number actually exists on that network — this catches typos before money is sent
+The verification also returns the registered account name so the agent can confirm it's the right number
+A flat GH₵1.00 fee per transfer is deducted from the requested amount — the agent receives amount - GH₵1.00
+The minimum the agent can receive (after the fee) is GH₵10
+Inside the withdrawal request (atomic transaction):
+
+The system re-checks available balance inside a Serializable database transaction — this prevents two simultaneous requests from both seeing the same available balance and both succeeding
+It checks for any existing request in PENDING, RESERVED, or PROCESSING status
+If a previous request is already being processed (RESERVED/PROCESSING) — the new request is blocked entirely: "You have a withdrawal being processed"
+If there is already a pending (not yet sent) request — the new amount is added to it (accumulated), not created as a separate request
+If there is nothing pending — a new AgentPayout record is created with status PENDING and a reference like WD-<timestamp>-<random>
+Stage 3 — Automatic Path
+Immediately after creating the withdrawal request, the system tries to send it automatically without any admin action:
+
+Check 1 — Paystack balance
+The system calls GET /balance on Paystack to see how much money is sitting in your Paystack account. If the balance is greater than or equal to the net amount the agent will receive, it proceeds automatically.
+
+Check 2 — OTP
+If Paystack has OTP disabled on your account, the transfer goes straight through. If OTP is enabled, Paystack requires a one-time code that only the account owner has — automatic processing is impossible and the request is left as PENDING for admin to handle manually with the OTP.
+
+If both checks pass — what happens:
+
+A Paystack transfer recipient is registered for the agent's MoMo number (or reused from cache if the agent has withdrawn before with the same details)
+Paystack POST /transfer is called with the amount in pesewas, the recipient code, and the reference
+The AgentPayout status is moved to PROCESSING and the Paystack transfer_code is saved
+The agent sees a message: "Withdrawal is being processed. You'll receive GH₵X shortly"
+If Paystack balance is insufficient:
+The request stays as PENDING. The agent sees: "Withdrawal request submitted. Awaiting admin approval."
+
+Stage 4 — Paystack Confirms via Webhook (Automatic Completion)
+After a transfer is initiated, Paystack sends a webhook back to your server at POST /api/paystack/webhook to report what happened. Three events are handled:
+
+Webhook event	What happens
+transfer.success	AgentPayout marked COMPLETED. The PendingProfit entries that make up the withdrawal amount are marked PAID (oldest profits consumed first). An SMS notification is sent to the agent. An audit log entry is created.
+transfer.failed	AgentPayout marked FAILED. The amount is refunded back as a new PENDING profit entry so the agent doesn't lose their earnings. Admin is alerted.
+transfer.reversed	Same as failed — marked FAILED, earnings refunded, admin alerted.
+Stage 5 — Stuck Checker (Fallback for Missed Webhooks)
+Webhooks from Paystack can occasionally be delayed or never arrive (network issues, server downtime at the moment Paystack sent it). The system has a background checker that runs every 5 minutes to catch these cases.
+
+It looks for any AgentPayout that has been in PROCESSING status for more than 2 minutes. For each one it finds:
+
+It calls Paystack GET /transfer/<transferCode> to get the current status
+If that fails, it falls back to GET /transfer/verify/<reference>
+Based on what Paystack says:
+success → marks as COMPLETED, marks profits as PAID, adds a note: "Auto-completed by stuck checker (webhook missed)"
+failed or reversed → marks as FAILED, refunds the earnings as a new pending profit
+pending → leaves it alone and checks again in 5 minutes
+Manual Path — Admin Handles What Couldn't Auto-Process
+Anything the automatic path couldn't handle ends up as PENDING in the admin dashboard. The admin has four options:
+
+Option 1 — Approve a single withdrawal
+POST /admin/withdrawals/:id/approve
+Triggers processSinglePayout for that one request. The system registers the Paystack recipient, initiates the transfer, moves status to PROCESSING, then waits for the webhook to confirm. If OTP is required, the admin can provide it via POST /admin/process-withdrawal/:id with the OTP in the body.
+
+Option 2 — Bulk approve all pending
+POST /admin/bulk-approve
+Processes all PENDING withdrawal requests at once. This is the intended Friday workflow. Each one goes through the same Paystack transfer flow individually.
+
+Option 3 — Force complete (webhook never came)
+POST /admin/withdrawals/:id/force-complete
+For a withdrawal stuck in PROCESSING when the admin can confirm from their Paystack dashboard that the money was actually sent. This manually marks it COMPLETED and marks the profits as PAID without contacting Paystack. It adds a note that it was force-completed.
+
+Option 4 — Force cancel
+POST /admin/withdrawals/:id/force-cancel
+For a withdrawal that needs to be cancelled (e.g., wrong account, stuck indefinitely). The AgentPayout is cancelled and the full amount is refunded back to the agent's PendingProfit balance. The agent can request withdrawal again with corrected details.
+
+Option 5 — Reject
+POST /admin/withdrawals/:id/reject
+Rejects the request with a reason. The agent's earnings remain in PendingProfit — nothing is sent and nothing is lost.
+
+Weekly Scheduled Batch (Auto Mode — Currently Disabled)
+There is a scheduler that can be set to run automatically every Friday at 7:30 PM Ghana time. When it fires, it calls the same bulk approve logic that the admin uses manually.
+
+However, looking at the server logs from your Render deployment:
+
+[Scheduler] Weekly MoMo payouts set to ADMIN MANUAL mode
+[Scheduler] Admin must trigger payouts from dashboard
+
+The automatic scheduler is currently turned off. The autoProcess flag in profitPayoutSettings is set to false, meaning the Friday batch never runs on its own. The admin must go to the dashboard and click bulk approve manually on Fridays.
+
+To enable automatic scheduling, profitPayoutSettings.autoProcess would need to be set to true in settings.json.
+
+Status Flow Summary
+Agent requests withdrawal
+        ↓
+   AgentPayout: PENDING
+        ↓
+ Auto-process attempted
+    ↙           ↘
+Paystack       Insufficient balance
+balance OK      or OTP required
+    ↓                 ↓
+PROCESSING        stays PENDING
+    ↓             (admin acts)
+    ↓                 ↓
+Webhook / StuckChecker confirms
+    ↙           ↘
+COMPLETED      FAILED
+ (profits        (earnings
+  marked PAID)    refunded)
+
+Database Tables Involved
+Table	Role
+PendingProfit	Stores each individual profit earned from a storefront sale
+AgentPayout	One record per withdrawal request — tracks the full lifecycle
+AdminProfitAdjustment	Admin manual credits/debits that affect available balance
+User	Stores cached MoMo details and Paystack recipient code per agent

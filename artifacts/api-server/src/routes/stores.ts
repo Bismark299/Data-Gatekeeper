@@ -9,6 +9,11 @@ import { z } from "zod";
 import crypto from "crypto";
 import { dispatchOrder } from "../lib/dispatch";
 import { insertLedgerEntry } from "./wallet";
+import {
+  genWithdrawalReference,
+  processWithdrawalTransfer,
+  WITHDRAWAL_FEE as PAYOUT_FEE,
+} from "../lib/storeWithdrawals";
 
 const router = Router();
 
@@ -291,13 +296,16 @@ router.post("/stores/my/momo-details", requireAuth, async (req, res) => {
     momoNetwork: parsed.data.momoNetwork,
     momoNumber: parsed.data.momoNumber,
     momoName: parsed.data.momoName,
+    // Account changed → drop the cached Paystack recipient so it gets recreated
+    paystackRecipientCode: null,
   }).where(eq(storesTable.userId, req.session.userId!));
   res.json({ ok: true });
 });
 
 router.delete("/stores/my/momo-details", requireAuth, async (req, res) => {
-  await db.update(storesTable).set({ momoNetwork: null, momoNumber: null, momoName: null })
-    .where(eq(storesTable.userId, req.session.userId!));
+  await db.update(storesTable).set({
+    momoNetwork: null, momoNumber: null, momoName: null, paystackRecipientCode: null,
+  }).where(eq(storesTable.userId, req.session.userId!));
   res.json({ ok: true });
 });
 
@@ -324,7 +332,7 @@ router.post("/stores/my/withdraw", requireAuth, async (req, res) => {
   const parsed = WithdrawBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "Invalid withdrawal data" }); return; }
 
-  const WITHDRAWAL_FEE = 1;
+  const WITHDRAWAL_FEE = PAYOUT_FEE;
   const MIN_WITHDRAWAL = 10;
 
   if (parsed.data.amount < MIN_WITHDRAWAL) {
@@ -346,19 +354,20 @@ router.post("/stores/my/withdraw", requireAuth, async (req, res) => {
 
       if (!locked) throw Object.assign(new Error("No store found"), { status: 404 });
 
-      // Block if a pending withdrawal already exists for this store
+      // Block if a withdrawal is already in flight (pending OR processing) so an
+      // agent can't double-withdraw while a transfer is mid-settlement
       const [pendingW] = await tx
         .select({ id: storeWithdrawalsTable.id })
         .from(storeWithdrawalsTable)
         .where(
           and(
             eq(storeWithdrawalsTable.storeId, locked.id),
-            eq(storeWithdrawalsTable.status, "pending")
+            inArray(storeWithdrawalsTable.status, ["pending", "processing"])
           )
         );
       if (pendingW) {
         throw Object.assign(
-          new Error("You already have a pending withdrawal request. Please wait for it to be processed before submitting a new one."),
+          new Error("You already have a withdrawal being processed. Please wait for it to complete before submitting a new one."),
           { status: 409 }
         );
       }
@@ -390,6 +399,7 @@ router.post("/stores/my/withdraw", requireAuth, async (req, res) => {
         accountName: parsed.data.accountName ?? "",
         bankCode: parsed.data.bankCode ?? "MTN",
         note: parsed.data.note ?? "",
+        reference: genWithdrawalReference(),
       }).returning();
 
       return { store: updatedStore, w: withdrawal };
@@ -400,90 +410,25 @@ router.post("/stores/my/withdraw", requireAuth, async (req, res) => {
     return;
   }
 
-  // ── Step 1: Check Paystack balance before attempting transfer ────────────────
-  let paystackBalanceGHS = 0;
-  try {
-    const balRes = await fetch("https://api.paystack.co/balance", {
-      headers: { Authorization: `Bearer ${PAYSTACK_SECRET}` },
-    });
-    const balData = await balRes.json() as { status: boolean; data?: { currency: string; balance: number }[] };
-    if (balData.status && balData.data) {
-      const ghsEntry = balData.data.find(b => b.currency === "GHS");
-      paystackBalanceGHS = ghsEntry ? ghsEntry.balance / 100 : 0;
-    }
-  } catch {
-    // Balance check failed — fall through to pending queue
-  }
-
-  // ── Step 2: Auto-process if Paystack has sufficient funds ─────────────────
-  let transferStatus = "pending";
-  let transferCode = "";
-  let autoMessage = "awaiting_admin";
-
-  if (paystackBalanceGHS >= parsed.data.amount) {
-    try {
-      // Create transfer recipient
-      const recipientType = parsed.data.method === "bank" ? "ghipss" : "mobile_money";
-      const bankCode = parsed.data.bankCode ?? "MTN";
-      const recipientName = parsed.data.accountName || store.name;
-      const recipientRes = await fetch("https://api.paystack.co/transferrecipient", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${PAYSTACK_SECRET}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type: recipientType,
-          name: recipientName,
-          account_number: parsed.data.accountNumber,
-          bank_code: bankCode,
-          currency: "GHS",
-        }),
-      });
-      const recipientData = await recipientRes.json() as any;
-      if (!recipientRes.ok || !recipientData.data?.recipient_code) {
-        throw new Error(recipientData.message ?? "Failed to create recipient");
-      }
-      const recipientCode: string = recipientData.data.recipient_code;
-
-      // Initiate transfer (amount in pesewas)
-      const transferRes = await fetch("https://api.paystack.co/transfer", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${PAYSTACK_SECRET}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          source: "balance",
-          amount: Math.round(parsed.data.amount * 100),
-          recipient: recipientCode,
-          reason: parsed.data.note || `Profit withdrawal - ${store.name}`,
-          currency: "GHS",
-        }),
-      });
-      const transferData = await transferRes.json() as any;
-
-      if (transferData.data?.transfer_code) {
-        transferCode = transferData.data.transfer_code;
-        // Paystack requires OTP for this transfer — leave as pending for admin
-        if (transferData.data.status === "otp") {
-          transferStatus = "pending";
-          autoMessage = "awaiting_admin";
-        } else {
-          transferStatus = transferData.data.status === "success" ? "completed" : "processing";
-          autoMessage = transferStatus === "completed" ? "sent" : "processing";
-        }
-      }
-    } catch {
-      // Auto-process failed — silently fall back to pending admin queue
-      transferStatus = "pending";
-      autoMessage = "awaiting_admin";
-    }
-  }
-
-  if (transferStatus !== "pending") {
+  // ── Attempt to auto-send via Paystack (balance check, recipient, transfer) ──
+  // The webhook + reconciler settle "processing" transfers and refund failures.
+  // All writes below are guarded on status='pending' so a transfer webhook that
+  // arrives mid-flight (between initiateTransfer and here) is never clobbered.
+  const result = await processWithdrawalTransfer(w, store);
+  if (result.status !== "pending") {
     await db.update(storeWithdrawalsTable).set({
-      status: transferStatus,
-      note: transferCode ? `${parsed.data.note ?? ""} [${transferCode}]`.trim() : (parsed.data.note ?? ""),
-    }).where(eq(storeWithdrawalsTable.id, w.id));
+      status: result.status,
+      transferCode: result.transferCode,
+    }).where(and(eq(storeWithdrawalsTable.id, w.id), eq(storeWithdrawalsTable.status, "pending")));
+  } else if (result.transferCode) {
+    // OTP path: transfer was created but needs admin OTP — keep the code for later
+    await db.update(storeWithdrawalsTable).set({
+      transferCode: result.transferCode,
+    }).where(and(eq(storeWithdrawalsTable.id, w.id), eq(storeWithdrawalsTable.status, "pending")));
   }
 
   const [updated] = await db.select().from(storeWithdrawalsTable).where(eq(storeWithdrawalsTable.id, w.id));
-  res.status(201).json({ ...updated, amount: parseFloat(updated.amount), autoMessage });
+  res.status(201).json({ ...updated, amount: parseFloat(updated.amount), autoMessage: result.autoMessage });
 });
 
 // ─── PUBLIC STORE ROUTES ──────────────────────────────────────────────────────
@@ -1074,66 +1019,90 @@ router.patch("/admin/stores/withdrawals/:id/approve", requireAuth, async (req, r
   const id = parseInt(String(req.params.id));
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
 
-  const [w] = await db.select().from(storeWithdrawalsTable).where(eq(storeWithdrawalsTable.id, id));
-  if (!w) { res.status(404).json({ error: "Withdrawal not found" }); return; }
-  if (w.status !== "pending") {
-    res.status(400).json({ error: `Cannot approve a withdrawal with status: ${w.status}` }); return;
+  const updated = await approveWithdrawalById(id);
+  if ("error" in updated) { res.status(updated.status).json({ error: updated.error }); return; }
+  res.json({ ...updated.row, amount: parseFloat(updated.row.amount as any) });
+});
+
+/**
+ * Shared admin-approve logic used by the single-approve and bulk-approve routes.
+ * Re-runs the Paystack transfer flow for a pending withdrawal. The amount was
+ * already deducted at request time, so success/processing need no balance change
+ * and a later failure is refunded by the webhook/reconciler.
+ */
+async function approveWithdrawalById(
+  id: number,
+): Promise<{ row: typeof storeWithdrawalsTable.$inferSelect } | { error: string; status: number }> {
+  // Atomically reserve the row (pending -> processing). Only one approver wins,
+  // so concurrent approve clicks / bulk + single can't both initiate a transfer.
+  const [reserved] = await db.update(storeWithdrawalsTable)
+    .set({ status: "processing" })
+    .where(and(eq(storeWithdrawalsTable.id, id), eq(storeWithdrawalsTable.status, "pending")))
+    .returning();
+
+  if (!reserved) {
+    const [cur] = await db.select().from(storeWithdrawalsTable).where(eq(storeWithdrawalsTable.id, id));
+    if (!cur) return { error: "Withdrawal not found", status: 404 };
+    return { error: `Cannot approve a withdrawal with status: ${cur.status}`, status: 400 };
   }
 
-  // Attempt Paystack transfer on behalf of admin
-  let newStatus = "completed";
-  let transferCode = "";
-  try {
-    const [store] = await db.select().from(storesTable).where(eq(storesTable.id, w.storeId));
-    const recipientType = w.method === "bank" ? "ghipss" : "mobile_money";
-    const recipientName = w.accountName || (store?.name ?? "Agent");
-
-    const bankCode = w.bankCode || "MTN";
-
-    const recipientRes = await fetch("https://api.paystack.co/transferrecipient", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${PAYSTACK_SECRET}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        type: recipientType,
-        name: recipientName,
-        account_number: w.accountNumber,
-        bank_code: bankCode,
-        currency: "GHS",
-      }),
-    });
-    const recipientData = await recipientRes.json() as any;
-    if (!recipientRes.ok || !recipientData.data?.recipient_code) {
-      throw new Error(recipientData.message ?? "Failed to create recipient");
-    }
-
-    const transferRes = await fetch("https://api.paystack.co/transfer", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${PAYSTACK_SECRET}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        source: "balance",
-        amount: Math.round(parseFloat(w.amount as any) * 100),
-        recipient: recipientData.data.recipient_code,
-        reason: w.note || `Admin-approved withdrawal #${w.id}`,
-        currency: "GHS",
-      }),
-    });
-    const transferData = await transferRes.json() as any;
-    if (transferData.data?.transfer_code) {
-      transferCode = transferData.data.transfer_code;
-      newStatus = transferData.data.status === "success" ? "completed" : "processing";
-    }
-  } catch {
-    // Paystack failed — still mark completed so admin knows they've actioned it
-    newStatus = "completed";
+  const [store] = await db.select().from(storesTable).where(eq(storesTable.id, reserved.storeId));
+  if (!store) {
+    // Release the reservation so it can be retried; only if still untouched
+    await db.update(storeWithdrawalsTable)
+      .set({ status: "pending" })
+      .where(and(eq(storeWithdrawalsTable.id, id), eq(storeWithdrawalsTable.status, "processing")));
+    return { error: "Store not found", status: 404 };
   }
 
-  await db.update(storeWithdrawalsTable).set({
-    status: newStatus,
-    note: transferCode ? `${w.note ?? ""} [${transferCode}]`.trim() : (w.note ?? ""),
-  }).where(eq(storeWithdrawalsTable.id, id));
+  // Ensure a reference exists so transfer webhooks can correlate (legacy rows)
+  let row = reserved;
+  if (!row.reference) {
+    [row] = await db.update(storeWithdrawalsTable)
+      .set({ reference: genWithdrawalReference() })
+      .where(eq(storeWithdrawalsTable.id, id))
+      .returning();
+  }
 
-  const [updated] = await db.select().from(storeWithdrawalsTable).where(eq(storeWithdrawalsTable.id, id));
-  res.json({ ...updated, amount: parseFloat(updated.amount as any) });
+  const result = await processWithdrawalTransfer(row, store);
+  // Guard every write on status='processing' so a transfer webhook that already
+  // settled this row (completed / failed+refund) is never clobbered.
+  if (result.status === "completed") {
+    await db.update(storeWithdrawalsTable)
+      .set({ status: "completed", transferCode: result.transferCode || row.transferCode })
+      .where(and(eq(storeWithdrawalsTable.id, id), eq(storeWithdrawalsTable.status, "processing")));
+  } else if (result.status === "processing") {
+    // Transfer is in flight — leave as processing; webhook/reconciler settles it
+    await db.update(storeWithdrawalsTable)
+      .set({ transferCode: result.transferCode || row.transferCode })
+      .where(and(eq(storeWithdrawalsTable.id, id), eq(storeWithdrawalsTable.status, "processing")));
+  } else {
+    // Could NOT auto-send (no Paystack balance / OTP required / API error).
+    // Funds were NOT moved, so return the row to the pending queue rather than
+    // falsely marking it completed (which would burn the agent's deducted funds).
+    await db.update(storeWithdrawalsTable)
+      .set({ status: "pending", transferCode: result.transferCode || row.transferCode })
+      .where(and(eq(storeWithdrawalsTable.id, id), eq(storeWithdrawalsTable.status, "processing")));
+  }
+
+  const [out] = await db.select().from(storeWithdrawalsTable).where(eq(storeWithdrawalsTable.id, id));
+  return { row: out };
+}
+
+router.post("/admin/stores/withdrawals/bulk-approve", requireAuth, async (req, res) => {
+  if (req.session.userRole !== "admin") { res.status(403).json({ error: "Forbidden" }); return; }
+
+  const pending = await db.select({ id: storeWithdrawalsTable.id })
+    .from(storeWithdrawalsTable)
+    .where(eq(storeWithdrawalsTable.status, "pending"));
+
+  let approved = 0;
+  let failed = 0;
+  for (const { id } of pending) {
+    const result = await approveWithdrawalById(id);
+    if ("error" in result) failed++; else approved++;
+  }
+  res.json({ approved, failed, total: pending.length });
 });
 
 router.patch("/admin/stores/withdrawals/:id/complete", requireAuth, async (req, res) => {
@@ -1168,9 +1137,12 @@ router.patch("/admin/stores/withdrawals/:id/reject", requireAuth, async (req, re
         .for("update");
 
       if (!locked) throw Object.assign(new Error("Withdrawal not found"), { status: 404 });
-      if (locked.status === "cancelled" || locked.status === "completed") {
+      // Only pending withdrawals can be rejected+refunded. A "processing" row has
+      // a transfer in flight (rejecting risks a double payout) and "failed" rows
+      // were already refunded by the webhook/reconciler (rejecting double-refunds).
+      if (locked.status !== "pending") {
         throw Object.assign(
-          new Error("Cannot reject a withdrawal that is already " + locked.status),
+          new Error("Cannot reject a withdrawal that is " + locked.status),
           { status: 400 }
         );
       }

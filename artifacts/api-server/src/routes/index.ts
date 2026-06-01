@@ -7,6 +7,7 @@ import adminRouter from "./admin";
 import { walletRouter, handlePaystackWebhook } from "./wallet";
 import { cartRouter } from "./cart";
 import { storesRouter, handleStorePaystackWebhook } from "./stores";
+import { handleStoreTransferWebhook } from "../lib/storeWithdrawals";
 import { topupghRouter } from "./topupgh";
 import { ckgodswayRouter } from "./ckgodsway";
 import { publicApiRouter } from "./publicApi";
@@ -42,6 +43,11 @@ router.post("/paystack/webhook", async (req, res) => {
       : handlePaystackWebhook(req.body);
     handler.catch((err: unknown) => {
       req.log.error({ err, reference: data.reference }, "Paystack webhook processing error");
+    });
+  } else if (event === "transfer.success" || event === "transfer.failed" || event === "transfer.reversed") {
+    // Agent profit-withdrawal payouts — settle/complete or refund on failure
+    handleStoreTransferWebhook(req.body).catch((err: unknown) => {
+      req.log.error({ err, event, reference: data?.reference }, "Paystack transfer webhook error");
     });
   }
 });

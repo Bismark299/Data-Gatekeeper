@@ -14,6 +14,7 @@ export const storesTable = pgTable("stores", {
   momoNetwork: text("momo_network"),
   momoNumber: text("momo_number"),
   momoName: text("momo_name"),
+  paystackRecipientCode: text("paystack_recipient_code"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
 });
@@ -61,6 +62,9 @@ export const storeWithdrawalsTable = pgTable("store_withdrawals", {
   accountName: text("account_name").notNull().default(""),
   bankCode: text("bank_code").notNull().default("MTN"),
   note: text("note").notNull().default(""),
+  reference: text("reference").notNull().default(""),
+  transferCode: text("transfer_code").notNull().default(""),
+  failureReason: text("failure_reason").notNull().default(""),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
 });
