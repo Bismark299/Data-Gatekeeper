@@ -1115,7 +1115,12 @@ router.patch("/admin/stores/withdrawals/:id/complete", requireAuth, async (req, 
   if (w.status === "completed") { res.status(400).json({ error: "Withdrawal already completed" }); return; }
   if (w.status === "cancelled") { res.status(400).json({ error: "Cannot complete a cancelled withdrawal" }); return; }
 
-  await db.update(storeWithdrawalsTable).set({ status: "completed" }).where(eq(storeWithdrawalsTable.id, id));
+  // A manually-paid withdrawal still needs a reference so it can be traced and
+  // so the UI never shows a blank Ref. Keep any existing reference (e.g. from an
+  // earlier auto-transfer attempt); only mint one when the row has none.
+  await db.update(storeWithdrawalsTable)
+    .set({ status: "completed", reference: w.reference || genWithdrawalReference() })
+    .where(eq(storeWithdrawalsTable.id, id));
   const [updated] = await db.select().from(storeWithdrawalsTable).where(eq(storeWithdrawalsTable.id, id));
   res.json({ ...updated, amount: parseFloat(updated.amount as any) });
 });
