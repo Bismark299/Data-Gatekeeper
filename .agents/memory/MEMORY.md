@@ -1,2 +1,2 @@
-- [Orval client body shapes](orval-client-body-shapes.md) — generated direct fn takes body directly; mutation hook takes `{ data: body }`. Mixing them silently 400s.
-- [Paystack settlement polling](paystack-settlement-polling.md) — MoMo redirect-back often pre-settlement; verify must poll/retry, not fail on first try. Backend dual-path is idempotent.
+- [Paystack transfer references](paystack-transfers.md) — transfer refs must be lowercase `[a-z0-9_-]{16,50}`; uppercase passes test mode but fails live. OTP must be off for auto-payout.
+- [Render production DB](render-prod-db.md) — prod DB is external (Render), not Replit-managed; dev schema changes don't propagate — run ALTER TABLE on Render after deploy or app 500s with "column does not exist".

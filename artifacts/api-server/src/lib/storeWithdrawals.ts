@@ -25,9 +25,17 @@ export const WITHDRAWAL_FEE = 1;
 type Withdrawal = typeof storeWithdrawalsTable.$inferSelect;
 type Store = typeof storesTable.$inferSelect;
 
-/** Generate a unique transfer reference that Paystack echoes back in webhooks. */
+/**
+ * Generate a unique transfer reference that Paystack echoes back in webhooks.
+ *
+ * Paystack transfer references must be 16–50 chars and contain only lowercase
+ * letters (a-z), digits (0-9), underscore and dash. An uppercase prefix is
+ * rejected by the live Transfer API, so everything here is kept lowercase.
+ * (https://paystack.com/docs/transfers/single-transfers/#generate-a-transfer-reference)
+ */
 export function genWithdrawalReference(): string {
-  return `WD-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const rand = Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 6);
+  return `wd-${Date.now()}-${rand}`;
 }
 
 // ─── Paystack HTTP helpers ──────────────────────────────────────────────────
