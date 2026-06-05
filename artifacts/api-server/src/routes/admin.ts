@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import {
-  eq, count, sum, desc, gte, and, ilike, inArray, isNull, isNotNull, lt, ne,
+  eq, count, sum, desc, gte, lte, and, ilike, inArray, isNull, isNotNull, lt, ne,
   type SQL, sql,
 } from "drizzle-orm";
 import {
@@ -356,16 +356,28 @@ router.post("/admin/orders/bulk-status", requireAdmin, async (req, res): Promise
 });
 
 router.post("/admin/orders/complete-processing", requireAdmin, async (req, res): Promise<void> => {
-  const processingOrders = await db.select().from(ordersTable).where(eq(ordersTable.status, "processing"));
+  // Only complete processing orders inside the requested date window so the
+  // action matches the date filter the admin currently has applied. When no
+  // dates are supplied it falls back to completing every processing order.
+  const { dateFrom, dateTo } = (req.body ?? {}) as { dateFrom?: string; dateTo?: string };
+  const conditions = [eq(ordersTable.status, "processing")];
 
-  if (processingOrders.length === 0) {
-    res.json({ updated: 0 });
-    return;
+  if (dateFrom) {
+    const from = new Date(dateFrom);
+    if (!isNaN(from.getTime())) conditions.push(gte(ordersTable.createdAt, from));
+  }
+  if (dateTo) {
+    const to = new Date(dateTo);
+    if (!isNaN(to.getTime())) { to.setHours(23, 59, 59, 999); conditions.push(lte(ordersTable.createdAt, to)); }
   }
 
-  await db.update(ordersTable).set({ status: "completed" }).where(eq(ordersTable.status, "processing"));
+  const updated = await db
+    .update(ordersTable)
+    .set({ status: "completed" })
+    .where(and(...conditions))
+    .returning({ id: ordersTable.id });
 
-  res.json({ updated: processingOrders.length });
+  res.json({ updated: updated.length });
 });
 
 // ── Users: password reset ─────────────────────────────────────────────────────

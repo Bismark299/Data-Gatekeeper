@@ -134,11 +134,18 @@ function AdminOrdersContent() {
   const handleCompleteAll = async () => {
     setCompleting(true);
     try {
-      const processingStoreOrders = (Array.isArray(storeOrders) ? storeOrders : []).filter((o: any) => o.status === "processing");
+      const inRange = (o: any) => {
+        const d = new Date(o.createdAt);
+        if (dateFrom && d < new Date(dateFrom)) return false;
+        if (dateTo) { const to = new Date(dateTo); to.setHours(23, 59, 59, 999); if (d > to) return false; }
+        return true;
+      };
+      const processingStoreOrders = (Array.isArray(storeOrders) ? storeOrders : []).filter((o: any) => o.status === "processing" && inRange(o));
       const [platformRes] = await Promise.all([
         fetch("/api/admin/orders/complete-processing", {
           method: "POST", credentials: "include",
           headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dateFrom, dateTo }),
         }),
         ...processingStoreOrders.map((o: any) =>
           fetch(`/api/admin/store-orders/${o.id}/complete`, { method: "PATCH", credentials: "include" })
