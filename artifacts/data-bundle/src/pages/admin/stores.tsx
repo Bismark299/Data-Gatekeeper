@@ -10,6 +10,7 @@ import {
   Menu, Store, ChevronLeft, ExternalLink, ArrowDownCircle,
   ShoppingCart, TrendingUp, Wallet, Search, X, RefreshCw,
   CheckCircle2, XCircle, ThumbsUp, ThumbsDown,
+  Banknote, Clock, Loader2, CircleDollarSign, Send,
 } from "lucide-react";
 
 const NETWORK_BADGE: Record<string, string> = {
@@ -58,6 +59,10 @@ function AdminStoresContent() {
   const [selectedStoreId, setSelectedStoreId] = useState<number | null>(null);
   const [detailTab, setDetailTab] = useState<"orders" | "withdrawals">("orders");
   const [actionId, setActionId] = useState<number | null>(null);
+  const [topTab, setTopTab] = useState<"stores" | "withdrawals">("stores");
+  const [wdStatusFilter, setWdStatusFilter] = useState<string>("all");
+  const [wdSearch, setWdSearch] = useState("");
+  const [bulkApproving, setBulkApproving] = useState(false);
   const { toast } = useToast();
 
   const { data: stores, isLoading, refetch } = useQuery<any[]>({
@@ -78,7 +83,33 @@ function AdminStoresContent() {
     enabled: selectedStoreId !== null && detailTab === "withdrawals",
   });
 
+  const { data: globalWithdrawals, refetch: refetchGlobalWithdrawals } = useQuery<any>({
+    queryKey: ["adminAllWithdrawals"],
+    queryFn: () => fetch("/api/admin/withdrawals", { credentials: "include" }).then(r => r.json()),
+    enabled: selectedStoreId === null && topTab === "withdrawals",
+    refetchInterval: 15000,
+  });
+
   const [withdrawalActionId, setWithdrawalActionId] = useState<number | null>(null);
+
+  // Refresh after a withdrawal action — only the dataset for the current view,
+  // so we never hit /admin/stores/null/withdrawals while in the global tab.
+  const refetchWd = () => {
+    refetch();
+    if (selectedStoreId !== null) refetchWithdrawals();
+    else refetchGlobalWithdrawals();
+  };
+
+  // Refresh whatever the admin is currently looking at (used by the header button).
+  const refreshVisible = () => {
+    refetch();
+    if (selectedStoreId !== null) {
+      if (detailTab === "orders") refetchOrders();
+      else refetchWithdrawals();
+    } else if (topTab === "withdrawals") {
+      refetchGlobalWithdrawals();
+    }
+  };
 
   const handleWithdrawalApprove = async (wId: number) => {
     setWithdrawalActionId(wId);
@@ -87,7 +118,7 @@ function AdminStoresContent() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error);
       toast({ title: `Withdrawal #${wId} approved` });
-      refetchWithdrawals(); refetch();
+      refetchWd();
     } catch (e: unknown) {
       toast({ title: (e as Error).message || "Error approving withdrawal", variant: "destructive" });
     } finally { setWithdrawalActionId(null); }
@@ -100,7 +131,7 @@ function AdminStoresContent() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error);
       toast({ title: `Withdrawal #${wId} marked as completed` });
-      refetchWithdrawals(); refetch();
+      refetchWd();
     } catch (e: unknown) {
       toast({ title: (e as Error).message || "Error completing withdrawal", variant: "destructive" });
     } finally { setWithdrawalActionId(null); }
@@ -113,11 +144,39 @@ function AdminStoresContent() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error);
       toast({ title: `Withdrawal #${wId} rejected — amount refunded to store balance` });
-      refetchWithdrawals(); refetch();
+      refetchWd();
     } catch (e: unknown) {
       toast({ title: (e as Error).message || "Error rejecting withdrawal", variant: "destructive" });
     } finally { setWithdrawalActionId(null); }
   };
+
+  const handleBulkApprove = async () => {
+    setBulkApproving(true);
+    try {
+      const res = await fetch("/api/admin/stores/withdrawals/bulk-approve", { method: "POST", credentials: "include" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error);
+      toast({ title: `Bulk approve complete — ${json.approved} sent, ${json.failed} could not be sent` });
+      refetchWd();
+    } catch (e: unknown) {
+      toast({ title: (e as Error).message || "Error during bulk approve", variant: "destructive" });
+    } finally { setBulkApproving(false); }
+  };
+
+  const wdSummary = globalWithdrawals?.summary;
+  const filteredWithdrawals = useMemo(() => {
+    let src: any[] = globalWithdrawals?.withdrawals ?? [];
+    if (wdStatusFilter !== "all") src = src.filter((w: any) => w.status === wdStatusFilter);
+    if (wdSearch.trim()) {
+      const q = wdSearch.trim().toLowerCase();
+      src = src.filter((w: any) =>
+        (w.storeName ?? "").toLowerCase().includes(q) ||
+        (w.accountNumber ?? "").toLowerCase().includes(q) ||
+        (w.accountName ?? "").toLowerCase().includes(q),
+      );
+    }
+    return src;
+  }, [globalWithdrawals, wdStatusFilter, wdSearch]);
 
   const filteredStores = useMemo(() => {
     let src = stores ?? [];
@@ -188,7 +247,7 @@ function AdminStoresContent() {
           )}
           <AdminFinancialSummary />
           <div className="ml-auto flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => refetch()} className="gap-1.5">
+            <Button variant="outline" size="sm" onClick={() => refreshVisible()} className="gap-1.5">
               <RefreshCw className="w-3.5 h-3.5" /> Refresh
             </Button>
           </div>
@@ -347,40 +406,13 @@ function AdminStoresContent() {
                               <td className="hidden sm:table-cell px-4 py-3 font-mono text-[10px] text-muted-foreground max-w-[120px] truncate" title={w.note}>{w.note || "—"}</td>
                               <td className="hidden sm:table-cell px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(w.createdAt)}</td>
                               <td className="px-4 py-3">
-                                {needsAction ? (
-                                  <div className="flex items-center gap-1">
-                                    <button
-                                      onClick={() => handleWithdrawalApprove(w.id)}
-                                      disabled={isActioning}
-                                      className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold bg-emerald-100 text-emerald-700 hover:bg-emerald-200 disabled:opacity-50 transition-colors whitespace-nowrap"
-                                      title="Send via Paystack"
-                                    >
-                                      <ThumbsUp className="w-3 h-3" />
-                                      {isActioning ? "Sending…" : "Send"}
-                                    </button>
-                                    <button
-                                      onClick={() => handleWithdrawalReject(w.id)}
-                                      disabled={isActioning}
-                                      className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold bg-red-100 text-red-700 hover:bg-red-200 disabled:opacity-50 transition-colors whitespace-nowrap"
-                                      title="Reject and refund to store balance"
-                                    >
-                                      <ThumbsDown className="w-3 h-3" />
-                                      {isActioning ? "…" : "Refund"}
-                                    </button>
-                                  </div>
-                                ) : w.status === "processing" ? (
-                                  <button
-                                    onClick={() => handleWithdrawalComplete(w.id)}
-                                    disabled={isActioning}
-                                    className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold bg-blue-100 text-blue-700 hover:bg-blue-200 disabled:opacity-50 transition-colors whitespace-nowrap"
-                                    title="Manually mark as completed (use if webhook didn't arrive)"
-                                  >
-                                    <CheckCircle2 className="w-3 h-3" />
-                                    {isActioning ? "…" : "Mark Done"}
-                                  </button>
-                                ) : (
-                                  <span className="text-xs text-muted-foreground/40 italic">—</span>
-                                )}
+                                <WithdrawalActions
+                                  w={w}
+                                  isActioning={isActioning}
+                                  onApprove={handleWithdrawalApprove}
+                                  onReject={handleWithdrawalReject}
+                                  onComplete={handleWithdrawalComplete}
+                                />
                               </td>
                             </tr>
                             );
@@ -393,8 +425,25 @@ function AdminStoresContent() {
               )}
             </div>
           ) : (
-            /* All Stores List */
+            /* All Stores List + Global Withdrawals */
             <div className="max-w-5xl mx-auto space-y-6">
+              {/* Top-level tab switcher */}
+              <div className="flex items-center gap-1 bg-muted/40 rounded-xl p-1 border border-border w-fit">
+                <button onClick={() => setTopTab("stores")}
+                  className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold transition-all ${topTab === "stores" ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
+                  <Store className="w-4 h-4" /> Stores
+                </button>
+                <button onClick={() => setTopTab("withdrawals")}
+                  className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold transition-all ${topTab === "withdrawals" ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
+                  <Banknote className="w-4 h-4" /> Withdrawals
+                  {wdSummary?.pendingCount ? (
+                    <span className="ml-1 px-1.5 py-0.5 rounded-full bg-amber-500 text-white text-[10px] font-bold leading-none">{wdSummary.pendingCount}</span>
+                  ) : null}
+                </button>
+              </div>
+
+              {topTab === "stores" ? (
+              <>
               <div className="flex items-center gap-3">
                 <div className="relative flex-1 max-w-xs">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -471,10 +520,191 @@ function AdminStoresContent() {
                   </table>
                 </div>
               )}
+              </>
+              ) : (
+                /* Global Withdrawals panel */
+                <div className="space-y-5">
+                  {/* Summary cards */}
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                    {[
+                      { label: "Ready for Withdrawal", value: `GH₵${(wdSummary?.readyForWithdrawal ?? 0).toFixed(2)}`, hint: "Agent balances", icon: CircleDollarSign, color: "text-emerald-600", bg: "bg-emerald-50 dark:bg-emerald-900/10" },
+                      { label: "Pending", value: `GH₵${(wdSummary?.pendingAmount ?? 0).toFixed(2)}`, hint: `${wdSummary?.pendingCount ?? 0} awaiting approval`, icon: Clock, color: "text-amber-600", bg: "bg-amber-50 dark:bg-amber-900/10" },
+                      { label: "Processing", value: `GH₵${(wdSummary?.processingAmount ?? 0).toFixed(2)}`, hint: `${wdSummary?.processingCount ?? 0} in flight`, icon: Loader2, color: "text-blue-600", bg: "bg-blue-50 dark:bg-blue-900/10" },
+                      { label: "Total Paid Out", value: `GH₵${(wdSummary?.completedAmount ?? 0).toFixed(2)}`, hint: `${wdSummary?.completedCount ?? 0} completed`, icon: CheckCircle2, color: "text-slate-600 dark:text-slate-300", bg: "bg-muted/40" },
+                    ].map(({ label, value, hint, icon: Icon, color, bg }) => (
+                      <div key={label} className={`rounded-2xl border border-border p-4 ${bg}`}>
+                        <div className="flex items-center gap-2">
+                          <Icon className={`w-4 h-4 ${color}`} />
+                          <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">{label}</span>
+                        </div>
+                        <div className={`text-xl font-bold mt-1.5 ${color}`}>{value}</div>
+                        <div className="text-[11px] text-muted-foreground mt-0.5">{hint}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Toolbar: status filters + search + bulk approve */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    {(["all", "pending", "processing", "completed", "failed", "cancelled"] as const).map(st => (
+                      <button
+                        key={st}
+                        onClick={() => setWdStatusFilter(st)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold capitalize transition-colors ${wdStatusFilter === st ? "bg-primary text-primary-foreground" : "bg-muted/50 text-muted-foreground hover:bg-muted"}`}
+                      >
+                        {st === "all" ? "All" : STATUS_LABEL[st] ?? st}
+                      </button>
+                    ))}
+                    <div className="relative flex-1 min-w-[160px] max-w-xs ml-auto">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                      <input
+                        className="w-full pl-9 pr-4 h-9 rounded-xl border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                        placeholder="Search store, account…"
+                        value={wdSearch}
+                        onChange={e => setWdSearch(e.target.value)}
+                      />
+                      {wdSearch && (
+                        <button className="absolute right-3 top-1/2 -translate-y-1/2" onClick={() => setWdSearch("")}>
+                          <X className="w-4 h-4 text-muted-foreground" />
+                        </button>
+                      )}
+                    </div>
+                    {(wdSummary?.pendingCount ?? 0) > 0 && (
+                      <button
+                        onClick={handleBulkApprove}
+                        disabled={bulkApproving}
+                        className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 transition-colors whitespace-nowrap"
+                        title="Send all pending withdrawals via Paystack"
+                      >
+                        {bulkApproving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                        {bulkApproving ? "Sending…" : `Send All Pending (${wdSummary?.pendingCount})`}
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Withdrawals table */}
+                  <div className="bg-card border border-border rounded-2xl overflow-hidden">
+                    <div className="overflow-x-auto">
+                      {!globalWithdrawals ? (
+                        <div className="py-16 text-center text-muted-foreground text-sm">Loading…</div>
+                      ) : filteredWithdrawals.length === 0 ? (
+                        <div className="py-16 text-center text-muted-foreground text-sm">
+                          <ArrowDownCircle className="w-10 h-10 mx-auto mb-3 opacity-20" />
+                          No withdrawals {wdStatusFilter !== "all" ? `with status "${STATUS_LABEL[wdStatusFilter] ?? wdStatusFilter}"` : "yet"}
+                        </div>
+                      ) : (
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b border-border bg-muted/20">
+                              {([["Store",""],["Amount",""],["Method","hidden sm:table-cell"],["Account",""],["Account Name","hidden md:table-cell"],["Status",""],["Date","hidden sm:table-cell"],["Actions",""]] as [string,string][]).map(([h,cls]) => (
+                                <th key={h} className={`text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap ${cls}`}>{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-border">
+                            {filteredWithdrawals.map((w: any) => {
+                              const isActioning = withdrawalActionId === w.id;
+                              const networkKey = w.bankCode ?? w.method;
+                              return (
+                                <tr key={w.id} className={`hover:bg-muted/20 transition-colors ${w.status === "pending" ? "bg-amber-50/40 dark:bg-amber-900/5" : ""}`}>
+                                  <td className="px-4 py-3">
+                                    <button
+                                      onClick={() => { setSelectedStoreId(w.storeId); setDetailTab("withdrawals"); }}
+                                      className="text-left font-semibold text-foreground text-xs hover:text-primary hover:underline"
+                                      title="Open store"
+                                    >
+                                      {w.storeName ?? "—"}
+                                    </button>
+                                    {w.storeSlug && <div className="text-[10px] text-muted-foreground font-mono">/{w.storeSlug}</div>}
+                                  </td>
+                                  <td className="px-4 py-3 font-bold text-foreground">GH₵{w.amount.toFixed(2)}</td>
+                                  <td className="hidden sm:table-cell px-4 py-3">
+                                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${NETWORK_BADGE[networkKey] ?? "bg-gray-100 text-gray-700"}`}>
+                                      {NETWORK_LABEL[networkKey] ?? w.method ?? networkKey ?? "—"}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-3 font-mono text-xs">{w.accountNumber || "—"}</td>
+                                  <td className="hidden md:table-cell px-4 py-3 text-xs font-medium">{w.accountName || "—"}</td>
+                                  <td className="px-4 py-3">
+                                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${STATUS_COLORS[w.status] ?? "bg-gray-100 text-gray-700"}`}>
+                                      {STATUS_LABEL[w.status] ?? w.status}
+                                    </span>
+                                    {w.status === "failed" && w.failureReason && (
+                                      <div className="text-[10px] text-red-500 mt-0.5 max-w-[160px] truncate" title={w.failureReason}>{w.failureReason}</div>
+                                    )}
+                                  </td>
+                                  <td className="hidden sm:table-cell px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(w.createdAt)}</td>
+                                  <td className="px-4 py-3">
+                                    <WithdrawalActions
+                                      w={w}
+                                      isActioning={isActioning}
+                                      onApprove={handleWithdrawalApprove}
+                                      onReject={handleWithdrawalReject}
+                                      onComplete={handleWithdrawalComplete}
+                                    />
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </main>
       </div>
     </div>
   );
+}
+
+function WithdrawalActions({
+  w, isActioning, onApprove, onReject, onComplete,
+}: {
+  w: any;
+  isActioning: boolean;
+  onApprove: (id: number) => void;
+  onReject: (id: number) => void;
+  onComplete: (id: number) => void;
+}) {
+  if (w.status === "pending") {
+    return (
+      <div className="flex items-center gap-1">
+        <button
+          onClick={() => onApprove(w.id)}
+          disabled={isActioning}
+          className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold bg-emerald-100 text-emerald-700 hover:bg-emerald-200 disabled:opacity-50 transition-colors whitespace-nowrap"
+          title="Send via Paystack"
+        >
+          <ThumbsUp className="w-3 h-3" />
+          {isActioning ? "Sending…" : "Send"}
+        </button>
+        <button
+          onClick={() => onReject(w.id)}
+          disabled={isActioning}
+          className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold bg-red-100 text-red-700 hover:bg-red-200 disabled:opacity-50 transition-colors whitespace-nowrap"
+          title="Reject and refund to store balance"
+        >
+          <ThumbsDown className="w-3 h-3" />
+          {isActioning ? "…" : "Refund"}
+        </button>
+      </div>
+    );
+  }
+  if (w.status === "processing") {
+    return (
+      <button
+        onClick={() => onComplete(w.id)}
+        disabled={isActioning}
+        className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold bg-blue-100 text-blue-700 hover:bg-blue-200 disabled:opacity-50 transition-colors whitespace-nowrap"
+        title="Manually mark as completed (use if webhook didn't arrive)"
+      >
+        <CheckCircle2 className="w-3 h-3" />
+        {isActioning ? "…" : "Mark Done"}
+      </button>
+    );
+  }
+  return <span className="text-xs text-muted-foreground/40 italic">—</span>;
 }

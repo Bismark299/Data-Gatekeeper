@@ -805,6 +805,56 @@ router.get("/admin/stores", requireAuth, async (req, res) => {
   res.json(enriched);
 });
 
+// Global cross-store withdrawals view + payout summary for the admin dashboard.
+router.get("/admin/withdrawals", requireAuth, async (req, res) => {
+  if (req.session.userRole !== "admin") { res.status(403).json({ error: "Forbidden" }); return; }
+
+  const rows = await db
+    .select({
+      id: storeWithdrawalsTable.id,
+      storeId: storeWithdrawalsTable.storeId,
+      amount: storeWithdrawalsTable.amount,
+      status: storeWithdrawalsTable.status,
+      method: storeWithdrawalsTable.method,
+      accountNumber: storeWithdrawalsTable.accountNumber,
+      accountName: storeWithdrawalsTable.accountName,
+      bankCode: storeWithdrawalsTable.bankCode,
+      note: storeWithdrawalsTable.note,
+      reference: storeWithdrawalsTable.reference,
+      transferCode: storeWithdrawalsTable.transferCode,
+      failureReason: storeWithdrawalsTable.failureReason,
+      createdAt: storeWithdrawalsTable.createdAt,
+      storeName: storesTable.name,
+      storeSlug: storesTable.slug,
+    })
+    .from(storeWithdrawalsTable)
+    .leftJoin(storesTable, eq(storeWithdrawalsTable.storeId, storesTable.id))
+    .orderBy(desc(storeWithdrawalsTable.createdAt));
+
+  const withdrawals = rows.map(w => ({ ...w, amount: parseFloat(w.amount as any) }));
+
+  // Money currently sitting in agent profit balances — i.e. ready to be withdrawn.
+  const stores = await db.select({ profitBalance: storesTable.profitBalance }).from(storesTable);
+  const readyForWithdrawal = stores.reduce((s, st) => s + parseFloat(st.profitBalance as any), 0);
+
+  const sumBy = (status: string) =>
+    withdrawals.filter(w => w.status === status).reduce((s, w) => s + w.amount, 0);
+  const countBy = (status: string) => withdrawals.filter(w => w.status === status).length;
+
+  res.json({
+    summary: {
+      readyForWithdrawal: parseFloat(readyForWithdrawal.toFixed(2)),
+      pendingCount: countBy("pending"),
+      pendingAmount: parseFloat(sumBy("pending").toFixed(2)),
+      processingCount: countBy("processing"),
+      processingAmount: parseFloat(sumBy("processing").toFixed(2)),
+      completedCount: countBy("completed"),
+      completedAmount: parseFloat(sumBy("completed").toFixed(2)),
+    },
+    withdrawals,
+  });
+});
+
 router.get("/admin/stores/:storeId/withdrawals", requireAuth, async (req, res) => {
   if (req.session.userRole !== "admin") { res.status(403).json({ error: "Forbidden" }); return; }
   const storeId = parseInt(String(req.params.storeId));
