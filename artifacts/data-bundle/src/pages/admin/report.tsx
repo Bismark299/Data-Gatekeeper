@@ -127,13 +127,13 @@ function AdminReportContent() {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="bg-foreground text-background">
-                    <th className="text-left font-semibold px-5 py-3.5 whitespace-nowrap">Order Date</th>
-                    <th className="text-left font-semibold px-5 py-3.5 whitespace-nowrap">No. of Orders</th>
-                    <th className="text-left font-semibold px-5 py-3.5 whitespace-nowrap">Data (GB)</th>
-                    <th className="text-left font-semibold px-5 py-3.5 whitespace-nowrap">Cost</th>
-                    <th className="text-left font-semibold px-5 py-3.5 whitespace-nowrap">Price</th>
-                    <th className="text-left font-semibold px-5 py-3.5 whitespace-nowrap bg-blue-600">Profit (GHS)</th>
+                  <tr>
+                    <th className="text-left font-semibold px-5 py-3.5 whitespace-nowrap bg-gray-900 text-white">Order Date</th>
+                    <th className="text-left font-semibold px-5 py-3.5 whitespace-nowrap bg-gray-900 text-white">No. of Orders</th>
+                    <th className="text-left font-semibold px-5 py-3.5 whitespace-nowrap bg-gray-900 text-white">Data (GB)</th>
+                    <th className="text-left font-semibold px-5 py-3.5 whitespace-nowrap bg-gray-900 text-white">Cost</th>
+                    <th className="text-left font-semibold px-5 py-3.5 whitespace-nowrap bg-gray-900 text-white">Price</th>
+                    <th className="text-left font-semibold px-5 py-3.5 whitespace-nowrap bg-blue-600 text-white">Profit (GHS)</th>
                   </tr>
                 </thead>
                 <tbody>

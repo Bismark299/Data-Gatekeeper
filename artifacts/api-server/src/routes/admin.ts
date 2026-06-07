@@ -1093,9 +1093,11 @@ router.get("/admin/report", requireAdmin, async (req, res): Promise<void> => {
       createdAt: ordersTable.createdAt,
       price: ordersTable.price,
       buyingCost: ordersTable.buyingCost,
+      bundlePrice: bundlesTable.price,
       bundleData: ordersTable.bundleData,
     })
     .from(ordersTable)
+    .leftJoin(bundlesTable, eq(ordersTable.bundleId, bundlesTable.id))
     .where(eq(ordersTable.status, "completed"));
 
   const byDate: Record<
@@ -1107,7 +1109,9 @@ router.get("/admin/report", requireAdmin, async (req, res): Promise<void> => {
     const date = o.createdAt.toISOString().split("T")[0];
     if (!byDate[date]) byDate[date] = { orders: 0, dataGb: 0, cost: 0, price: 0, profit: 0 };
     const price = Number(o.price);
-    const cost = Number(o.buyingCost ?? 0);
+    // Cost comes from the bundle's cost price (consistent with the admin
+    // financial summary); fall back to the cost captured on the order.
+    const cost = Number(o.bundlePrice ?? o.buyingCost ?? 0);
     byDate[date].orders += 1;
     byDate[date].dataGb += parseDataGb(o.bundleData);
     byDate[date].cost += cost;
