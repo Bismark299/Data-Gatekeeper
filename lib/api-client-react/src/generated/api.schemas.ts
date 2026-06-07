@@ -153,6 +153,12 @@ export interface PaystackInitBody {
 export interface PaystackInitResponse {
   authorizationUrl: string;
   reference: string;
+  /** Amount that will be credited to wallet */
+  amountGhs: number;
+  /** 2% Paystack processing fee */
+  feeGhs: number;
+  /** Total amount charged to customer (amount + fee) */
+  chargedGhs: number;
 }
 
 export interface PaystackVerifyBody {
@@ -225,6 +231,15 @@ export interface TopBundle {
   orders: number;
   revenue: number;
   category: string;
+}
+
+export interface ReportRow {
+  date: string;
+  orders: number;
+  dataGb: number;
+  cost: number;
+  price: number;
+  profit: number;
 }
 
 export type ListBundlesParams = {

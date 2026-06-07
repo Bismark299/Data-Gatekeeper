@@ -1,2 +1,3 @@
 - [Paystack transfer references](paystack-transfers.md) — transfer refs must be lowercase `[a-z0-9_-]{16,50}`; uppercase passes test mode but fails live. OTP must be off for auto-payout.
 - [Render production DB](render-prod-db.md) — prod DB is external (Render), not Replit-managed; dev schema changes don't propagate — run ALTER TABLE on Render after deploy or app 500s with "column does not exist".
+- [Orders data model quirks](orders-data-model.md) — bundleData is a text label (parse for GB), buyingCost nullable, Report = completed platform orders only

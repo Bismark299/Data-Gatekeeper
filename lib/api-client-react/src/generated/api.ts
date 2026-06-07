@@ -44,6 +44,7 @@ import type {
   PaystackInitResponse,
   PaystackVerifyBody,
   RegisterBody,
+  ReportRow,
   RevenuePoint,
   TopBundle,
   UpdateBundleBody,
@@ -3109,6 +3110,81 @@ export function useAdminGetTopBundles<
   request?: SecondParameter<typeof customFetch>;
 }): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getAdminGetTopBundlesQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get daily sales/profit report (admin)
+ */
+export const getAdminGetReportUrl = () => {
+  return `/api/admin/report`;
+};
+
+export const adminGetReport = async (
+  options?: RequestInit,
+): Promise<ReportRow[]> => {
+  return customFetch<ReportRow[]>(getAdminGetReportUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getAdminGetReportQueryKey = () => {
+  return [`/api/admin/report`] as const;
+};
+
+export const getAdminGetReportQueryOptions = <
+  TData = Awaited<ReturnType<typeof adminGetReport>>,
+  TError = ErrorType<ErrorResponse>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof adminGetReport>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getAdminGetReportQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof adminGetReport>>> = ({
+    signal,
+  }) => adminGetReport({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof adminGetReport>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type AdminGetReportQueryResult = NonNullable<
+  Awaited<ReturnType<typeof adminGetReport>>
+>;
+export type AdminGetReportQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Get daily sales/profit report (admin)
+ */
+
+export function useAdminGetReport<
+  TData = Awaited<ReturnType<typeof adminGetReport>>,
+  TError = ErrorType<ErrorResponse>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof adminGetReport>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getAdminGetReportQueryOptions(options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

@@ -9,4 +9,10 @@
 export interface PaystackInitResponse {
   authorizationUrl: string;
   reference: string;
+  /** Amount that will be credited to wallet */
+  amountGhs: number;
+  /** 2% Paystack processing fee */
+  feeGhs: number;
+  /** Total amount charged to customer (amount + fee) */
+  chargedGhs: number;
 }

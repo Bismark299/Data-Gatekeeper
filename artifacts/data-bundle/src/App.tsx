@@ -31,6 +31,7 @@ const AdminOrders     = lazy(() => import("@/pages/admin/orders"));
 const AdminWallets    = lazy(() => import("@/pages/admin/wallets"));
 const AdminDeposits   = lazy(() => import("@/pages/admin/deposits"));
 const AdminStats      = lazy(() => import("@/pages/admin/stats"));
+const AdminReport     = lazy(() => import("@/pages/admin/report"));
 const AdminStores     = lazy(() => import("@/pages/admin/stores"));
 const AdminAgentDetail = lazy(() => import("@/pages/admin/agent-detail"));
 const AdminSettings   = lazy(() => import("@/pages/admin/settings"));
@@ -81,6 +82,7 @@ function Router() {
         <Route path="/admin/wallets">{() => <ProtectedRoute adminOnly><AdminWallets /></ProtectedRoute>}</Route>
         <Route path="/admin/deposits">{() => <ProtectedRoute adminOnly><AdminDeposits /></ProtectedRoute>}</Route>
         <Route path="/admin/stats">{() => <ProtectedRoute adminOnly><AdminStats /></ProtectedRoute>}</Route>
+        <Route path="/admin/report">{() => <ProtectedRoute adminOnly><AdminReport /></ProtectedRoute>}</Route>
         <Route path="/admin/stores">{() => <ProtectedRoute adminOnly><AdminStores /></ProtectedRoute>}</Route>
         <Route path="/admin/agents/:userId">{() => <ProtectedRoute adminOnly><AdminAgentDetail /></ProtectedRoute>}</Route>
         <Route path="/admin/settings">{() => <ProtectedRoute adminOnly><AdminSettings /></ProtectedRoute>}</Route>

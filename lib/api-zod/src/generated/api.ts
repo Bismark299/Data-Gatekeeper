@@ -18,18 +18,18 @@ export const HealthCheckResponse = zod.object({
  * @summary Register a new user
  */
 export const RegisterBody = zod.object({
-  name: zod.string().min(2).max(80),
-  email: zod.string().email().max(254),
-  password: zod.string().min(6).max(128),
-  phone: zod.string().min(7).max(20),
+  name: zod.string(),
+  email: zod.string(),
+  password: zod.string(),
+  phone: zod.string().nullish(),
 });
 
 /**
  * @summary Login a user
  */
 export const LoginBody = zod.object({
-  email: zod.string().email().max(254),
-  password: zod.string().min(1).max(128),
+  email: zod.string(),
+  password: zod.string(),
 });
 
 export const LoginResponse = zod.object({
@@ -277,6 +277,11 @@ export const InitializePaystackDepositBody = zod.object({
 export const InitializePaystackDepositResponse = zod.object({
   authorizationUrl: zod.string(),
   reference: zod.string(),
+  amountGhs: zod.number().describe("Amount that will be credited to wallet"),
+  feeGhs: zod.number().describe("2% Paystack processing fee"),
+  chargedGhs: zod
+    .number()
+    .describe("Total amount charged to customer (amount + fee)"),
 });
 
 /**
@@ -550,3 +555,16 @@ export const AdminGetTopBundlesResponseItem = zod.object({
 export const AdminGetTopBundlesResponse = zod.array(
   AdminGetTopBundlesResponseItem,
 );
+
+/**
+ * @summary Get daily sales/profit report (admin)
+ */
+export const AdminGetReportResponseItem = zod.object({
+  date: zod.string(),
+  orders: zod.number(),
+  dataGb: zod.number(),
+  cost: zod.number(),
+  price: zod.number(),
+  profit: zod.number(),
+});
+export const AdminGetReportResponse = zod.array(AdminGetReportResponseItem);

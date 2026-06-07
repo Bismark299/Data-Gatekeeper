@@ -1073,6 +1073,62 @@ router.get("/admin/top-bundles", requireAdmin, async (req, res): Promise<void> =
   res.json(result);
 });
 
+// Parse a bundle-data label (e.g. "1GB", "500MB", "50GB") into a GB number.
+// Strict: the whole label must be a number followed by a recognized unit,
+// otherwise we return 0 rather than guessing (avoids overstating totals).
+function parseDataGb(raw: string): number {
+  const match = String(raw).trim().match(/^([\d.]+)\s*(GB|MB|TB)$/i);
+  if (!match) return 0;
+  const value = parseFloat(match[1]);
+  if (isNaN(value)) return 0;
+  const unit = match[2].toUpperCase();
+  if (unit === "MB") return value / 1000;
+  if (unit === "TB") return value * 1000;
+  return value;
+}
+
+router.get("/admin/report", requireAdmin, async (req, res): Promise<void> => {
+  const orders = await db
+    .select({
+      createdAt: ordersTable.createdAt,
+      price: ordersTable.price,
+      buyingCost: ordersTable.buyingCost,
+      bundleData: ordersTable.bundleData,
+    })
+    .from(ordersTable)
+    .where(eq(ordersTable.status, "completed"));
+
+  const byDate: Record<
+    string,
+    { orders: number; dataGb: number; cost: number; price: number; profit: number }
+  > = {};
+
+  for (const o of orders) {
+    const date = o.createdAt.toISOString().split("T")[0];
+    if (!byDate[date]) byDate[date] = { orders: 0, dataGb: 0, cost: 0, price: 0, profit: 0 };
+    const price = Number(o.price);
+    const cost = Number(o.buyingCost ?? 0);
+    byDate[date].orders += 1;
+    byDate[date].dataGb += parseDataGb(o.bundleData);
+    byDate[date].cost += cost;
+    byDate[date].price += price;
+    byDate[date].profit += price - cost;
+  }
+
+  const result = Object.entries(byDate)
+    .sort(([a], [b]) => b.localeCompare(a))
+    .map(([date, data]) => ({
+      date,
+      orders: data.orders,
+      dataGb: Math.round(data.dataGb * 100) / 100,
+      cost: Math.round(data.cost * 100) / 100,
+      price: Math.round(data.price * 100) / 100,
+      profit: Math.round(data.profit * 100) / 100,
+    }));
+
+  res.json(result);
+});
+
 // ── Agents ────────────────────────────────────────────────────────────────────
 
 router.get("/admin/agents/:userId", requireAdmin, async (req, res): Promise<void> => {

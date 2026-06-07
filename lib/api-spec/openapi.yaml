@@ -980,6 +980,27 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /admin/report:
+    get:
+      operationId: adminGetReport
+      tags: [admin]
+      summary: Get daily sales/profit report (admin)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ReportRow"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
 components:
   schemas:
     HealthStatus:
@@ -1500,3 +1521,26 @@ components:
         - orders
         - revenue
         - category
+
+    ReportRow:
+      type: object
+      properties:
+        date:
+          type: string
+        orders:
+          type: integer
+        dataGb:
+          type: number
+        cost:
+          type: number
+        price:
+          type: number
+        profit:
+          type: number
+      required:
+        - date
+        - orders
+        - dataGb
+        - cost
+        - price
+        - profit

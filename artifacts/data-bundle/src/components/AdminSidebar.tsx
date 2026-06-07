@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   LayoutDashboard, Package, Users, ShoppingCart, LogOut, Wifi, ChevronRight, X,
   Wallet, ArrowDownCircle, BarChart3, Store, Settings, Zap, Loader2, Smartphone,
-  Package2, KeyRound,
+  Package2, KeyRound, FileText,
 } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
 
@@ -19,6 +19,7 @@ const navItems = [
   { href: "/admin/deposits",     icon: ArrowDownCircle, label: "Deposits" },
   { href: "/admin/momo",         icon: Smartphone,      label: "MoMo Transactions" },
   { href: "/admin/stats",        icon: BarChart3,       label: "Statistics" },
+  { href: "/admin/report",       icon: FileText,        label: "Report" },
   { href: "/admin/topupgh",      icon: Package2,        label: "TopUpGH" },
   { href: "/admin/api-clients",  icon: KeyRound,        label: "API Clients" },
   { href: "/admin/settings",     icon: Settings,        label: "Settings" },
