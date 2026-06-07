@@ -1091,9 +1091,10 @@ router.get("/admin/report", requireAdmin, async (req, res): Promise<void> => {
   const orders = await db
     .select({
       createdAt: ordersTable.createdAt,
-      price: ordersTable.price,
+      orderPrice: ordersTable.price,
       buyingCost: ordersTable.buyingCost,
       bundlePrice: bundlesTable.price,
+      agentPrice: bundlesTable.agentPrice,
       bundleData: ordersTable.bundleData,
     })
     .from(ordersTable)
@@ -1108,10 +1109,11 @@ router.get("/admin/report", requireAdmin, async (req, res): Promise<void> => {
   for (const o of orders) {
     const date = o.createdAt.toISOString().split("T")[0];
     if (!byDate[date]) byDate[date] = { orders: 0, dataGb: 0, cost: 0, price: 0, profit: 0 };
-    const price = Number(o.price);
-    // Cost comes from the bundle's cost price (consistent with the admin
-    // financial summary); fall back to the cost captured on the order.
+    // Cost = bundle's base (cost) price; fall back to the cost captured on the order.
     const cost = Number(o.bundlePrice ?? o.buyingCost ?? 0);
+    // Price = the selling price agents buy the bundle at (bundle.agentPrice);
+    // fall back to the actual order price, then the cost, when no agent price is set.
+    const price = Number(o.agentPrice ?? o.orderPrice ?? o.bundlePrice ?? 0);
     byDate[date].orders += 1;
     byDate[date].dataGb += parseDataGb(o.bundleData);
     byDate[date].cost += cost;
