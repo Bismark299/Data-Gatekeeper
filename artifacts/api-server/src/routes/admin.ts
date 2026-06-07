@@ -1088,18 +1088,33 @@ function parseDataGb(raw: string): number {
 }
 
 router.get("/admin/report", requireAdmin, async (req, res): Promise<void> => {
-  const orders = await db
-    .select({
-      createdAt: ordersTable.createdAt,
-      orderPrice: ordersTable.price,
-      buyingCost: ordersTable.buyingCost,
-      bundlePrice: bundlesTable.price,
-      agentPrice: bundlesTable.agentPrice,
-      bundleData: ordersTable.bundleData,
-    })
-    .from(ordersTable)
-    .leftJoin(bundlesTable, eq(ordersTable.bundleId, bundlesTable.id))
-    .where(eq(ordersTable.status, "completed"));
+  // The report combines BOTH sales channels — direct platform orders and agent
+  // store orders — so every figure (orders, data, cost, price, profit) is the sum
+  // of direct + store. Both channels keep the same definitions: cost = platform's
+  // base (telecom) cost, price = final selling price, profit = price - cost.
+  const [orders, storeOrders] = await Promise.all([
+    db
+      .select({
+        createdAt: ordersTable.createdAt,
+        orderPrice: ordersTable.price,
+        buyingCost: ordersTable.buyingCost,
+        bundlePrice: bundlesTable.price,
+        agentPrice: bundlesTable.agentPrice,
+        bundleData: ordersTable.bundleData,
+      })
+      .from(ordersTable)
+      .leftJoin(bundlesTable, eq(ordersTable.bundleId, bundlesTable.id))
+      .where(eq(ordersTable.status, "completed")),
+    db
+      .select({
+        createdAt: storeOrdersTable.createdAt,
+        sellingPrice: storeOrdersTable.sellingPrice,
+        basePrice: storeOrdersTable.basePrice,
+        bundleData: storeOrdersTable.bundleData,
+      })
+      .from(storeOrdersTable)
+      .where(eq(storeOrdersTable.status, "completed")),
+  ]);
 
   const byDate: Record<
     string,
@@ -1114,6 +1129,20 @@ router.get("/admin/report", requireAdmin, async (req, res): Promise<void> => {
     // Price = the selling price agents buy the bundle at (bundle.agentPrice);
     // fall back to the actual order price, then the cost, when no agent price is set.
     const price = Number(o.agentPrice ?? o.orderPrice ?? o.bundlePrice ?? 0);
+    byDate[date].orders += 1;
+    byDate[date].dataGb += parseDataGb(o.bundleData);
+    byDate[date].cost += cost;
+    byDate[date].price += price;
+    byDate[date].profit += price - cost;
+  }
+
+  for (const o of storeOrders) {
+    const date = o.createdAt.toISOString().split("T")[0];
+    if (!byDate[date]) byDate[date] = { orders: 0, dataGb: 0, cost: 0, price: 0, profit: 0 };
+    // Store cost = platform's base (telecom) cost; price = what the store customer
+    // paid (sellingPrice); profit = price - cost (the full margin across the chain).
+    const cost = Number(o.basePrice ?? 0);
+    const price = Number(o.sellingPrice ?? 0);
     byDate[date].orders += 1;
     byDate[date].dataGb += parseDataGb(o.bundleData);
     byDate[date].cost += cost;
