@@ -12,6 +12,7 @@ import { insertLedgerEntry } from "./wallet";
 import {
   genWithdrawalReference,
   processWithdrawalTransfer,
+  markWithdrawalFailedAndRefund,
   WITHDRAWAL_FEE as PAYOUT_FEE,
 } from "../lib/storeWithdrawals";
 import { getAppOrigin } from "../lib/origin";
@@ -824,6 +825,7 @@ router.get("/admin/withdrawals", requireAuth, async (req, res) => {
       transferCode: storeWithdrawalsTable.transferCode,
       failureReason: storeWithdrawalsTable.failureReason,
       createdAt: storeWithdrawalsTable.createdAt,
+      updatedAt: storeWithdrawalsTable.updatedAt,
       storeName: storesTable.name,
       storeSlug: storesTable.slug,
     })
@@ -833,13 +835,40 @@ router.get("/admin/withdrawals", requireAuth, async (req, res) => {
 
   const withdrawals = rows.map(w => ({ ...w, amount: parseFloat(w.amount as any) }));
 
-  // Money currently sitting in agent profit balances — i.e. ready to be withdrawn.
-  const stores = await db.select({ profitBalance: storesTable.profitBalance }).from(storesTable);
+  // Money currently sitting in agent profit balances — i.e. ready to be withdrawn
+  // but not yet requested. Surface the per-store breakdown so admins see the full
+  // outstanding obligation, not just what agents have already asked for.
+  const stores = await db
+    .select({
+      storeId: storesTable.id,
+      storeName: storesTable.name,
+      storeSlug: storesTable.slug,
+      profitBalance: storesTable.profitBalance,
+    })
+    .from(storesTable)
+    .orderBy(desc(storesTable.profitBalance));
   const readyForWithdrawal = stores.reduce((s, st) => s + parseFloat(st.profitBalance as any), 0);
+  const pendingProfits = stores
+    .map(st => ({ ...st, profitBalance: parseFloat(st.profitBalance as any) }))
+    .filter(st => st.profitBalance > 0);
 
   const sumBy = (status: string) =>
     withdrawals.filter(w => w.status === status).reduce((s, w) => s + w.amount, 0);
   const countBy = (status: string) => withdrawals.filter(w => w.status === status).length;
+
+  // "Paid today" — completed withdrawals finalised since local midnight (server is
+  // UTC/GMT, same as Ghana, so a plain date comparison is correct here).
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const paidTodayRows = withdrawals.filter(
+    w => w.status === "completed" && w.updatedAt && new Date(w.updatedAt as any) >= startOfToday,
+  );
+  const paidToday = paidTodayRows.reduce((s, w) => s + w.amount, 0);
+
+  // Distinct agents with money in flight (a pending or processing request).
+  const agentsPending = new Set(
+    withdrawals.filter(w => w.status === "pending" || w.status === "processing").map(w => w.storeId),
+  ).size;
 
   res.json({
     summary: {
@@ -850,7 +879,12 @@ router.get("/admin/withdrawals", requireAuth, async (req, res) => {
       processingAmount: parseFloat(sumBy("processing").toFixed(2)),
       completedCount: countBy("completed"),
       completedAmount: parseFloat(sumBy("completed").toFixed(2)),
+      paidToday: parseFloat(paidToday.toFixed(2)),
+      paidTodayCount: paidTodayRows.length,
+      agentsPending,
+      agentsOwed: pendingProfits.length,
     },
+    pendingProfits,
     withdrawals,
   });
 });
@@ -1160,18 +1194,39 @@ router.patch("/admin/stores/withdrawals/:id/complete", requireAuth, async (req, 
   const id = parseInt(String(req.params.id));
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
 
-  const [w] = await db.select().from(storeWithdrawalsTable).where(eq(storeWithdrawalsTable.id, id));
-  if (!w) { res.status(404).json({ error: "Withdrawal not found" }); return; }
-  if (w.status === "completed") { res.status(400).json({ error: "Withdrawal already completed" }); return; }
-  if (w.status === "cancelled") { res.status(400).json({ error: "Cannot complete a cancelled withdrawal" }); return; }
+  let updated: typeof storeWithdrawalsTable.$inferSelect;
+  try {
+    updated = await db.transaction(async (tx) => {
+      // Lock the row so completion can't race a concurrent failure-refund path
+      // (webhook / reconciler / force-cancel). Terminal states are monotonic:
+      // a row that was already failed+refunded or cancelled+refunded must never
+      // be flipped to completed, or the agent would be both refunded and "paid".
+      const [locked] = await tx.select().from(storeWithdrawalsTable)
+        .where(eq(storeWithdrawalsTable.id, id)).for("update");
+      if (!locked) throw Object.assign(new Error("Withdrawal not found"), { status: 404 });
+      if (locked.status === "completed") {
+        throw Object.assign(new Error("Withdrawal already completed"), { status: 400 });
+      }
+      if (locked.status !== "pending" && locked.status !== "processing") {
+        // failed (already refunded) or cancelled (already refunded) — refusing
+        // keeps the refund and the "paid" state mutually exclusive.
+        throw Object.assign(new Error(`Cannot complete a withdrawal that is ${locked.status}`), { status: 400 });
+      }
 
-  // A manually-paid withdrawal still needs a reference so it can be traced and
-  // so the UI never shows a blank Ref. Keep any existing reference (e.g. from an
-  // earlier auto-transfer attempt); only mint one when the row has none.
-  await db.update(storeWithdrawalsTable)
-    .set({ status: "completed", reference: w.reference || genWithdrawalReference() })
-    .where(eq(storeWithdrawalsTable.id, id));
-  const [updated] = await db.select().from(storeWithdrawalsTable).where(eq(storeWithdrawalsTable.id, id));
+      // A manually-paid withdrawal still needs a reference so it can be traced and
+      // so the UI never shows a blank Ref. Keep any existing reference (e.g. from an
+      // earlier auto-transfer attempt); only mint one when the row has none.
+      const [done] = await tx.update(storeWithdrawalsTable)
+        .set({ status: "completed", reference: locked.reference || genWithdrawalReference() })
+        .where(eq(storeWithdrawalsTable.id, id))
+        .returning();
+      return done;
+    });
+  } catch (err: unknown) {
+    const e = err as { message?: string; status?: number };
+    res.status(e.status ?? 500).json({ error: e.message ?? "Completion failed" });
+    return;
+  }
   res.json({ ...updated, amount: parseFloat(updated.amount as any) });
 });
 
@@ -1202,10 +1257,14 @@ router.patch("/admin/stores/withdrawals/:id/reject", requireAuth, async (req, re
         );
       }
 
+      // Record the admin's reason (if any) so the agent and audit trail can see
+      // why the request was turned down.
+      const reason = typeof req.body?.reason === "string" ? req.body.reason.trim().slice(0, 200) : "";
+
       // Mark as cancelled
       const [cancelled] = await tx
         .update(storeWithdrawalsTable)
-        .set({ status: "cancelled" })
+        .set({ status: "cancelled", failureReason: reason || "Rejected by admin" })
         .where(eq(storeWithdrawalsTable.id, id))
         .returning();
 
@@ -1225,6 +1284,37 @@ router.patch("/admin/stores/withdrawals/:id/reject", requireAuth, async (req, re
     return;
   }
 
+  res.json({ ...updated, amount: parseFloat(updated.amount as any) });
+});
+
+/**
+ * Force-cancel a withdrawal that is stuck in "processing" — i.e. a transfer that
+ * genuinely failed but never got a Paystack webhook/reconciler resolution. Refunds
+ * amount + fee back to the agent so they can request again. Reuses the shared
+ * row-locked, status-guarded helper, so it is idempotent with the webhook and the
+ * reconciler (whichever settles the row first wins; the others become no-ops).
+ *
+ * Only use when Paystack confirms the money did NOT go out — otherwise this would
+ * refund an agent who was actually paid (double payout).
+ */
+router.patch("/admin/stores/withdrawals/:id/force-cancel", requireAuth, async (req, res) => {
+  if (req.session.userRole !== "admin") { res.status(403).json({ error: "Forbidden" }); return; }
+  const id = parseInt(String(req.params.id));
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+
+  const [w] = await db.select().from(storeWithdrawalsTable).where(eq(storeWithdrawalsTable.id, id));
+  if (!w) { res.status(404).json({ error: "Withdrawal not found" }); return; }
+  if (w.status !== "processing") {
+    res.status(400).json({ error: `Only a processing withdrawal can be force-cancelled (this one is ${w.status})` });
+    return;
+  }
+
+  const reason = typeof req.body?.reason === "string" && req.body.reason.trim()
+    ? req.body.reason.trim()
+    : "Force-cancelled by admin (transfer failed)";
+  await markWithdrawalFailedAndRefund(id, reason);
+
+  const [updated] = await db.select().from(storeWithdrawalsTable).where(eq(storeWithdrawalsTable.id, id));
   res.json({ ...updated, amount: parseFloat(updated.amount as any) });
 });
 

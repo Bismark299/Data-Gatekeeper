@@ -10,7 +10,7 @@ import {
   Menu, Store, ChevronLeft, ExternalLink, ArrowDownCircle,
   ShoppingCart, TrendingUp, Wallet, Search, X, RefreshCw,
   CheckCircle2, XCircle, ThumbsUp, ThumbsDown,
-  Banknote, Clock, Loader2, CircleDollarSign, Send,
+  Banknote, Clock, Loader2, CircleDollarSign, Send, Ban,
 } from "lucide-react";
 
 const NETWORK_BADGE: Record<string, string> = {
@@ -138,15 +138,44 @@ function AdminStoresContent() {
   };
 
   const handleWithdrawalReject = async (wId: number) => {
+    const reason = window.prompt("Reason for rejecting this withdrawal? (shown to the agent — optional)") ?? undefined;
+    if (reason === undefined) return; // admin cancelled the prompt
     setWithdrawalActionId(wId);
     try {
-      const res = await fetch(`/api/admin/stores/withdrawals/${wId}/reject`, { method: "PATCH", credentials: "include" });
+      const res = await fetch(`/api/admin/stores/withdrawals/${wId}/reject`, {
+        method: "PATCH", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason }),
+      });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error);
       toast({ title: `Withdrawal #${wId} rejected — amount refunded to store balance` });
       refetchWd();
     } catch (e: unknown) {
       toast({ title: (e as Error).message || "Error rejecting withdrawal", variant: "destructive" });
+    } finally { setWithdrawalActionId(null); }
+  };
+
+  const handleWithdrawalForceCancel = async (wId: number) => {
+    const ok = window.confirm(
+      "Force-cancel this stuck transfer?\n\nOnly do this if Paystack confirms the money did NOT go out. " +
+      "The amount + fee will be refunded to the agent so they can request again.",
+    );
+    if (!ok) return;
+    const reason = window.prompt("Reason / note for this force-cancel? (optional)") ?? "";
+    setWithdrawalActionId(wId);
+    try {
+      const res = await fetch(`/api/admin/stores/withdrawals/${wId}/force-cancel`, {
+        method: "PATCH", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error);
+      toast({ title: `Withdrawal #${wId} force-cancelled — amount refunded to agent` });
+      refetchWd();
+    } catch (e: unknown) {
+      toast({ title: (e as Error).message || "Error force-cancelling withdrawal", variant: "destructive" });
     } finally { setWithdrawalActionId(null); }
   };
 
@@ -412,6 +441,7 @@ function AdminStoresContent() {
                                   onApprove={handleWithdrawalApprove}
                                   onReject={handleWithdrawalReject}
                                   onComplete={handleWithdrawalComplete}
+                                  onForceCancel={handleWithdrawalForceCancel}
                                 />
                               </td>
                             </tr>
@@ -527,10 +557,10 @@ function AdminStoresContent() {
                   {/* Summary cards */}
                   <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                     {[
-                      { label: "Ready for Withdrawal", value: `GH₵${(wdSummary?.readyForWithdrawal ?? 0).toFixed(2)}`, hint: "Agent balances", icon: CircleDollarSign, color: "text-emerald-600", bg: "bg-emerald-50 dark:bg-emerald-900/10" },
-                      { label: "Pending", value: `GH₵${(wdSummary?.pendingAmount ?? 0).toFixed(2)}`, hint: `${wdSummary?.pendingCount ?? 0} awaiting approval`, icon: Clock, color: "text-amber-600", bg: "bg-amber-50 dark:bg-amber-900/10" },
-                      { label: "Processing", value: `GH₵${(wdSummary?.processingAmount ?? 0).toFixed(2)}`, hint: `${wdSummary?.processingCount ?? 0} in flight`, icon: Loader2, color: "text-blue-600", bg: "bg-blue-50 dark:bg-blue-900/10" },
-                      { label: "Total Paid Out", value: `GH₵${(wdSummary?.completedAmount ?? 0).toFixed(2)}`, hint: `${wdSummary?.completedCount ?? 0} completed`, icon: CheckCircle2, color: "text-slate-600 dark:text-slate-300", bg: "bg-muted/40" },
+                      { label: "Ready for Withdrawal", value: `GH₵${(wdSummary?.readyForWithdrawal ?? 0).toFixed(2)}`, hint: `${wdSummary?.agentsOwed ?? 0} agents owed`, icon: CircleDollarSign, color: "text-emerald-600", bg: "bg-emerald-50 dark:bg-emerald-900/10" },
+                      { label: "Pending Payouts", value: `GH₵${(wdSummary?.pendingAmount ?? 0).toFixed(2)}`, hint: `${wdSummary?.pendingCount ?? 0} requests · ${wdSummary?.agentsPending ?? 0} agents`, icon: Clock, color: "text-amber-600", bg: "bg-amber-50 dark:bg-amber-900/10" },
+                      { label: "Paid Today", value: `GH₵${(wdSummary?.paidToday ?? 0).toFixed(2)}`, hint: `${wdSummary?.paidTodayCount ?? 0} sent today`, icon: Send, color: "text-blue-600", bg: "bg-blue-50 dark:bg-blue-900/10" },
+                      { label: "Total Ever Paid", value: `GH₵${(wdSummary?.completedAmount ?? 0).toFixed(2)}`, hint: `${wdSummary?.completedCount ?? 0} completed`, icon: CheckCircle2, color: "text-slate-600 dark:text-slate-300", bg: "bg-muted/40" },
                     ].map(({ label, value, hint, icon: Icon, color, bg }) => (
                       <div key={label} className={`rounded-2xl border border-border p-4 ${bg}`}>
                         <div className="flex items-center gap-2">
@@ -640,6 +670,7 @@ function AdminStoresContent() {
                                       onApprove={handleWithdrawalApprove}
                                       onReject={handleWithdrawalReject}
                                       onComplete={handleWithdrawalComplete}
+                                      onForceCancel={handleWithdrawalForceCancel}
                                     />
                                   </td>
                                 </tr>
@@ -649,6 +680,42 @@ function AdminStoresContent() {
                         </table>
                       )}
                     </div>
+                  </div>
+
+                  {/* Pending Profits — money agents have earned but not yet requested */}
+                  <div className="bg-card border border-border rounded-2xl overflow-hidden">
+                    <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-muted/20">
+                      <div className="flex items-center gap-2">
+                        <CircleDollarSign className="w-4 h-4 text-emerald-600" />
+                        <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Pending Profits — not yet requested</span>
+                      </div>
+                      <span className="text-xs font-bold text-emerald-600">GH₵{(wdSummary?.readyForWithdrawal ?? 0).toFixed(2)}</span>
+                    </div>
+                    {!globalWithdrawals ? (
+                      <div className="py-10 text-center text-muted-foreground text-sm">Loading…</div>
+                    ) : (globalWithdrawals.pendingProfits ?? []).length === 0 ? (
+                      <div className="py-10 text-center text-muted-foreground text-sm">
+                        <CircleDollarSign className="w-9 h-9 mx-auto mb-2 opacity-20" />
+                        No outstanding agent balances
+                      </div>
+                    ) : (
+                      <div className="divide-y divide-border max-h-72 overflow-y-auto">
+                        {(globalWithdrawals.pendingProfits as any[]).map(p => (
+                          <button
+                            key={p.storeId}
+                            onClick={() => { setSelectedStoreId(p.storeId); setDetailTab("withdrawals"); }}
+                            className="w-full flex items-center justify-between px-4 py-2.5 text-left hover:bg-muted/30 transition-colors"
+                            title="Open store"
+                          >
+                            <div className="min-w-0">
+                              <div className="font-semibold text-xs text-foreground truncate">{p.storeName ?? "—"}</div>
+                              {p.storeSlug && <div className="text-[10px] text-muted-foreground font-mono truncate">/{p.storeSlug}</div>}
+                            </div>
+                            <span className="font-bold text-sm text-emerald-600 whitespace-nowrap ml-3">GH₵{p.profitBalance.toFixed(2)}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -661,13 +728,14 @@ function AdminStoresContent() {
 }
 
 function WithdrawalActions({
-  w, isActioning, onApprove, onReject, onComplete,
+  w, isActioning, onApprove, onReject, onComplete, onForceCancel,
 }: {
   w: any;
   isActioning: boolean;
   onApprove: (id: number) => void;
   onReject: (id: number) => void;
   onComplete: (id: number) => void;
+  onForceCancel: (id: number) => void;
 }) {
   if (w.status === "pending") {
     return (
@@ -682,28 +750,48 @@ function WithdrawalActions({
           {isActioning ? "Sending…" : "Send"}
         </button>
         <button
+          onClick={() => onComplete(w.id)}
+          disabled={isActioning}
+          className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200 disabled:opacity-50 transition-colors whitespace-nowrap"
+          title="Mark as paid without Paystack (cash / bank transfer / settled outside the system)"
+        >
+          <Banknote className="w-3 h-3" />
+          {isActioning ? "…" : "Manual Pay"}
+        </button>
+        <button
           onClick={() => onReject(w.id)}
           disabled={isActioning}
           className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold bg-red-100 text-red-700 hover:bg-red-200 disabled:opacity-50 transition-colors whitespace-nowrap"
           title="Reject and refund to store balance"
         >
           <ThumbsDown className="w-3 h-3" />
-          {isActioning ? "…" : "Refund"}
+          {isActioning ? "…" : "Reject"}
         </button>
       </div>
     );
   }
   if (w.status === "processing") {
     return (
-      <button
-        onClick={() => onComplete(w.id)}
-        disabled={isActioning}
-        className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold bg-blue-100 text-blue-700 hover:bg-blue-200 disabled:opacity-50 transition-colors whitespace-nowrap"
-        title="Manually mark as completed (use if webhook didn't arrive)"
-      >
-        <CheckCircle2 className="w-3 h-3" />
-        {isActioning ? "…" : "Mark Done"}
-      </button>
+      <div className="flex items-center gap-1">
+        <button
+          onClick={() => onComplete(w.id)}
+          disabled={isActioning}
+          className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold bg-blue-100 text-blue-700 hover:bg-blue-200 disabled:opacity-50 transition-colors whitespace-nowrap"
+          title="Force complete: Paystack sent the money but the webhook never arrived"
+        >
+          <CheckCircle2 className="w-3 h-3" />
+          {isActioning ? "…" : "Force Complete"}
+        </button>
+        <button
+          onClick={() => onForceCancel(w.id)}
+          disabled={isActioning}
+          className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold bg-orange-100 text-orange-700 hover:bg-orange-200 disabled:opacity-50 transition-colors whitespace-nowrap"
+          title="Force cancel: the transfer genuinely failed but is stuck — refund the agent"
+        >
+          <Ban className="w-3 h-3" />
+          {isActioning ? "…" : "Force Cancel"}
+        </button>
+      </div>
     );
   }
   return <span className="text-xs text-muted-foreground/40 italic">—</span>;
