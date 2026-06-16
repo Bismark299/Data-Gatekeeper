@@ -180,3 +180,84 @@ All requests go to `/api`, send cookies (`credentials: "include"`), and on a `40
 - **Profit** = Sell Price − Cost, accumulated into `profitBalance`.
 - **Withdrawals** deduct `amount + GH₵1 fee` from `profitBalance`; failures refund it.
 - **Bulk orders** deduct cost from the agent's wallet/profit balance at submission.
+
+---
+
+## 12. Visual design
+
+The page uses Tailwind CSS with the project's shadcn/ui design tokens (`bg-background`, `text-foreground`, `bg-card`, `border-border`, `text-muted-foreground`, `text-primary`, etc.), so it adapts to **light and dark mode** automatically. Below are the concrete design choices.
+
+### 12.1 Color system
+
+**Store theme colors** (`COLOR_THEMES` / `THEME_MAP`) — the agent picks one; it drives the header, create-form icon, and accents.
+
+| Theme value | Label | Swatch | Header bg | Text on header |
+|---|---|---|---|---|
+| `yellow` | MTN Gold | `#FACC15` | `bg-yellow-400` | dark (`text-gray-900`) |
+| `red` | Telecel Red | `#DC2626` | `bg-red-600` | white |
+| `blue` | Ocean Blue (default) | `#2563EB` | `bg-blue-600` | white |
+| `green` | Forest Green | `#16A34A` | `bg-green-600` | white |
+| `purple` | Royal Purple | `#9333EA` | `bg-purple-600` | white |
+| `orange` | Sunset | `#F97316` | `bg-orange-500` | white |
+| `teal` | Teal | `#0D9488` | `bg-teal-600` | white |
+
+Each theme also carries a `light` variant (e.g. `bg-blue-50 border-blue-200`) used for soft backgrounds. Swatch pickers are 36px (`w-9 h-9`) rounded squares; the selected one gets `ring-2` + `scale-110`, others `hover:scale-105`.
+
+**Network colors** (used on order/bundle badges, `NETWORK_COLORS`):
+- MTN → `bg-yellow-100 text-yellow-800`
+- Telecel → `bg-red-100 text-red-800`
+- AT iShare → `bg-blue-100 text-blue-800`
+- AT Big-Time → `bg-green-100 text-green-800`
+
+The Bundles tab network headers use the richer **gradient** styles from `NETWORK_STYLES` (`BundleCard.tsx`), falling back to `from-gray-600 to-gray-800`.
+
+**Status colors** (`STATUS_COLORS`, used on order + withdrawal badges):
+- pending → `bg-amber-100 text-amber-800`
+- processing → `bg-blue-100 text-blue-800`
+- completed → `bg-emerald-100 text-emerald-800`
+- failed → `bg-red-100 text-red-800`
+- cancelled → `bg-gray-100 text-gray-600`
+
+**Semantic accents:** profit / money-positive → emerald (`text-emerald-600`, `bg-emerald-100`); cost → orange (`text-orange-600`); errors → red with `bg-red-50 border-red-200`; warnings → amber.
+
+### 12.2 Layout & spacing
+
+- **Page shell:** `min-h-screen bg-background` with the shared `<Navbar>` on top.
+- **Dashboard container:** `max-w-7xl mx-auto` with responsive padding `px-4 sm:px-6 lg:px-8 py-6`.
+- **Create form / Settings:** narrow centered column (`max-w-lg`); create form is vertically centered (`min-h-[70vh] flex items-center justify-center`).
+- **Rounded corners:** generous and consistent — cards `rounded-2xl`/`rounded-3xl`, inputs/buttons `rounded-lg`/`rounded-xl`, badges/pills `rounded-full`.
+- **Cards:** `bg-card border border-border` with `p-4`/`p-5` padding and subtle `shadow-sm`.
+- **Grids:** stat cards use `grid grid-cols-2 lg:grid-cols-4 gap-4`; the Earnings tab is a two-column `lg:grid-cols-2` (form + history).
+
+### 12.3 Typography
+
+- Page/store titles: `text-3xl font-bold` (store name in header is `text-3xl font-black`).
+- Section headings: `font-bold` (~`text-lg`).
+- Stat values: `text-base sm:text-2xl font-bold` (responsive).
+- Body/labels: `text-sm font-semibold` for field labels; `text-xs text-muted-foreground` for hints and meta.
+- **Monospace** (`font-mono`) for money figures, phone numbers, slugs, and the bulk-order input — to keep numbers aligned.
+
+### 12.4 Component patterns
+
+- **Header band:** rounded-3xl block; theme-colored top section with the store icon in a frosted `bg-white/20 backdrop-blur` tile, name + description, and frosted pill buttons (Copy Link / View Store). A dark `bg-[#1e1e1e]` strip underneath shows the live profit balance in emerald.
+- **Tabs:** a segmented control inside a `bg-muted rounded-2xl p-1.5` track; active tab is a raised `bg-background shadow-sm`, inactive tabs are muted; horizontally scrollable on mobile (`overflow-x-auto scrollbar-none`). Each tab has a lucide icon (BarChart3, Package, ListOrdered, PiggyBank, Settings).
+- **Stat cards:** icon tile (colored, rounded-xl) + value + label + optional sub-label; values truncate gracefully.
+- **Tables:** muted header row (`bg-muted/40`), `divide-y divide-border` rows with `hover:bg-muted/30`; horizontally scrollable (`overflow-x-auto`). The Report-style admin tables use dark headers, but the store tables use the muted style.
+- **Badges/pills:** tiny uppercase labels (`text-[10px] font-bold uppercase tracking-wide`) for networks and statuses.
+- **Modals (Bulk Order):** full-screen overlay `bg-black/60 backdrop-blur-sm`, centered `max-w-lg` card with sticky header/footer and a scrollable body (`max-h-[90vh]`); live validation rows tint green (`bg-emerald-50/50`) or red (`bg-red-50/50`).
+- **Buttons:** shadcn `<Button>`; primary actions are full-width and tall (`h-11`/`h-12`) on forms; inline actions are compact (`h-7`/`h-8`); loading states swap the icon for a spinning `Loader2`.
+- **Empty states:** centered muted icon + heading + one-line prompt (e.g. "No sales yet — share your store link…").
+
+### 12.5 Responsiveness
+
+- Mobile-first: stat grids collapse `2 → 4` columns at `lg`; the header stacks (`flex-col sm:flex-row`); the Earnings form/history stack to one column below `lg`; tab bar and tables scroll horizontally; filter inputs go full-width on mobile (`w-full sm:w-40`).
+
+### 12.6 Micro-interactions
+
+- Copy-link button swaps to a green "Copied!" check for 2 seconds.
+- Bundle price editor shows the resulting profit **live** as the agent types, in an emerald pill.
+- Bulk-order total and valid/skipped counts update live per keystroke.
+- Optimistic wallet-balance update after a bulk order (no visible wait for refetch).
+- Theme swatches scale on hover/selection; saved-state toasts ("Saved!", success banners) confirm actions inline.
+
+> Note: this describes the design **as implemented in code**. For a pixel-accurate visual reference, the live page can be viewed at `/store` in the preview (or a screenshot can be captured on request).
