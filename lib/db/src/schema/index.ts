@@ -7,3 +7,4 @@ export * from "./stores";
 export * from "./settings";
 export * from "./topupgh";
 export * from "./apiClients";
+export * from "./mtnTransfers";

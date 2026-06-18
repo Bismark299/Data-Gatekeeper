@@ -5,7 +5,7 @@ import { useCart } from "@/context/CartContext";
 import { useGetWalletBalance } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
 import {
-  Menu, X, Wifi, LogOut, ShieldCheck, ShoppingCart, Wallet, UserCircle, Store,
+  Menu, X, Wifi, LogOut, ShieldCheck, ShoppingCart, Wallet, UserCircle, Store, ArrowLeftRight,
 } from "lucide-react";
 import {
   Tooltip, TooltipContent, TooltipTrigger,
@@ -66,6 +66,13 @@ export function Navbar() {
               <Link href="/admin">
                 <Button variant={location.startsWith("/admin") ? "secondary" : "ghost"} size="sm">
                   <ShieldCheck className="w-4 h-4 mr-1.5" /> Admin
+                </Button>
+              </Link>
+            )}
+            {isAdmin && (
+              <Link href="/mtn-transfer">
+                <Button variant={location.startsWith("/mtn-transfer") ? "secondary" : "ghost"} size="sm" className="gap-1.5">
+                  <ArrowLeftRight className="w-3.5 h-3.5" /> MTN Transfer
                 </Button>
               </Link>
             )}

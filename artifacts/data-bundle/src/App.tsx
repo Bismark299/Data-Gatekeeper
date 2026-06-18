@@ -23,6 +23,7 @@ const Profile        = lazy(() => import("@/pages/profile"));
 const Shop           = lazy(() => import("@/pages/shop"));
 const StoreManager   = lazy(() => import("@/pages/store-manager"));
 const PublicStore    = lazy(() => import("@/pages/public-store"));
+const MtnTransfer    = lazy(() => import("@/pages/mtn-transfer"));
 
 const AdminDashboard  = lazy(() => import("@/pages/admin/index"));
 const AdminBundles    = lazy(() => import("@/pages/admin/bundles"));
@@ -91,6 +92,7 @@ function Router() {
         <Route path="/admin/api-clients">{() => <ProtectedRoute adminOnly><AdminApiClients /></ProtectedRoute>}</Route>
         <Route path="/shop">{() => <ProtectedRoute><Shop /></ProtectedRoute>}</Route>
         <Route path="/store-manager">{() => <ProtectedRoute><StoreManager /></ProtectedRoute>}</Route>
+        <Route path="/mtn-transfer">{() => <ProtectedRoute adminOnly><MtnTransfer /></ProtectedRoute>}</Route>
         <Route path="/s/:slug" component={PublicStore} />
         <Route component={NotFound} />
       </Switch>
