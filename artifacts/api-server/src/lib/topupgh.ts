@@ -21,8 +21,7 @@
 
 import crypto from "crypto";
 import { eq, and, isNull, isNotNull, lt, inArray } from "drizzle-orm";
-import { sql } from "drizzle-orm";
-import { db, settingsTable, ordersTable, bundlesTable, topupghBatchesTable, walletsTable, walletLedgerTable } from "@workspace/db";
+import { db, settingsTable, ordersTable, bundlesTable, topupghBatchesTable } from "@workspace/db";
 import { logger } from "./logger";
 
 const TOPUPGH_BASE_URL = "https://reseller.etopupgh.com/api/v1";
