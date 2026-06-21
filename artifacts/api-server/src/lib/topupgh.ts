@@ -371,6 +371,52 @@ export interface TopupghWebhookPayload {
   };
 }
 
+export interface OrderDeliveryInfo {
+  status: string;
+  date:   string;
+  time:   string;
+  /** True when the same phone has multiple, conflicting delivery items in one batch. */
+  ambiguous?: boolean;
+}
+
+/**
+ * Build a phone-number → delivery-info map from a stored TopUpGH webhook payload
+ * (the `delivery_data` jsonb on a batch). Beneficiary numbers are stored exactly
+ * as TopUpGH sends them, which matches `orders.phone_number`, so callers can look
+ * up by the order's phone directly. Returns an empty map for missing/malformed data.
+ *
+ * A single batch can contain more than one item for the same phone (e.g. a customer
+ * buys two bundles to the same number). We have no per-order TopUpGH item id to
+ * correlate them, so when same-phone items carry CONFLICTING delivery outcomes we
+ * mark the entry `ambiguous` instead of silently picking one (which could attach the
+ * wrong date/time/status to an order). Identical duplicates collapse harmlessly.
+ */
+export function extractDeliveryInfo(deliveryData: unknown): Map<string, OrderDeliveryInfo> {
+  const map = new Map<string, OrderDeliveryInfo>();
+  if (!deliveryData || typeof deliveryData !== "object") return map;
+  const items = (deliveryData as Partial<TopupghWebhookPayload>).order?.items;
+  if (!Array.isArray(items)) return map;
+  for (const item of items) {
+    if (!item?.beneficiary_number) continue;
+    const phone = item.beneficiary_number;
+    const info: OrderDeliveryInfo = {
+      status: item.delivery_status ?? "",
+      date:   item.delivery_date ?? "",
+      time:   item.delivery_time ?? "",
+    };
+    const existing = map.get(phone);
+    if (!existing) {
+      map.set(phone, info);
+    } else if (
+      !existing.ambiguous &&
+      (existing.status !== info.status || existing.date !== info.date || existing.time !== info.time)
+    ) {
+      map.set(phone, { status: "multiple", date: "", time: "", ambiguous: true });
+    }
+  }
+  return map;
+}
+
 /**
  * Verify the X-Webhook-Signature header from TopUpGH.
  * Signature = HMAC-SHA256(rawBody, apiSecret), hex-encoded.

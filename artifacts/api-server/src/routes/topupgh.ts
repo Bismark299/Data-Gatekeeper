@@ -14,6 +14,7 @@ import {
   handleTopupghWebhook,
   verifyTopupghWebhookSignature,
   getTopupghSettings,
+  extractDeliveryInfo,
   type TopupghWebhookPayload,
 } from "../lib/topupgh";
 
@@ -195,6 +196,8 @@ router.get("/admin/topupgh/batches/:id", requireAdmin, async (req, res): Promise
     .where(eq(ordersTable.topupghBatchId, batchId))
     .orderBy(ordersTable.createdAt);
 
+  const deliveryMap = extractDeliveryInfo(batch.deliveryData);
+
   res.json({
     batch: {
       ...batch,
@@ -203,7 +206,11 @@ router.get("/admin/topupgh/batches/:id", requireAdmin, async (req, res): Promise
       previousBalance: batch.previousBalance ? parseFloat(batch.previousBalance) : null,
       newBalance:      batch.newBalance      ? parseFloat(batch.newBalance)      : null,
     },
-    orders: orders.map(o => ({ ...o, price: parseFloat(o.price) })),
+    orders: orders.map(o => ({
+      ...o,
+      price: parseFloat(o.price),
+      delivery: deliveryMap.get(o.phone) ?? null,
+    })),
   });
 });
 

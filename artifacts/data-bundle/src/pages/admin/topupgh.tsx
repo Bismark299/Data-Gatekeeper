@@ -45,9 +45,12 @@ interface Batch {
   errorMessage: string | null; dispatchedAt: string | null; createdAt: string;
 }
 
+interface DeliveryInfo { status: string; date: string; time: string }
+
 interface BatchOrder {
   id: number; phone: string; bundleName: string; bundleData: string;
   price: number; status: string; createdAt: string;
+  delivery?: DeliveryInfo | null;
 }
 
 interface BatchDetail { batch: Batch; orders: BatchOrder[] }
@@ -255,6 +258,7 @@ function ExpandedBatch({ batchId }: { batchId: number }) {
               <th className="px-3 py-2 text-left font-semibold">Bundle</th>
               <th className="px-3 py-2 text-right font-semibold">Price</th>
               <th className="px-3 py-2 text-right font-semibold">Status</th>
+              <th className="px-3 py-2 text-right font-semibold">Delivered</th>
             </tr>
           </thead>
           <tbody>
@@ -268,6 +272,20 @@ function ExpandedBatch({ batchId }: { batchId: number }) {
                 </td>
                 <td className="px-3 py-2 text-right font-semibold">GH₵{o.price.toFixed(2)}</td>
                 <td className="px-3 py-2 text-right"><StatusBadge status={o.status} /></td>
+                <td className="px-3 py-2 text-right">
+                  {o.delivery && (o.delivery.date || o.delivery.time || o.delivery.status) ? (
+                    <div className="flex flex-col items-end gap-0.5">
+                      {o.delivery.status && <LiveStatusBadge status={o.delivery.status} />}
+                      {(o.delivery.date || o.delivery.time) && (
+                        <span className="text-[10px] text-muted-foreground whitespace-nowrap">
+                          {[o.delivery.date, o.delivery.time].filter(Boolean).join(" ")}
+                        </span>
+                      )}
+                    </div>
+                  ) : (
+                    <span className="text-muted-foreground">—</span>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>

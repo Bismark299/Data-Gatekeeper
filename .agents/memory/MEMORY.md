@@ -2,3 +2,4 @@
 - [Render production DB](render-prod-db.md) — prod DB is external (Render), not Replit-managed; dev schema changes don't propagate — run ALTER TABLE on Render after deploy or app 500s with "column does not exist".
 - [Orders data model quirks](orders-data-model.md) — bundleData is a text label (parse for GB), buyingCost nullable, Report = completed platform orders only
 - [Withdrawal terminal states](withdrawal-terminal-states.md) — every store_withdrawals status transition (complete/reject/force-cancel/webhook/reconciler) must be tx + FOR UPDATE + status-guarded so refund and "paid" stay mutually exclusive.
+- [TopUpGH delivery correlation](topupgh-delivery-correlation.md) — no per-order TopUpGH item id; delivery date/time matched to orders by phone only; same-phone items in one batch are marked ambiguous, not guessed.

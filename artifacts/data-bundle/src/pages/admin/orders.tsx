@@ -787,6 +787,7 @@ function AdminOrdersContent() {
                         <div className="flex items-center gap-1">Amount <SortButton field="amount" current={sortField} dir={sortDir} onToggle={handleSort} /></div>
                       </th>
                       <th className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Status</th>
+                      <th className="hidden lg:table-cell text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Delivered</th>
                       <th className="hidden md:table-cell text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Update</th>
                       <th className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Actions</th>
                     </tr>
@@ -805,6 +806,20 @@ function AdminOrdersContent() {
                             <span className={`w-1.5 h-1.5 rounded-full ${STATUS_DOT[order.status]}`} />
                             {order.status}
                           </span>
+                        </td>
+                        <td className="hidden lg:table-cell px-5 py-3.5 text-xs text-muted-foreground whitespace-nowrap">
+                          {(order as any).delivery && ((order as any).delivery.date || (order as any).delivery.time || (order as any).delivery.status) ? (
+                            <div className="flex flex-col">
+                              {(order as any).delivery.status && (
+                                <span className="font-semibold capitalize text-foreground">{(order as any).delivery.status}</span>
+                              )}
+                              {((order as any).delivery.date || (order as any).delivery.time) && (
+                                <span>{[(order as any).delivery.date, (order as any).delivery.time].filter(Boolean).join(" ")}</span>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-muted-foreground/50">—</span>
+                          )}
                         </td>
                         <td className="hidden md:table-cell px-5 py-3.5">
                           <Select defaultValue={order.status} onValueChange={v => handleStatusChange(order.id, v)}>

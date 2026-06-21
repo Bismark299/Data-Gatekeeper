@@ -5,8 +5,9 @@ import {
 } from "drizzle-orm";
 import {
   db, usersTable, bundlesTable, ordersTable, walletsTable, depositsTable,
-  storesTable, storeOrdersTable, settingsTable, walletLedgerTable,
+  storesTable, storeOrdersTable, settingsTable, walletLedgerTable, topupghBatchesTable,
 } from "@workspace/db";
+import { extractDeliveryInfo } from "../lib/topupgh";
 import { generateApiKey } from "../lib/apiKeyAuth";
 import {
   getMcbisSettings, mcbisGetBalance, dispatchToMcbis,
@@ -248,16 +249,25 @@ router.get("/admin/orders", requireAdmin, async (req, res): Promise<void> => {
   if (userId !== undefined) conditions.push(eq(ordersTable.userId, userId));
 
   const baseQuery = db
-    .select({ order: ordersTable, network: bundlesTable.network, userName: usersTable.name })
+    .select({
+      order: ordersTable,
+      network: bundlesTable.network,
+      userName: usersTable.name,
+      deliveryData: topupghBatchesTable.deliveryData,
+    })
     .from(ordersTable)
     .leftJoin(bundlesTable, eq(bundlesTable.id, ordersTable.bundleId))
-    .leftJoin(usersTable, eq(usersTable.id, ordersTable.userId));
+    .leftJoin(usersTable, eq(usersTable.id, ordersTable.userId))
+    .leftJoin(topupghBatchesTable, eq(topupghBatchesTable.id, ordersTable.topupghBatchId));
 
   const rows = conditions.length > 0
     ? await baseQuery.where(and(...conditions)).orderBy(desc(ordersTable.id)).limit(500)
     : await baseQuery.orderBy(desc(ordersTable.id)).limit(500);
 
-  res.json(rows.map(r => formatOrder(r.order, r.network, r.userName)));
+  res.json(rows.map(r => ({
+    ...formatOrder(r.order, r.network, r.userName),
+    delivery: extractDeliveryInfo(r.deliveryData).get(r.order.phoneNumber) ?? null,
+  })));
 });
 
 router.patch("/admin/orders/:id/status", requireAdmin, async (req, res): Promise<void> => {
