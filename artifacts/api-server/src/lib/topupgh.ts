@@ -23,6 +23,7 @@ import crypto from "crypto";
 import { eq, and, isNull, isNotNull, lt, inArray, sql } from "drizzle-orm";
 import { db, settingsTable, ordersTable, bundlesTable, topupghBatchesTable, storeOrdersTable, storesTable } from "@workspace/db";
 import { logger } from "./logger";
+import { recoverStuckTopupghBatches } from "./ensureSchema";
 
 const TOPUPGH_BASE_URL = "https://reseller.etopupgh.com/api/v1";
 const TOPUPGH_INTERNAL_PREFIX = "/topupgh-api/v1";
@@ -666,6 +667,10 @@ export function startTopupghPoller(): void {
     if (_pollRunning) return;
     _pollRunning = true;
     try {
+      // Requeue any orders pinned to a stuck/failed batch before dispatching, so
+      // stranded orders recover within minutes instead of waiting for a restart.
+      await recoverStuckTopupghBatches();
+
       const { enabled, apiKey, apiSecret } = await getTopupghSettings();
 
       // Always check in-flight batches even when disabled — protects orders already
