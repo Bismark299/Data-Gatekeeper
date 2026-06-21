@@ -197,6 +197,7 @@ export async function dispatchToMcbis(opts: {
       .where(and(
         eq(storeOrdersTable.id, opts.orderId),
         isNull(storeOrdersTable.mcbisReference),
+        isNull(storeOrdersTable.topupghBatchId),
         inArray(storeOrdersTable.status, ["pending", "paid"]),
       ))
       .returning({ id: storeOrdersTable.id });
@@ -207,6 +208,7 @@ export async function dispatchToMcbis(opts: {
       .where(and(
         eq(ordersTable.id, opts.orderId),
         isNull(ordersTable.mcbisReference),
+        isNull(ordersTable.topupghBatchId),
         eq(ordersTable.status, "pending"),
       ))
       .returning({ id: ordersTable.id });
@@ -361,6 +363,7 @@ export function startMcbisPoller(): void {
         .where(and(
           eq(ordersTable.status, "pending"),
           isNull(ordersTable.mcbisReference),
+          isNull(ordersTable.topupghBatchId),
           eq(bundlesTable.network, "mtn"),
         ))
         .orderBy(ordersTable.createdAt)
@@ -399,6 +402,7 @@ export function startMcbisPoller(): void {
         .where(and(
           eq(storeOrdersTable.status, "paid"),
           isNull(storeOrdersTable.mcbisReference),
+          isNull(storeOrdersTable.topupghBatchId),
           eq(storeOrdersTable.bundleNetwork, "mtn"),
         ))
         .orderBy(storeOrdersTable.createdAt)

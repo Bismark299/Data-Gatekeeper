@@ -20,8 +20,8 @@
  */
 
 import crypto from "crypto";
-import { eq, and, isNull, isNotNull, lt, inArray } from "drizzle-orm";
-import { db, settingsTable, ordersTable, bundlesTable, topupghBatchesTable } from "@workspace/db";
+import { eq, and, isNull, isNotNull, lt, inArray, sql } from "drizzle-orm";
+import { db, settingsTable, ordersTable, bundlesTable, topupghBatchesTable, storeOrdersTable, storesTable } from "@workspace/db";
 import { logger } from "./logger";
 
 const TOPUPGH_BASE_URL = "https://reseller.etopupgh.com/api/v1";
@@ -210,56 +210,105 @@ export async function dispatchPendingQueue(forceDispatch = false): Promise<Dispa
     .orderBy(ordersTable.createdAt)
     .limit(maxBatch);
 
-  const count = pendingOrders.length;
+  // Also pull eligible MTN store orders that McBIS did not claim. These are paid
+  // store orders past the grace period with no provider reference yet — same
+  // fallback semantics as platform orders. Fill remaining batch capacity only.
+  const storeCap = maxBatch - pendingOrders.length;
+  const pendingStoreOrders = storeCap > 0 ? await db
+    .select({
+      id:         storeOrdersTable.id,
+      phone:      storeOrdersTable.customerPhone,
+      bundleData: storeOrdersTable.bundleData,
+      price:      storeOrdersTable.basePrice,
+    })
+    .from(storeOrdersTable)
+    .where(and(
+      eq(storeOrdersTable.status, "paid"),
+      eq(storeOrdersTable.bundleNetwork, "mtn"),
+      isNull(storeOrdersTable.topupghBatchId),
+      isNull(storeOrdersTable.mcbisReference),
+      isNull(storeOrdersTable.ckgodswayReference),
+      lt(storeOrdersTable.createdAt, graceThreshold),
+    ))
+    .orderBy(storeOrdersTable.createdAt)
+    .limit(storeCap) : [];
+
+  const count = pendingOrders.length + pendingStoreOrders.length;
   if (count === 0)                            return { batchId: null, dispatched: false, reason: "empty_queue",    ordersCount: 0 };
   if (!forceDispatch && count < minBatch)     return { batchId: null, dispatched: false, reason: "below_minimum", ordersCount: count };
 
-  const valid = pendingOrders.filter(o => parseGb(o.bundleData) > 0 && o.network === "mtn");
-  if (valid.length === 0)                     return { batchId: null, dispatched: false, reason: "no_valid_orders", ordersCount: 0 };
+  const valid      = pendingOrders.filter(o => parseGb(o.bundleData) > 0 && o.network === "mtn");
+  const validStore = pendingStoreOrders.filter(o => parseGb(o.bundleData) > 0);
+  if (valid.length + validStore.length === 0) return { batchId: null, dispatched: false, reason: "no_valid_orders", ordersCount: 0 };
 
   // Create batch record (optimistic lock)
   const [batch] = await db.insert(topupghBatchesTable).values({
     status:    "pending",
     network:   "mtn",
-    itemCount: valid.length,
+    itemCount: valid.length + validStore.length,
   }).returning();
 
-  // Atomically link orders to this batch
-  const orderIds = valid.map(o => o.id);
-  await db.update(ordersTable)
-    .set({ topupghBatchId: batch.id })
-    .where(and(
-      inArray(ordersTable.id, orderIds),
-      isNull(ordersTable.topupghBatchId),
-    ));
+  // Release both tables from this batch (used on every abort path)
+  const unlinkAll = async () => {
+    await db.update(ordersTable).set({ topupghBatchId: null }).where(eq(ordersTable.topupghBatchId, batch.id));
+    await db.update(storeOrdersTable).set({ topupghBatchId: null }).where(eq(storeOrdersTable.topupghBatchId, batch.id));
+  };
 
-  // Verify how many were actually linked
+  // Atomically link orders to this batch (both tables)
+  if (valid.length > 0) {
+    await db.update(ordersTable)
+      .set({ topupghBatchId: batch.id })
+      .where(and(
+        inArray(ordersTable.id, valid.map(o => o.id)),
+        isNull(ordersTable.topupghBatchId),
+        isNull(ordersTable.mcbisReference),
+        eq(ordersTable.status, "pending"),
+      ));
+  }
+  if (validStore.length > 0) {
+    await db.update(storeOrdersTable)
+      .set({ topupghBatchId: batch.id })
+      .where(and(
+        inArray(storeOrdersTable.id, validStore.map(o => o.id)),
+        isNull(storeOrdersTable.topupghBatchId),
+        isNull(storeOrdersTable.mcbisReference),
+        isNull(storeOrdersTable.ckgodswayReference),
+        eq(storeOrdersTable.status, "paid"),
+      ));
+  }
+
+  // Verify how many were actually linked (both tables)
   const linked = await db
     .select({ id: ordersTable.id, phone: ordersTable.phoneNumber, bundleData: ordersTable.bundleData, price: ordersTable.price, userId: ordersTable.userId })
     .from(ordersTable)
     .where(eq(ordersTable.topupghBatchId, batch.id));
+  const linkedStore = await db
+    .select({ id: storeOrdersTable.id, phone: storeOrdersTable.customerPhone, bundleData: storeOrdersTable.bundleData, price: storeOrdersTable.basePrice })
+    .from(storeOrdersTable)
+    .where(eq(storeOrdersTable.topupghBatchId, batch.id));
+  const linkedCount = linked.length + linkedStore.length;
 
-  if (linked.length === 0 || (!forceDispatch && linked.length < minBatch)) {
-    await db.update(ordersTable).set({ topupghBatchId: null }).where(eq(ordersTable.topupghBatchId, batch.id));
+  if (linkedCount === 0 || (!forceDispatch && linkedCount < minBatch)) {
+    await unlinkAll();
     await db.delete(topupghBatchesTable).where(eq(topupghBatchesTable.id, batch.id));
-    return { batchId: null, dispatched: false, reason: linked.length === 0 ? "race_condition" : "below_minimum", ordersCount: linked.length };
+    return { batchId: null, dispatched: false, reason: linkedCount === 0 ? "race_condition" : "below_minimum", ordersCount: linkedCount };
   }
 
   // Pre-flight balance check
   try {
     const balanceData = await topupghGetBalance();
-    const totalCost   = linked.reduce((s, o) => s + parseFloat(o.price), 0);
+    const totalCost   = [...linked, ...linkedStore].reduce((s, o) => s + parseFloat(o.price), 0);
     if (balanceData.balance < totalCost) {
-      await db.update(ordersTable).set({ topupghBatchId: null }).where(eq(ordersTable.topupghBatchId, batch.id));
+      await unlinkAll();
       await db.update(topupghBatchesTable)
         .set({ status: "failed", errorMessage: `Insufficient TopUpGH wallet balance (GH₵${balanceData.balance.toFixed(2)} available)` })
         .where(eq(topupghBatchesTable.id, batch.id));
-      return { batchId: batch.id, dispatched: false, reason: "insufficient_balance", ordersCount: linked.length };
+      return { batchId: batch.id, dispatched: false, reason: "insufficient_balance", ordersCount: linkedCount };
     }
   } catch { /* balance check failed — proceed anyway */ }
 
-  // Build payload
-  const orderItems: TopupghOrderItem[] = linked.map(o => ({
+  // Build payload (platform + store orders share one MTN batch)
+  const orderItems: TopupghOrderItem[] = [...linked, ...linkedStore].map(o => ({
     _beneficiary_number: o.phone,
     network:             "mtn" as const,
     _data_size:          parseGb(o.bundleData),
@@ -269,11 +318,11 @@ export async function dispatchPendingQueue(forceDispatch = false): Promise<Dispa
     const result = await topupghCreateOrder(orderItems);
 
     if (!result.success) {
-      await db.update(ordersTable).set({ topupghBatchId: null }).where(eq(ordersTable.topupghBatchId, batch.id));
+      await unlinkAll();
       await db.update(topupghBatchesTable)
         .set({ status: "failed", errorMessage: result.message ?? "TopUpGH rejected the order" })
         .where(eq(topupghBatchesTable.id, batch.id));
-      return { batchId: batch.id, dispatched: false, reason: "api_error", ordersCount: linked.length };
+      return { batchId: batch.id, dispatched: false, reason: "api_error", ordersCount: linkedCount };
     }
 
     // Success — update batch
@@ -288,20 +337,23 @@ export async function dispatchPendingQueue(forceDispatch = false): Promise<Dispa
       dispatchedAt:    new Date(),
     }).where(eq(topupghBatchesTable.id, batch.id));
 
-    // Mark orders as processing
+    // Mark orders as processing (both tables)
     await db.update(ordersTable)
       .set({ status: "processing" })
       .where(eq(ordersTable.topupghBatchId, batch.id));
+    await db.update(storeOrdersTable)
+      .set({ status: "processing" })
+      .where(eq(storeOrdersTable.topupghBatchId, batch.id));
 
-    return { batchId: batch.id, dispatched: true, ordersCount: linked.length, topupghOrderId: result.order_id };
+    return { batchId: batch.id, dispatched: true, ordersCount: linkedCount, topupghOrderId: result.order_id };
 
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Unknown error";
-    await db.update(ordersTable).set({ topupghBatchId: null }).where(eq(ordersTable.topupghBatchId, batch.id));
+    await unlinkAll();
     await db.update(topupghBatchesTable)
       .set({ status: "failed", errorMessage: `Dispatch exception: ${msg}` })
       .where(eq(topupghBatchesTable.id, batch.id));
-    return { batchId: batch.id, dispatched: false, reason: "exception", ordersCount: linked.length };
+    return { batchId: batch.id, dispatched: false, reason: "exception", ordersCount: linkedCount };
   }
 }
 
@@ -465,14 +517,18 @@ export function verifyTopupghWebhookSignature(signature: string, rawBody: Buffer
 
 /**
  * Apply per-recipient delivery outcomes to a batch's orders, then finalize the batch.
- * delivered → order completed; failed/not-delivered → order failed + wallet refund.
+ * Handles both platform orders and agent store orders linked to the same batch:
+ *   - delivered → order completed. For store orders this also credits the agent's
+ *     profit to their store balance (mirrors the admin "complete" action).
+ *   - failed/not-delivered → order failed. No wallet refund and no customer refund —
+ *     a failed delivery is left for an admin to handle manually.
  * Pending/unknown items are left untouched so the order stays "processing" until
  * TopUpGH actually delivers.
  *
  * This is the ONLY place an order is marked delivered. Both the live webhook and the
  * fallback poller funnel through here, so completion always reflects real per-recipient
  * delivery — never TopUpGH's order-level "accepted" status. The status guard makes it
- * idempotent: an order already completed/failed is never re-processed or double-refunded.
+ * idempotent: an order already in a terminal state is never re-processed or double-credited.
  */
 async function settleBatchDeliveries(
   batch: typeof topupghBatchesTable.$inferSelect,
@@ -506,15 +562,60 @@ async function settleBatchDeliveries(
     }
   }
 
-  // Auto-close batch when all orders are settled
+  // Settle agent store orders linked to this batch. On delivery, completing a store
+  // order also credits the agent's profit — done in a row-locked transaction so the
+  // status guard keeps it idempotent (never double-credits). Failed → marked failed,
+  // no refund (admin handles), mirroring platform orders.
+  for (const item of items) {
+    const status    = (item.status ?? "").toLowerCase();
+    const delivered = status === "delivered";
+    const failed    = status === "failed" || status === "not delivered" || status === "unsuccessful";
+
+    if (!delivered && !failed) continue;
+
+    await db.transaction(async (tx) => {
+      const [storeOrder] = await tx.select()
+        .from(storeOrdersTable)
+        .where(and(
+          eq(storeOrdersTable.topupghBatchId, batch.id),
+          eq(storeOrdersTable.customerPhone, item.phone),
+          inArray(storeOrdersTable.status, ["paid", "processing"]),
+        ))
+        .for("update");
+
+      if (!storeOrder) return;
+
+      if (delivered) {
+        await tx.update(storeOrdersTable)
+          .set({ status: "completed" })
+          .where(eq(storeOrdersTable.id, storeOrder.id));
+        const profit = parseFloat(storeOrder.profit);
+        await tx.update(storesTable)
+          .set({ profitBalance: sql`profit_balance + ${profit.toFixed(2)}::numeric` })
+          .where(eq(storesTable.id, storeOrder.storeId));
+      } else {
+        await tx.update(storeOrdersTable)
+          .set({ status: "failed" })
+          .where(eq(storeOrdersTable.id, storeOrder.id));
+        logger.info({ storeOrderId: storeOrder.id, phone: item.phone }, "TopUpGH delivery failed — store order marked failed (no auto-refund)");
+      }
+    });
+  }
+
+  // Auto-close batch when all orders (platform + store) are settled
   const batchOrders = await db.select({ status: ordersTable.status })
     .from(ordersTable)
     .where(eq(ordersTable.topupghBatchId, batch.id));
+  const batchStoreOrders = await db.select({ status: storeOrdersTable.status })
+    .from(storeOrdersTable)
+    .where(eq(storeOrdersTable.topupghBatchId, batch.id));
+  const allStatuses = [...batchOrders.map(o => o.status), ...batchStoreOrders.map(o => o.status)];
 
-  const allSettled = batchOrders.every(o => o.status === "completed" || o.status === "failed");
+  const isSettled  = (s: string) => s === "completed" || s === "failed" || s === "cancelled";
+  const allSettled = allStatuses.every(isSettled);
   if (allSettled && batch.status === "processing") {
-    const allFailed = batchOrders.every(o => o.status === "failed");
-    const anyFailed = batchOrders.some(o => o.status === "failed");
+    const allFailed = allStatuses.every(s => s === "failed");
+    const anyFailed = allStatuses.some(s => s === "failed");
     const finalStatus = allFailed ? "failed" : anyFailed ? "partial" : "completed";
     await db.update(topupghBatchesTable)
       .set({ status: finalStatus })
@@ -524,7 +625,8 @@ async function settleBatchDeliveries(
 
 /**
  * Process a delivery_status_updated webhook from TopUpGH.
- * Marks individual orders as completed or failed (auto-refunds failed deliveries).
+ * Marks individual platform and store orders completed or failed via
+ * settleBatchDeliveries. No auto-refunds — failed deliveries are left to an admin.
  */
 export async function handleTopupghWebhook(payload: TopupghWebhookPayload): Promise<void> {
   if (payload.event !== "delivery_status_updated") return;

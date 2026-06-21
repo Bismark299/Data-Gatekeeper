@@ -3,3 +3,4 @@
 - [Orders data model quirks](orders-data-model.md) — bundleData is a text label (parse for GB), buyingCost nullable, Report = completed platform orders only
 - [Withdrawal terminal states](withdrawal-terminal-states.md) — every store_withdrawals status transition (complete/reject/force-cancel/webhook/reconciler) must be tx + FOR UPDATE + status-guarded so refund and "paid" stay mutually exclusive.
 - [TopUpGH delivery correlation](topupgh-delivery-correlation.md) — no per-order TopUpGH item id; delivery date/time matched to orders by phone only; same-phone items in one batch are marked ambiguous, not guessed.
+- [MTN dual-provider mutual exclusion](mtn-provider-mutual-exclusion.md) — McBIS claims via mcbisReference, TopUpGH via topupghBatchId; each claim UPDATE must check the other's column or both fulfill the same order. Store orders ride TopUpGH batches too.

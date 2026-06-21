@@ -47,6 +47,7 @@ export const storeOrdersTable = pgTable("store_orders", {
   paystackReference: text("paystack_reference").notNull().default(""),
   mcbisReference: text("mcbis_reference"),
   ckgodswayReference: text("ckgodsway_reference"),
+  topupghBatchId: integer("topupgh_batch_id"),
   status: text("status").notNull().default("pending"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
