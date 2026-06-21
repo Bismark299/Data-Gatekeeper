@@ -486,58 +486,24 @@ async function settleBatchDeliveries(
 
     if (!delivered && !failed) continue;
 
-    // Lock the order row and re-check terminal status INSIDE the transaction.
-    // The webhook and the poller can both settle the same item concurrently; the
-    // FOR UPDATE lock + in-tx recheck serialize them so an order is marked + refunded
-    // exactly once (wallet_ledger.reference is not unique, so this lock is the guard).
-    const refunded = await db.transaction(async (tx) => {
-      const [orderRow] = await tx.select()
-        .from(ordersTable)
-        .where(and(
-          eq(ordersTable.topupghBatchId, batch.id),
-          eq(ordersTable.phoneNumber, item.phone),
-        ))
-        .for("update")
-        .limit(1);
+    const [orderRow] = await db.select()
+      .from(ordersTable)
+      .where(and(
+        eq(ordersTable.topupghBatchId, batch.id),
+        eq(ordersTable.phoneNumber, item.phone),
+      ))
+      .limit(1);
 
-      if (!orderRow || orderRow.status === "completed" || orderRow.status === "failed") return null;
+    if (!orderRow || orderRow.status === "completed" || orderRow.status === "failed") continue;
 
-      if (delivered) {
-        await tx.update(ordersTable)
-          .set({ status: "completed" })
-          .where(eq(ordersTable.id, orderRow.id));
-        return null;
-      }
+    // Mark the order completed or failed. No wallet refund on failure — a failed
+    // delivery is left for an admin to handle manually.
+    await db.update(ordersTable)
+      .set({ status: delivered ? "completed" : "failed" })
+      .where(eq(ordersTable.id, orderRow.id));
 
-      // failed → mark failed + refund the wallet
-      await tx.update(ordersTable)
-        .set({ status: "failed" })
-        .where(eq(ordersTable.id, orderRow.id));
-
-      const price = parseFloat(orderRow.price);
-
-      await tx.insert(walletsTable)
-        .values({ userId: orderRow.userId, balance: price.toFixed(2) })
-        .onConflictDoNothing();
-
-      await tx.update(walletsTable)
-        .set({ balance: sql`balance + ${price.toFixed(2)}::numeric` })
-        .where(eq(walletsTable.userId, orderRow.userId));
-
-      await tx.insert(walletLedgerTable).values({
-        userId:    orderRow.userId,
-        amount:    price.toFixed(2),
-        type:      "credit",
-        source:    "refund",
-        reference: `topupgh-refund-${orderRow.id}`,
-        note:      `Auto-refund: TopUpGH delivery failed — ${orderRow.bundleName} → ${orderRow.phoneNumber}`,
-      });
-
-      return { orderId: orderRow.id };
-    });
-
-    if (refunded) {
-      logger.info({ orderId: refunded.orderId, phone: item.phone }, "TopUpGH delivery failed — wallet refunded");
+    if (failed) {
+      logger.info({ orderId: orderRow.id, phone: item.phone }, "TopUpGH delivery failed — order marked failed (no auto-refund)");
     }
   }
 
