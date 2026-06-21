@@ -24,3 +24,21 @@ date/time/status on one of the two same-phone orders.
 **How to apply:** the only real fix is to persist a per-order TopUpGH item
 identifier at dispatch/webhook time and resolve delivery by that key. Until then,
 do NOT assume phone→delivery is 1:1; preserve the ambiguous marking.
+
+# TopUpGH order-level status ≠ actual delivery
+
+TopUpGH's **order-level** status (`GET /orders/{id}` → `order.status === "completed"`)
+means the bulk order was **accepted/processed** by TopUpGH — NOT that bundles reached
+customers. Actual delivery is **per recipient** via the delivery-status endpoint /
+`delivery_status_updated` webhook (`delivery_status` = delivered/pending/failed).
+
+**Why:** the fallback poller once trusted order-level "completed" and flipped whole
+batches + all orders to completed within minutes of dispatch, while TopUpGH still
+showed them undelivered. It also pre-empted failed-delivery refunds (the
+`status==='completed'` guard then skipped the webhook's refund path).
+
+**How to apply:** only mark an order delivered from **per-item** `delivery_status`.
+Both webhook and poller must funnel through the one settlement function. Because that
+adds two concurrent settlement paths and `wallet_ledger.reference` is NOT unique, each
+order's settle+refund must be a tx with `SELECT ... FOR UPDATE` + in-tx terminal-status
+recheck, or you get double refunds.

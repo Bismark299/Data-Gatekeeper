@@ -333,15 +333,50 @@ async function checkProcessingBatches(): Promise<void> {
   if (!batch?.topupghOrderId) return;
 
   try {
-    const statusData = await topupghGetOrderStatus(batch.topupghOrderId);
-    if (statusData.order?.status === "completed") {
-      await db.update(ordersTable)
-        .set({ status: "completed" })
-        .where(and(eq(ordersTable.topupghBatchId, batch.id), eq(ordersTable.status, "processing")));
-      await db.update(topupghBatchesTable)
-        .set({ status: "completed" })
-        .where(eq(topupghBatchesTable.id, batch.id));
-    }
+    // Poll PER-ITEM delivery status — NOT order-level status. TopUpGH's order-level
+    // status flips to "completed" on acceptance, long before bundles actually reach
+    // customers, so trusting it marked orders delivered prematurely. Real delivery is
+    // reported per recipient via the delivery-status endpoint, mirroring the webhook.
+    const data = await topupghGetDeliveryStatus(batch.topupghOrderId);
+    if (!data.delivery_status || typeof data.delivery_status !== "object") return;
+
+    const items: TopupghWebhookItem[] = Object.entries(data.delivery_status).map(([phone, info]) => {
+      const i = info as { delivery_status?: string; delivery_date?: string; delivery_time?: string };
+      return {
+        item_id:            "",
+        beneficiary_number: phone,
+        network:            "",
+        data_size:          0,
+        delivery_status:    i.delivery_status ?? "",
+        delivery_date:      i.delivery_date ?? "",
+        delivery_time:      i.delivery_time ?? "",
+      };
+    });
+
+    // Persist in the webhook payload shape so the admin delivery columns populate
+    // even when the live webhook was missed.
+    const syntheticPayload: TopupghWebhookPayload = {
+      event:     "delivery_status_updated",
+      timestamp: new Date().toISOString(),
+      order: {
+        order_id:                batch.topupghOrderId,
+        order_number:            "",
+        delivery_info:           "",
+        delivery_date:           "",
+        delivery_time:           "",
+        formatted_delivery_info: "",
+        items,
+      },
+    };
+
+    await db.update(topupghBatchesTable)
+      .set({ deliveryData: syntheticPayload as unknown as Record<string, unknown>, updatedAt: new Date() })
+      .where(eq(topupghBatchesTable.id, batch.id));
+
+    await settleBatchDeliveries(
+      batch,
+      items.map(i => ({ phone: i.beneficiary_number, status: i.delivery_status })),
+    );
   } catch { /* transient — retry next cycle */ }
 }
 
@@ -430,81 +465,81 @@ export function verifyTopupghWebhookSignature(signature: string, rawBody: Buffer
 }
 
 /**
- * Process a delivery_status_updated webhook from TopUpGH.
- * Marks individual orders as completed or failed.
- * Auto-refunds wallet for failed deliveries.
+ * Apply per-recipient delivery outcomes to a batch's orders, then finalize the batch.
+ * delivered → order completed; failed/not-delivered → order failed + wallet refund.
+ * Pending/unknown items are left untouched so the order stays "processing" until
+ * TopUpGH actually delivers.
+ *
+ * This is the ONLY place an order is marked delivered. Both the live webhook and the
+ * fallback poller funnel through here, so completion always reflects real per-recipient
+ * delivery — never TopUpGH's order-level "accepted" status. The status guard makes it
+ * idempotent: an order already completed/failed is never re-processed or double-refunded.
  */
-export async function handleTopupghWebhook(payload: TopupghWebhookPayload): Promise<void> {
-  if (payload.event !== "delivery_status_updated") return;
-
-  const { order } = payload;
-  const { order_id, items } = order;
-
-  const [batch] = await db.select().from(topupghBatchesTable)
-    .where(eq(topupghBatchesTable.topupghOrderId, order_id));
-
-  if (!batch) {
-    logger.warn({ topupghOrderId: order_id }, "TopUpGH webhook: batch not found");
-    return;
-  }
-
+async function settleBatchDeliveries(
+  batch: typeof topupghBatchesTable.$inferSelect,
+  items: Array<{ phone: string; status: string }>,
+): Promise<void> {
   for (const item of items) {
-    const status    = item.delivery_status.toLowerCase();
+    const status    = (item.status ?? "").toLowerCase();
     const delivered = status === "delivered";
     const failed    = status === "failed" || status === "not delivered" || status === "unsuccessful";
 
     if (!delivered && !failed) continue;
 
-    const [orderRow] = await db.select()
-      .from(ordersTable)
-      .where(and(
-        eq(ordersTable.topupghBatchId, batch.id),
-        eq(ordersTable.phoneNumber, item.beneficiary_number),
-      ))
-      .limit(1);
+    // Lock the order row and re-check terminal status INSIDE the transaction.
+    // The webhook and the poller can both settle the same item concurrently; the
+    // FOR UPDATE lock + in-tx recheck serialize them so an order is marked + refunded
+    // exactly once (wallet_ledger.reference is not unique, so this lock is the guard).
+    const refunded = await db.transaction(async (tx) => {
+      const [orderRow] = await tx.select()
+        .from(ordersTable)
+        .where(and(
+          eq(ordersTable.topupghBatchId, batch.id),
+          eq(ordersTable.phoneNumber, item.phone),
+        ))
+        .for("update")
+        .limit(1);
 
-    if (!orderRow || orderRow.status === "completed" || orderRow.status === "failed") continue;
+      if (!orderRow || orderRow.status === "completed" || orderRow.status === "failed") return null;
 
-    if (delivered) {
-      await db.update(ordersTable)
-        .set({ status: "completed" })
+      if (delivered) {
+        await tx.update(ordersTable)
+          .set({ status: "completed" })
+          .where(eq(ordersTable.id, orderRow.id));
+        return null;
+      }
+
+      // failed → mark failed + refund the wallet
+      await tx.update(ordersTable)
+        .set({ status: "failed" })
         .where(eq(ordersTable.id, orderRow.id));
 
-    } else if (failed) {
-      await db.transaction(async (tx) => {
-        await tx.update(ordersTable)
-          .set({ status: "failed" })
-          .where(eq(ordersTable.id, orderRow.id));
+      const price = parseFloat(orderRow.price);
 
-        const price    = parseFloat(orderRow.price);
-        const refundRef = `topupgh-refund-${orderRow.id}`;
+      await tx.insert(walletsTable)
+        .values({ userId: orderRow.userId, balance: price.toFixed(2) })
+        .onConflictDoNothing();
 
-        await tx.insert(walletsTable)
-          .values({ userId: orderRow.userId, balance: price.toFixed(2) })
-          .onConflictDoNothing();
+      await tx.update(walletsTable)
+        .set({ balance: sql`balance + ${price.toFixed(2)}::numeric` })
+        .where(eq(walletsTable.userId, orderRow.userId));
 
-        await tx.update(walletsTable)
-          .set({ balance: sql`balance + ${price.toFixed(2)}::numeric` })
-          .where(eq(walletsTable.userId, orderRow.userId));
-
-        await tx.insert(walletLedgerTable).values({
-          userId:    orderRow.userId,
-          amount:    price.toFixed(2),
-          type:      "credit",
-          source:    "refund",
-          reference: refundRef,
-          note:      `Auto-refund: TopUpGH delivery failed — ${orderRow.bundleName} → ${orderRow.phoneNumber}`,
-        });
+      await tx.insert(walletLedgerTable).values({
+        userId:    orderRow.userId,
+        amount:    price.toFixed(2),
+        type:      "credit",
+        source:    "refund",
+        reference: `topupgh-refund-${orderRow.id}`,
+        note:      `Auto-refund: TopUpGH delivery failed — ${orderRow.bundleName} → ${orderRow.phoneNumber}`,
       });
 
-      logger.info({ orderId: orderRow.id, phone: item.beneficiary_number }, "TopUpGH delivery failed — wallet refunded");
+      return { orderId: orderRow.id };
+    });
+
+    if (refunded) {
+      logger.info({ orderId: refunded.orderId, phone: item.phone }, "TopUpGH delivery failed — wallet refunded");
     }
   }
-
-  // Store latest webhook payload on batch
-  await db.update(topupghBatchesTable)
-    .set({ deliveryData: payload as unknown as Record<string, unknown>, updatedAt: new Date() })
-    .where(eq(topupghBatchesTable.id, batch.id));
 
   // Auto-close batch when all orders are settled
   const batchOrders = await db.select({ status: ordersTable.status })
@@ -520,6 +555,34 @@ export async function handleTopupghWebhook(payload: TopupghWebhookPayload): Prom
       .set({ status: finalStatus })
       .where(eq(topupghBatchesTable.id, batch.id));
   }
+}
+
+/**
+ * Process a delivery_status_updated webhook from TopUpGH.
+ * Marks individual orders as completed or failed (auto-refunds failed deliveries).
+ */
+export async function handleTopupghWebhook(payload: TopupghWebhookPayload): Promise<void> {
+  if (payload.event !== "delivery_status_updated") return;
+
+  const { order } = payload;
+
+  const [batch] = await db.select().from(topupghBatchesTable)
+    .where(eq(topupghBatchesTable.topupghOrderId, order.order_id));
+
+  if (!batch) {
+    logger.warn({ topupghOrderId: order.order_id }, "TopUpGH webhook: batch not found");
+    return;
+  }
+
+  // Store latest webhook payload on batch (powers the admin delivery columns)
+  await db.update(topupghBatchesTable)
+    .set({ deliveryData: payload as unknown as Record<string, unknown>, updatedAt: new Date() })
+    .where(eq(topupghBatchesTable.id, batch.id));
+
+  await settleBatchDeliveries(
+    batch,
+    order.items.map(i => ({ phone: i.beneficiary_number, status: i.delivery_status })),
+  );
 }
 
 // ─── Background poller ────────────────────────────────────────────────────────
