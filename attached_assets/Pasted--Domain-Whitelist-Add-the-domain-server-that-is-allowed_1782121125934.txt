@@ -1,0 +1,112 @@
+🌐 Domain Whitelist
+Add the domain/server that is allowed to use your API.
+
+✅ Whitelisted Domain: datagatekeeper.pro
+
+🛡️ Only this domain/server can use your API. It automatically bypasses security plugins and firewalls.
+
+datagatekeeper.pro
+ℹ️ Domain Whitelist Security:
+
+Specified domain: ONLY that domain/server can use your API (secure)
+Security bypass: Whitelisted domains automatically bypass WordPress security plugins and firewalls (including country blocking)
+Wildcards supported: Use *.example.com to allow all subdomains
+Server-to-server: Whitelist server IPs or domains (e.g., 192.168.20.5 or myserver.com)
+Empty whitelist: ALL API requests will be blocked - You must add a domain/server to use the API
+Protection: Prevents unauthorized websites from using your API
+💡 Required:
+
+You must add your domain/server to use the API. Without a whitelist, all API requests will be blocked. This ensures your API only works on authorized domains and prevents unauthorized use.
+
+Examples:
+• example.com - Allow only example.com (strict)
+• *.example.com - Allow all subdomains of example.com
+• yoursite.com - Allow your server domain
+• 192.168.20.5 - Allow specific server IP (not recommended, use domain instead)
+
+💾 Save Domain
+🔔 Delivery Status Webhooks
+Receive real-time delivery status updates via webhooks.
+
+When your orders are processed and delivery status updates, we'll automatically send a POST request to your webhook URL with the delivery information.
+
+Webhook URL:
+
+https://datagatekeeper.pro/api/topupgh/webhook
+
+Enable webhook notifications
+✅ Webhook Configured: https://datagatekeeper.pro/api/topupgh/webhook
+
+Statistics:
+• Sent: 32326 | Failed: 311
+• Last Sent: May 16, 2026 11:05
+ℹ️ How Webhooks Work:
+
+Real-time updates: Receive instant notifications when delivery status changes
+Automatic retries: Failed webhooks are automatically retried (3 attempts)
+Secure: Each webhook includes HMAC signature for verification
+Non-blocking: Webhooks are sent asynchronously, won't slow down your orders
+Format: POST request with JSON payload containing order and delivery info
+🔐 Security:
+
+Each webhook includes an X-Webhook-Signature header with HMAC SHA-256 signature. Verify the signature using your API Secret to ensure the webhook is authentic.
+
+💾 Save Webhook Settings
+🧪 Test Webhook
+📊 Webhook Status Dashboard
+Real-time monitoring of your webhook delivery status.
+
+✅ Delivered
+32326
+⏳ Pending
+2
+❌ Failed
+50
+🕐 Last Delivery
+May 16, 11:05
+⚠️ Alert: 30 webhook(s) failed in the last hour. Check your endpoint availability.
+⏳ Pending Webhooks (2)
+Order	Attempt	Queued
+#1918856	1/3	2 minutes ago
+#1918856	2/3	4 minutes ago
+Webhooks are automatically retried with exponential backoff (1min, 5min, 15min).
+
+❌ Failed Webhooks (50)
+Order	Reason	Failed	Action
+#1918856	Max attempts reached	Jun 22, 09:36	🔄 Retry
+#1918856	Max attempts reached	Jun 22, 09:34	🔄 Retry
+#1918856	Max attempts reached	Jun 22, 09:32	🔄 Retry
+#1918856	Max attempts reached	Jun 22, 09:30	🔄 Retry
+#1918856	Max attempts reached	Jun 22, 09:28	🔄 Retry
+#1918856	Max attempts reached	Jun 22, 09:27	🔄 Retry
+#1918856	Max attempts reached	Jun 22, 09:26	🔄 Retry
+#1918856	Max attempts reached	Jun 22, 09:25	🔄 Retry
+#1918856	Max attempts reached	Jun 22, 09:21	🔄 Retry
+#1918856	Max attempts reached	Jun 22, 09:16	🔄 Retry
+#1918856	Max attempts reached	Jun 22, 09:15	🔄 Retry
+#1918856	Max attempts reached	Jun 22, 09:14	🔄 Retry
+#1918856	Max attempts reached	Jun 22, 09:12	🔄 Retry
+#1918856	Max attempts reached	Jun 22, 09:11	🔄 Retry
+#1918856	Max attempts reached	Jun 22, 09:09	🔄 Retry
+🔄 Retry All (50)
+🗑️ Clear All
+
+📧 Email me when webhooks fail permanently
+Receive email notifications when webhook delivery fails after all retry attempts.
+
+📚 API Documentation
+View interactive API documentation and test endpoints:
+
+📖 View API Documentation
+📊 Recent API Activity
+Endpoint	Method	Status	Time
+/orders/1918856/delivery-status	GET	200	Jun 22, 09:35
+/orders/1918856/delivery-status	GET	200	Jun 22, 09:33
+/orders/1918856/delivery-status	GET	200	Jun 22, 09:31
+/orders/1918856/delivery-status	GET	200	Jun 22, 09:29
+/orders/1918856/delivery-status	GET	200	Jun 22, 09:27
+/orders/1918856/delivery-status	GET	200	Jun 22, 09:25
+/orders/1918856/delivery-status	GET	200	Jun 22, 09:23
+/orders/1918856/delivery-status	GET	200	Jun 22, 09:21
+/orders/1918856/delivery-status	GET	200	Jun 22, 09:19
+/orders/1918856/delivery-status	GET	200	Jun 22, 09:17

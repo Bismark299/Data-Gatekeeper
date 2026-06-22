@@ -385,7 +385,11 @@ export async function dispatchPendingQueue(forceDispatch = false): Promise<Dispa
  * Poll TopUpGH delivery status for ONE processing batch per cycle.
  * Rate limit: delivery-status endpoint is capped at 1 req/min.
  * Poller runs every 2 min, so one check per cycle stays safely within limits.
- * Picks the stalest batch first (oldest dispatchedAt) to ensure forward progress.
+ * Round-robins by updatedAt (least-recently-checked first) and bumps updatedAt on
+ * EVERY check — even when there's nothing to settle or the check errors. This prevents
+ * head-of-line blocking: a single un-settleable order (e.g. delivery-status returns no
+ * items, or a transient 429) must not be re-queried forever while the rest of the
+ * backlog starves. Each batch rotates to the back of the queue after it is checked.
  * Checks any batch dispatched more than 2 min ago — catches missed webhooks
  * within a single poll cycle rather than waiting 10 min.
  */
@@ -400,10 +404,18 @@ async function checkProcessingBatches(): Promise<void> {
       isNotNull(topupghBatchesTable.topupghOrderId),
       lt(topupghBatchesTable.dispatchedAt, TWO_MIN_AGO),
     ))
-    .orderBy(topupghBatchesTable.dispatchedAt)
+    .orderBy(topupghBatchesTable.updatedAt)
     .limit(1);
 
   if (!batch?.topupghOrderId) return;
+
+  // Bump updatedAt immediately so this batch moves to the back of the round-robin
+  // queue regardless of the outcome below. Without this, a batch whose delivery-status
+  // never yields settleable items stays the "least-recently-checked" forever and blocks
+  // every other processing batch from ever being polled.
+  await db.update(topupghBatchesTable)
+    .set({ updatedAt: new Date() })
+    .where(eq(topupghBatchesTable.id, batch.id));
 
   try {
     // Poll PER-ITEM delivery status — NOT order-level status. TopUpGH's order-level

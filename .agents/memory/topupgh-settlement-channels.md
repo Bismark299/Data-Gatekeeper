@@ -1,40 +1,44 @@
 ---
 name: TopUpGH settlement channels — webhook vs poller
-description: Why the delivery-status poller can't settle the backlog and the webhook is the only reliable channel; webhook signature scheme caveats.
+description: Why TopUpGH-delivered orders can get stuck in 'processing'; how the poller must round-robin; webhook signature scheme caveats.
 ---
 
-# The poller is NOT a reliable settlement channel
+# The poller's real failure mode is head-of-line blocking (NOT rate limiting)
 
-`GET /orders/{id}/delivery-status` is rate-limited to **1 req/min per API key** and in
-production that slot is **perpetually exhausted** — a probe still gets `429 remaining:0`
-even after waiting a full 65s. So the fallback poller (`checkProcessingBatches`, one batch
-per cycle) can almost never get a successful read and makes zero progress on a backlog.
+The delivery-status endpoint (`GET /orders/{id}/delivery-status`) is documented at 1
+req/min, but in practice the prod poller calls it every 2 min and gets HTTP 200 fine.
+429s seen from the Replit dev env are just collisions with the prod poller — they are
+NOT evidence the poller is starved. Do not conclude "rate limited" from a dev-side 429.
 
-**Why:** something consumes the delivery-status slot faster than 1/min (prod poller +
-any other caller sharing the key). Attribution couldn't be confirmed remotely, but the
-empirical fact stands: do not rely on delivery-status polling to clear stuck batches.
+The real bug: a backup poller that always picks the **stalest batch by dispatchedAt** and
+checks only ONE per cycle will jam. If that order's 200 yields no settleable items (still
+pending on TopUpGH's side, or empty `order.items`), the batch never settles, stays the
+stalest, and is re-queried forever — so every other processing batch is never polled.
 
-**How to apply:** treat the **webhook** (`POST /api/topupgh/webhook`,
-`delivery_status_updated`) as the primary settlement channel — it is push-based, has no
-rate limit, and TopUpGH actively fires it (and retries when the endpoint was returning
-non-200). The poller is best-effort backup only.
+**Fix / principle:** round-robin by a last-checked timestamp. Order processing batches by
+`updatedAt` (least-recently-checked first) and bump `updatedAt` on EVERY check — success,
+empty-items, or error alike — so the just-checked batch rotates to the back of the queue.
+`updatedAt` already exists, so no migration (prod DB is external Render — avoid migrations).
+Keep one check per cycle (rate limit) and keep the poller single-instance (`WEB_CONCURRENCY=1`);
+multi-instance would need `FOR UPDATE SKIP LOCKED` / a lease column to avoid duplicate polls.
 
 # topupghRequest must surface non-OK responses
 
-`topupghRequest` historically did `return res.json()` without checking `res.ok`, so a 429
-(or any error) was parsed into an error-shaped object and the caller silently no-op'd
-(`data.order?.items` undefined → early return) with **no log**. Always log non-2xx from
-the TopUpGH API, or rate-limit failures are invisible and look like "poller does nothing".
+Returning `res.json()` without checking `res.ok` parses a 429/error into an error-shaped
+object, so the caller silently no-op's (`data.order?.items` undefined → early return) with
+no log. Always log non-2xx from the TopUpGH API or failures look like "poller does nothing".
 
-# Webhook signature scheme is NOT the plain assumption
+# Webhook scheme is HMAC-SHA256 over body with the API Secret — debugging a 401
 
-`HMAC-SHA256(rawBody, apiSecret)` hex (the original assumption) is rejected by TopUpGH in
-production (401). The real scheme is unconfirmed — could be base64, a `sha256=` prefix, a
-timestamped string, or a **dedicated webhook secret** distinct from the API secret.
+TopUpGH signs webhooks with `X-Webhook-Signature` = HMAC-SHA256, verified with the API
+Secret, and this worked historically before starting to 401. Because outbound API calls
+still succeed with the same secret, a 401 is most likely an **encoding difference**
+(base64 vs hex) or a **raw-body mismatch**, NOT a wrong secret.
 
-**How to apply:** the verifier accepts several candidate encodings (all derived from the
-secret, so verification is not weakened) and honors an optional `TOPUPGH_WEBHOOK_SECRET`
-env var, falling back to the API secret. A temporary `diagnoseTopupghWebhookSignature`
-logs which candidate matches a real webhook (no secret logged) — use one captured webhook
-to lock the scheme, then remove the diagnostic. If `anyMatch:false`, a dedicated webhook
-secret is needed (read it from the TopUpGH webhook config page → `TOPUPGH_WEBHOOK_SECRET`).
+**How to apply:** the verifier accepts several candidate encodings (hex, `sha256=` hex,
+base64, x-timestamp variants), all derived from the secret (not weakened), and honors an
+optional `TOPUPGH_WEBHOOK_SECRET` env. A temporary `diagnoseTopupghWebhookSignature` logs
+which candidate matches a captured webhook (no secret logged). The TopUpGH dashboard has
+"Test Webhook" / "Retry All" buttons to trigger one on demand. Read the Render log: if a
+candidate matches → lock to it and drop the others; if `anyMatch:false` → it's a raw-body
+capture problem (verify `req.rawBody` is the exact untouched bytes).
