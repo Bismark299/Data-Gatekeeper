@@ -66,12 +66,21 @@ async function topupghRequest<T>(method: string, endpoint: string, body?: object
   // Observability: a non-2xx response (e.g. 429 rate limit) was previously parsed
   // and returned silently, so callers like the poller no-op'd with no trace. Log it
   // so prod logs reveal WHY settlement isn't happening (rate-limited vs. error vs. ok).
+  const txt = await res.text();
   if (!res.ok) {
-    const txt = await res.text();
     logger.warn({ method, endpoint, status: res.status, body: txt.slice(0, 300) }, "TopUpGH API non-OK response");
     try { return JSON.parse(txt) as T; } catch { return {} as T; }
   }
-  return res.json() as Promise<T>;
+  // A 2xx with an EMPTY or non-JSON body must NOT throw. The delivery-status endpoint can
+  // return no payload when there is nothing to report; res.json() would throw "Unexpected
+  // end of JSON input" and surface to callers (e.g. the admin check button) as an opaque
+  // 502. Parse defensively and treat an unparseable 2xx body as {} (i.e. "no data yet").
+  try {
+    return JSON.parse(txt) as T;
+  } catch {
+    logger.warn({ method, endpoint, status: res.status, body: txt.slice(0, 120) }, "TopUpGH 2xx with non-JSON body — treating as empty");
+    return {} as T;
+  }
 }
 
 // ─── API wrappers ─────────────────────────────────────────────────────────────
@@ -484,44 +493,61 @@ async function settleBatchFromLiveStatus(
   const empty: BatchDeliveryCheckResult = { itemCount: 0, delivered: 0, failed: 0, pending: 0, unknown: 0 };
   if (!batch.topupghOrderId) return empty;
 
-  const data = await topupghGetDeliveryStatus(batch.topupghOrderId);
-  const rawItems = data.order?.items;
-  if (!Array.isArray(rawItems) || rawItems.length === 0) return empty;
+  // Fetching live status must never hard-fail the caller. topupghRequest already swallows
+  // non-2xx (returns {}), but a network error or the 20s timeout still throws — catch it
+  // here so the manual admin button (and the poller) degrade gracefully to "no items" and
+  // still run the reconciliation/close below instead of surfacing an opaque 502.
+  let data: Awaited<ReturnType<typeof topupghGetDeliveryStatus>> | undefined;
+  try {
+    data = await topupghGetDeliveryStatus(batch.topupghOrderId);
+  } catch (e) {
+    logger.warn({ err: e, batchId: batch.id }, "TopUpGH delivery fetch failed — reconciling batch from current order states");
+    data = undefined;
+  }
 
-  const items: TopupghWebhookItem[] = rawItems.map((it) => {
-    const processed = typeof it.processed_date === "string" ? it.processed_date : "";
-    const commaIdx  = processed.indexOf(", ");
-    return {
-      item_id:            "",
-      beneficiary_number: it.beneficiary_number ?? "",
-      network:            "",
-      data_size:          0,
-      delivery_status:    it.delivery_status ?? "",
-      delivery_date:      commaIdx >= 0 ? processed.slice(0, commaIdx) : processed,
-      delivery_time:      commaIdx >= 0 ? processed.slice(commaIdx + 2) : "",
+  const rawItems = data?.order?.items;
+  const items: TopupghWebhookItem[] = Array.isArray(rawItems)
+    ? rawItems.map((it) => {
+        const processed = typeof it.processed_date === "string" ? it.processed_date : "";
+        const commaIdx  = processed.indexOf(", ");
+        return {
+          item_id:            "",
+          beneficiary_number: it.beneficiary_number ?? "",
+          network:            "",
+          data_size:          0,
+          delivery_status:    it.delivery_status ?? "",
+          delivery_date:      commaIdx >= 0 ? processed.slice(0, commaIdx) : processed,
+          delivery_time:      commaIdx >= 0 ? processed.slice(commaIdx + 2) : "",
+        };
+      })
+    : [];
+
+  if (items.length > 0) {
+    // Persist live status (webhook payload shape so the admin delivery columns populate)
+    // ONLY when TopUpGH actually returned items — never overwrite recorded delivery data
+    // with an empty or failed response.
+    const syntheticPayload: TopupghWebhookPayload = {
+      event:     "delivery_status_updated",
+      timestamp: new Date().toISOString(),
+      order: {
+        order_id:                batch.topupghOrderId,
+        order_number:            "",
+        delivery_info:           "",
+        delivery_date:           "",
+        delivery_time:           "",
+        formatted_delivery_info: "",
+        items,
+      },
     };
-  });
+    await db.update(topupghBatchesTable)
+      .set({ deliveryData: syntheticPayload as unknown as Record<string, unknown>, updatedAt: new Date() })
+      .where(eq(topupghBatchesTable.id, batch.id));
+  }
 
-  // Persist in the webhook payload shape so the admin delivery columns populate
-  // even when the live webhook was missed.
-  const syntheticPayload: TopupghWebhookPayload = {
-    event:     "delivery_status_updated",
-    timestamp: new Date().toISOString(),
-    order: {
-      order_id:                batch.topupghOrderId,
-      order_number:            "",
-      delivery_info:           "",
-      delivery_date:           "",
-      delivery_time:           "",
-      formatted_delivery_info: "",
-      items,
-    },
-  };
-
-  await db.update(topupghBatchesTable)
-    .set({ deliveryData: syntheticPayload as unknown as Record<string, unknown>, updatedAt: new Date() })
-    .where(eq(topupghBatchesTable.id, batch.id));
-
+  // Always settle/reconcile. With items it completes/fails each delivered/failed order; with
+  // an empty list it is a no-op per order but still auto-closes the batch when every linked
+  // order is already terminal — clearing batches stranded in "processing" after a missed
+  // webhook/poll. No profit is credited on an empty list, so this is financially safe.
   await settleBatchDeliveries(
     batch,
     items.map(i => ({ phone: i.beneficiary_number, status: i.delivery_status })),
