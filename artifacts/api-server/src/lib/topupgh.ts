@@ -63,6 +63,14 @@ async function topupghRequest<T>(method: string, endpoint: string, body?: object
     body: bodyStr || undefined,
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
+  // Observability: a non-2xx response (e.g. 429 rate limit) was previously parsed
+  // and returned silently, so callers like the poller no-op'd with no trace. Log it
+  // so prod logs reveal WHY settlement isn't happening (rate-limited vs. error vs. ok).
+  if (!res.ok) {
+    const txt = await res.text();
+    logger.warn({ method, endpoint, status: res.status, body: txt.slice(0, 300) }, "TopUpGH API non-OK response");
+    try { return JSON.parse(txt) as T; } catch { return {} as T; }
+  }
   return res.json() as Promise<T>;
 }
 
@@ -526,14 +534,72 @@ export function extractDeliveryInfo(deliveryData: unknown): Map<string, OrderDel
 
 /**
  * Verify the X-Webhook-Signature header from TopUpGH.
- * Signature = HMAC-SHA256(rawBody, apiSecret), hex-encoded.
- * Returns false if credentials are missing or signature doesn't match.
+ * The exact signing scheme is unconfirmed, so we accept several HMAC-SHA256 encodings
+ * (hex, sha256=-prefixed hex, base64, and x-timestamp variants), all derived from the
+ * shared secret. Uses TOPUPGH_WEBHOOK_SECRET if set, else the API secret.
  */
-export function verifyTopupghWebhookSignature(signature: string, rawBody: Buffer): boolean {
-  const { apiSecret } = getCredentials();
-  if (!apiSecret) return false;
-  const expected = crypto.createHmac("sha256", apiSecret).update(rawBody).digest("hex");
-  return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+function getWebhookSecret(): string {
+  // TopUpGH may sign webhooks with a dedicated secret shown on the webhook config
+  // page rather than the API secret. Prefer it if provided, else fall back to apiSecret.
+  return process.env.TOPUPGH_WEBHOOK_SECRET || getCredentials().apiSecret || "";
+}
+
+function safeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  try {
+    return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+  } catch {
+    return false;
+  }
+}
+
+// Common HMAC-SHA256 encodings/wrappings a provider might use for a webhook signature.
+// All are derived from the secret, so accepting several encodings does not weaken
+// verification — a forger without the secret can produce none of them.
+function webhookSignatureCandidates(secret: string, rawBody: Buffer, timestamp?: string): Record<string, string> {
+  const hex = crypto.createHmac("sha256", secret).update(rawBody).digest("hex");
+  const b64 = crypto.createHmac("sha256", secret).update(rawBody).digest("base64");
+  const out: Record<string, string> = { hex, hexPrefixed: `sha256=${hex}`, base64: b64 };
+  if (timestamp) {
+    out.tsDotHex = crypto.createHmac("sha256", secret).update(`${timestamp}.${rawBody.toString()}`).digest("hex");
+    out.tsCatHex = crypto.createHmac("sha256", secret).update(`${timestamp}${rawBody.toString()}`).digest("hex");
+  }
+  return out;
+}
+
+export function verifyTopupghWebhookSignature(signature: string, rawBody: Buffer, timestamp?: string): boolean {
+  const secret = getWebhookSecret();
+  if (!secret) return false;
+  const candidates = webhookSignatureCandidates(secret, rawBody, timestamp);
+  return Object.values(candidates).some((c) => safeEqual(signature, c));
+}
+
+/**
+ * TEMPORARY DIAGNOSTIC: returns which candidate scheme (if any) matches the received
+ * signature, so a single real webhook log reveals TopUpGH's exact signing scheme.
+ * Never logs the secret. Remove once the scheme is confirmed.
+ */
+export function diagnoseTopupghWebhookSignature(
+  signature: string,
+  rawBody: Buffer,
+  timestamp?: string,
+): Record<string, unknown> {
+  const secret = getWebhookSecret();
+  if (!secret) return { hasSecret: false };
+  const usingDedicated = !!process.env.TOPUPGH_WEBHOOK_SECRET;
+  const candidates = webhookSignatureCandidates(secret, rawBody, timestamp);
+  const matches: Record<string, boolean> = {};
+  for (const [name, c] of Object.entries(candidates)) matches[name] = safeEqual(signature, c);
+  return {
+    hasSecret: true,
+    usingDedicatedWebhookSecret: usingDedicated,
+    hasTimestamp: !!timestamp,
+    receivedLen: signature.length,
+    receivedSample: signature.slice(0, 14),
+    rawBodyLen: rawBody.length,
+    matches,
+    anyMatch: Object.values(matches).some(Boolean),
+  };
 }
 
 export type DeliveryOutcome = "delivered" | "failed" | "pending" | "unknown";

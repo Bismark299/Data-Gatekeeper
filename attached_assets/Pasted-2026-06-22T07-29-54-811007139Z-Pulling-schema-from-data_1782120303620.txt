@@ -1,0 +1,50 @@
+2026-06-22T07:29:54.811007139Z [✓] Pulling schema from database...
+2026-06-22T07:29:54.825848886Z 
+2026-06-22T07:29:54.825890959Z Is api_clients table created or renamed from another table?
+2026-06-22T07:29:54.825896499Z ❯ + api_clients            create table
+2026-06-22T07:30:05.016789055Z   ~ sessions › api_clients rename table✓ deposits.user_id is now nullable
+2026-06-22T07:30:05.018696703Z ✓ users api_key columns exist
+2026-06-22T07:30:05.019803884Z ✓ settings table exists
+2026-06-22T07:30:05.021260429Z ✓ momo_number and momo_name rows seeded
+2026-06-22T07:30:05.022149894Z ✓ mcbis_auto_sync row seeded
+2026-06-22T07:30:05.023127975Z ✓ topupgh_batches table exists
+2026-06-22T07:30:05.024337173Z ✓ orders.topupgh_batch_id column exists
+2026-06-22T07:30:05.025772677Z ✓ ckgodsway_reference columns exist on orders and store_orders
+2026-06-22T07:30:05.026153164Z ✓ Migration complete
+2026-06-22T07:30:06.259834242Z ==> Uploading build...
+2026-06-22T07:30:19.222749376Z ==> Uploaded in 8.2s. Compression took 4.8s
+2026-06-22T07:30:19.247915862Z ==> Build successful 🎉
+2026-06-22T07:30:22.624531014Z ==> Deploying...
+2026-06-22T07:30:22.692992472Z ==> Setting WEB_CONCURRENCY=1 by default, based on available CPUs in the instance
+2026-06-22T07:30:51.860721319Z ✅  sessions table ensured
+2026-06-22T07:30:52.600025155Z ✅  Admin user ensured: admin@eliana.com
+2026-06-22T07:30:53.945967769Z {"level":30,"time":1782113453945,"pid":70,"hostname":"srv-d7rtt6nlk1mc73ddag8g-7999fb5467-w6h4l","port":10000,"msg":"Server listening"}
+2026-06-22T07:30:53.974406062Z {"level":30,"time":1782113453974,"pid":70,"hostname":"srv-d7rtt6nlk1mc73ddag8g-7999fb5467-w6h4l","msg":"Withdrawal reconciler started (every 3 min)"}
+2026-06-22T07:30:54.616405918Z {"level":30,"time":1782113454616,"pid":70,"hostname":"srv-d7rtt6nlk1mc73ddag8g-7999fb5467-w6h4l","req":{"id":1,"method":"HEAD","url":"/"},"res":{"statusCode":200},"responseTime":15,"msg":"request completed"}
+2026-06-22T07:31:00.971196224Z {"level":30,"time":1782113460970,"pid":70,"hostname":"srv-d7rtt6nlk1mc73ddag8g-7999fb5467-w6h4l","req":{"id":2,"method":"GET","url":"/api/healthz"},"res":{"statusCode":200},"responseTime":5,"msg":"request completed"}
+2026-06-22T07:31:00.973841997Z {"level":30,"time":1782113460973,"pid":70,"hostname":"srv-d7rtt6nlk1mc73ddag8g-7999fb5467-w6h4l","req":{"id":3,"method":"GET","url":"/api/healthz"},"res":{"statusCode":200},"responseTime":1,"msg":"request completed"}
+2026-06-22T07:31:01.865257714Z ==> Your service is live 🎉
+2026-06-22T07:31:02.09169623Z ==> 
+2026-06-22T07:31:02.093848344Z ==> ///////////////////////////////////////////////////////////
+2026-06-22T07:31:02.095965157Z ==> 
+2026-06-22T07:31:02.09809716Z ==> Available at your primary URL https://datagatekeeper.pro + 2 more domains
+2026-06-22T07:31:02.100516529Z ==> 
+2026-06-22T07:31:02.102973478Z ==> ///////////////////////////////////////////////////////////
+2026-06-22T07:31:05.975610364Z {"level":30,"time":1782113465975,"pid":70,"hostname":"srv-d7rtt6nlk1mc73ddag8g-7999fb5467-w6h4l","req":{"id":4,"method":"GET","url":"/api/healthz"},"res":{"statusCode":200},"responseTime":2,"msg":"request completed"}
+2026-06-22T07:31:10.974902946Z {"level":30,"time":1782113470974,"pid":70,"hostname":"srv-d7rtt6nlk1mc73ddag8g-7999fb5467-w6h4l","req":{"id":5,"method":"GET","url":"/api/healthz"},"res":{"statusCode":200},"responseTime":1,"msg":"request completed"}
+2026-06-22T07:31:15.976543704Z {"level":30,"time":1782113475976,"pid":70,"hostname":"srv-d7rtt6nlk1mc73ddag8g-7999fb5467-w6h4l","req":{"id":6,"method":"GET","url":"/api/healthz"},"res":{"statusCode":200},"responseTime":2,"msg":"request completed"}
+2026-06-22T07:31:20.974345987Z {"level":30,"time":1782113480974,"pid":70,"hostname":"srv-d7rtt6nlk1mc73ddag8g-7999fb5467-w6h4l","req":{"id":7,"method":"GET","url":"/api/healthz"},"res":{"statusCode":200},"responseTime":2,"msg":"request completed"}
+2026-06-22T07:31:25.974613884Z {"level":30,"time":1782113485974,"pid":70,"hostname":"srv-d7rtt6nlk1mc73ddag8g-7999fb5467-w6h4l","req":{"id":8,"method":"GET","url":"/api/healthz"},"res":{"statusCode":200},"responseTime":1,"msg":"request completed"}
+2026-06-22T07:31:30.966906834Z {"level":30,"time":1782113490966,"pid":70,"hostname":"srv-d7rtt6nlk1mc73ddag8g-7999fb5467-w6h4l","req":{"id":9,"method":"GET","url":"/api/healthz"},"res":{"statusCode":200},"responseTime":1,"msg":"request completed"}
+2026-06-22T07:31:30.974494478Z {"level":30,"time":1782113490974,"pid":70,"hostname":"srv-d7rtt6nlk1mc73ddag8g-7999fb5467-w6h4l","req":{"id":10,"method":"GET","url":"/api/healthz"},"res":{"statusCode":200},"responseTime":1,"msg":"request completed"}
+2026-06-22T07:31:35.975225198Z {"level":30,"time":1782113495974,"pid":70,"hostname":"srv-d7rtt6nlk1mc73ddag8g-7999fb5467-w6h4l","req":{"id":11,"method":"GET","url":"/api/healthz"},"res":{"statusCode":200},"responseTime":1,"msg":"request completed"}
+2026-06-22T07:31:40.974063893Z {"level":30,"time":1782113500973,"pid":70,"hostname":"srv-d7rtt6nlk1mc73ddag8g-7999fb5467-w6h4l","req":{"id":12,"method":"GET","url":"/api/healthz"},"res":{"statusCode":200},"responseTime":1,"msg":"request completed"}
+2026-06-22T07:31:45.973776607Z {"level":30,"time":1782113505973,"pid":70,"hostname":"srv-d7rtt6nlk1mc73ddag8g-7999fb5467-w6h4l","req":{"id":13,"method":"GET","url":"/api/healthz"},"res":{"statusCode":200},"responseTime":1,"msg":"request completed"}
+2026-06-22T07:31:46.573805459Z {"level":40,"time":1782113506573,"pid":70,"hostname":"srv-d7rtt6nlk1mc73ddag8g-7999fb5467-w6h4l","msg":"TopUpGH webhook: invalid signature — request rejected"}
+2026-06-22T07:31:46.574370121Z {"level":30,"time":1782113506574,"pid":70,"hostname":"srv-d7rtt6nlk1mc73ddag8g-7999fb5467-w6h4l","req":{"id":14,"method":"POST","url":"/api/topupgh/webhook"},"res":{"statusCode":401},"responseTime":6,"msg":"request completed"}
+2026-06-22T07:31:46.95046412Z {"level":40,"time":1782113506950,"pid":70,"hostname":"srv-d7rtt6nlk1mc73ddag8g-7999fb5467-w6h4l","msg":"TopUpGH webhook: invalid signature — request rejected"}
+2026-06-22T07:31:46.950904132Z {"level":30,"time":1782113506950,"pid":70,"hostname":"srv-d7rtt6nlk1mc73ddag8g-7999fb5467-w6h4l","req":{"id":15,"method":"POST","url":"/api/topupgh/webhook"},"res":{"statusCode":401},"responseTime":3,"msg":"request completed"}
+2026-06-22T07:31:50.973896873Z {"level":30,"time":1782113510973,"pid":70,"hostname":"srv-d7rtt6nlk1mc73ddag8g-7999fb5467-w6h4l","req":{"id":16,"method":"GET","url":"/api/healthz"},"res":{"statusCode":200},"responseTime":1,"msg":"request completed"}
+2026-06-22T07:31:55.973762085Z {"level":30,"time":1782113515973,"pid":70,"hostname":"srv-d7rtt6nlk1mc73ddag8g-7999fb5467-w6h4l","req":{"id":17,"method":"GET","url":"/api/healthz"},"res":{"statusCode":200},"responseTime":1,"msg":"request completed"}
+2026-06-22T07:32:00.966130752Z {"level":30,"time":1782113520965,"pid":70,"hostname":"srv-d7rtt6nlk1mc73ddag8g-7999fb5467-w6h4l","req":{"id":18,"method":"GET","url":"/api/healthz"},"res":{"statusCode":200},"responseTime":0,"msg":"request completed"}
+2026-06-22T07:32:00.973518351Z {"level":30,"time":1782113520973,"pid":70,"hostname":"srv-d7rtt6nlk1mc73ddag8g-7999fb5467-w6h4l","req":{"id":19,"method":"GET","url":"/api/healthz"},"res":{"statusCode":200},"responseTime":1,"msg":"request completed"}

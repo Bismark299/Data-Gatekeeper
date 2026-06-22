@@ -13,6 +13,7 @@ import {
   dispatchPendingQueue,
   handleTopupghWebhook,
   verifyTopupghWebhookSignature,
+  diagnoseTopupghWebhookSignature,
   getTopupghSettings,
   extractDeliveryInfo,
   type TopupghWebhookPayload,
@@ -435,22 +436,28 @@ router.post("/admin/topupgh/search", requireAdmin, async (req, res): Promise<voi
 router.post("/topupgh/webhook", async (req, res): Promise<void> => {
   const sig = req.headers["x-webhook-signature"];
   const raw = req.rawBody;
+  const ts = typeof req.headers["x-timestamp"] === "string" ? req.headers["x-timestamp"] : undefined;
 
   if (!sig || typeof sig !== "string" || !raw) {
+    logger.warn({ hasSig: !!sig, hasRaw: !!raw, headerNames: Object.keys(req.headers) }, "TopUpGH webhook: missing signature or raw body");
     res.sendStatus(401);
     return;
   }
 
   let valid = false;
   try {
-    valid = verifyTopupghWebhookSignature(sig, raw);
+    valid = verifyTopupghWebhookSignature(sig, raw, ts);
   } catch {
-    res.sendStatus(401);
-    return;
+    valid = false;
   }
 
   if (!valid) {
-    logger.warn("TopUpGH webhook: invalid signature — request rejected");
+    // TEMPORARY DIAGNOSTIC: reveals which HMAC scheme (if any) TopUpGH uses, so the
+    // verifier can be locked to it. Logs no secret. Remove once the scheme is confirmed.
+    logger.warn(
+      { headerNames: Object.keys(req.headers), diag: diagnoseTopupghWebhookSignature(sig, raw, ts) },
+      "TopUpGH webhook: invalid signature — request rejected",
+    );
     res.sendStatus(401);
     return;
   }
