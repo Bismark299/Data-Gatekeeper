@@ -1,0 +1,281 @@
+1. API Base URL
+https://reseller.etopupgh.com/api/v1
+
+Available endpoints:
+
+GET  /test
+GET  /products
+GET  /wallet/balance
+POST /orders/create
+GET  /orders/{order_id}
+GET  /orders/{order_id}/delivery-status
+GET  /orders
+
+2. Authentication
+
+Every request requires:
+
+X-API-Key
+X-Timestamp
+X-API-Signature
+
+The signature is generated using:
+
+timestamp + method + endpoint + body
+
+Then:
+
+HMAC-SHA256(signature_string, API_SECRET)
+
+Example:
+
+const signatureString =
+    timestamp +
+    method +
+    endpoint +
+    body;
+
+const signature = crypto
+    .createHmac("sha256", API_SECRET)
+    .update(signatureString)
+    .digest("hex");
+
+3. Important Rule
+
+For signature generation, use:
+
+/topupgh-api/v1/orders/create
+
+NOT
+
+/api/v1/orders/create
+
+The API server expects the internal route when calculating signatures.
+
+4. Test Connection
+Request
+GET https://reseller.etopupgh.com/api/v1/test
+Example Node.js
+const crypto = require("crypto");
+
+const API_KEY = process.env.TOPUPGH_API_KEY;
+const API_SECRET = process.env.TOPUPGH_API_SECRET;
+
+const timestamp = Math.floor(Date.now()/1000).toString();
+
+const signature = crypto
+.createHmac("sha256", API_SECRET)
+.update(timestamp + "GET" + "/topupgh-api/v1/test")
+.digest("hex");
+
+const response = await fetch(
+  "https://reseller.etopupgh.com/api/v1/test",
+  {
+    headers:{
+      "X-API-Key":API_KEY,
+      "X-Timestamp":timestamp,
+      "X-API-Signature":signature
+    }
+  }
+);
+
+console.log(await response.json());
+5. Check Wallet Balance
+Endpoint
+GET /wallet/balance
+Example
+const endpoint = "/topupgh-api/v1/wallet/balance";
+
+Expected response:
+
+{
+  "success": true,
+  "balance": 500.50,
+  "currency": "GHS"
+}
+
+6. Get Available Data Products
+Endpoint
+GET /products
+MTN Products
+GET /products?network=mtn
+Example Response
+{
+  "success": true,
+  "products": [
+    {
+      "id": 1,
+      "name": "5GB MTN",
+      "price": "19.75",
+      "network": "mtn"
+    }
+  ]
+}
+
+7. Create Data Bundle Order
+
+This is the endpoint you'll use from DatagateKeeper when a customer purchases data.
+
+Endpoint
+POST /orders/create
+Payload
+{
+  "orders":[
+    {
+      "_beneficiary_number":"0241234567",
+      "network":"mtn",
+      "_data_size":5
+    }
+  ]
+}
+Multiple Orders
+{
+  "orders":[
+    {
+      "_beneficiary_number":"0241234567",
+      "network":"mtn",
+      "_data_size":5
+    },
+    {
+      "_beneficiary_number":"0551234567",
+      "network":"at",
+      "_data_size":10
+    }
+  ]
+}
+
+The API supports bulk orders.
+
+8. Example Express Route
+app.post("/buy-data", async (req,res)=>{
+
+  const { phone, network, size } = req.body;
+
+  const orders = [{
+    _beneficiary_number: phone,
+    network: network,
+    _data_size: size
+  }];
+
+  const body = JSON.stringify({ orders });
+
+  const timestamp = Math.floor(Date.now()/1000).toString();
+
+  const endpoint = "/topupgh-api/v1/orders/create";
+
+  const signature = crypto
+  .createHmac("sha256", process.env.TOPUPGH_API_SECRET)
+  .update(timestamp + "POST" + endpoint + body)
+  .digest("hex");
+
+  const response = await fetch(
+    "https://reseller.etopupgh.com/api/v1/orders/create",
+    {
+      method:"POST",
+      headers:{
+        "Content-Type":"application/json",
+        "X-API-Key":process.env.TOPUPGH_API_KEY,
+        "X-Timestamp":timestamp,
+        "X-API-Signature":signature
+      },
+      body
+    }
+  );
+
+  const data = await response.json();
+
+  res.json(data);
+});
+9. Check Order Status
+Endpoint
+GET /orders/{order_id}
+
+Example:
+
+GET /orders/1922082
+
+Response:
+
+{
+  "success": true,
+  "order": {
+    "id": 1922082,
+    "status": "processing"
+  }
+}
+
+10. Delivery Status
+Endpoint
+GET /orders/{order_id}/delivery-status
+
+Example:
+
+GET /orders/1922082/delivery-status
+
+This gives MTN delivery information.
+
+11. Webhook Integration
+
+You already configured:
+
+https://datagatekeeper.pro/api/topupgh/webhook
+
+The API will POST updates to this URL whenever delivery status changes.
+
+Example Express Webhook
+app.post("/api/topupgh/webhook", (req,res)=>{
+
+   const payload = req.body;
+
+   if(payload.event === "delivery_status_updated"){
+
+      const orderId = payload.order.order_id;
+
+      console.log("Delivered:", orderId);
+
+      // Update your database here
+   }
+
+   res.status(200).send("OK");
+});
+12. Why Your Webhooks Are Failing
+
+Your dashboard shows:
+
+Failed: 50
+Pending: 4
+
+Common causes:
+
+Webhook URL returns anything other than HTTP 200.
+Server timeout.
+Route does not exist.
+SSL certificate problem.
+Firewall blocks TopUpGH requests.
+Payload parsing error causing server crash.
+
+Test your endpoint manually:
+
+curl -X POST https://datagatekeeper.pro/api/topupgh/webhook \
+-H "Content-Type: application/json" \
+-d '{"event":"test"}'
+
+Expected:
+
+HTTP 200 OK
+Recommended Architecture for DatagateKeeper
+Customer Order
+      ↓
+DatagateKeeper
+      ↓
+Validate Balance
+      ↓
+TopUpGH /orders/create
+      ↓
+Save order_id
+      ↓
+Webhook receives update
+      ↓
+Update order status
+      ↓
+Notify customer
