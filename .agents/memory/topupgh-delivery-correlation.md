@@ -61,3 +61,28 @@ Both webhook and poller must funnel through the one settlement function. Because
 adds two concurrent settlement paths and `wallet_ledger.reference` is NOT unique, each
 order's settle+refund must be a tx with `SELECT ... FOR UPDATE` + in-tx terminal-status
 recheck, or you get double refunds.
+
+# Settlement has NO per-item idempotency — same-phone batches can over-settle
+
+`settleBatchDeliveries` matches each delivered/failed item to an order by phone +
+"next unsettled row" (status in [pending/processing] or [paid/processing]), not by a
+stable TopUpGH item id. For a batch with **two orders to the same phone**, a *replayed
+or duplicated* single delivered item can settle the SECOND order too (and credit store
+profit) even though only one real delivery happened.
+
+There are now THREE settlement triggers — the `delivery_status_updated` webhook, the
+background round-robin poller, and the admin "Check delivery status" button. All three
+MUST go through `fetchAndSettleBatchDelivery`, which holds a per-batch in-flight guard
+(`_settleInFlight` Set) so two triggers never settle the SAME batch concurrently. That
+closes the *concurrent* over-settle window (button vs poller vs double-click).
+
+**Still open (latent, pre-existing):** *sequential* replay across polls — if TopUpGH
+keeps returning one delivered item while two same-phone orders are unsettled, successive
+polls settle them one-by-one. The only real fix is item-level idempotency: persist a
+per-order TopUpGH item key at dispatch and settle by that key (also add a unique
+constraint / processed-item ledger). Do not "fix" this by rewriting settleBatchDeliveries
+ad hoc — it's shared by all three triggers and guards real refunds.
+
+**Why:** this path auto-completes orders and credits agent-store profit; an over-settle
+is a real financial loss, so any change here needs the FOR UPDATE + status-guard + (future)
+item-key idempotency intact.

@@ -418,58 +418,124 @@ async function checkProcessingBatches(): Promise<void> {
     .where(eq(topupghBatchesTable.id, batch.id));
 
   try {
-    // Poll PER-ITEM delivery status — NOT order-level status. TopUpGH's order-level
-    // status flips to "completed" on acceptance, long before bundles actually reach
-    // customers, so trusting it marked orders delivered prematurely. Real delivery is
-    // reported per recipient via the delivery-status endpoint, mirroring the webhook.
-    // GET /orders/{id}/delivery-status returns the SAME shape as the webhook:
-    //   { success, order: { items: [{ beneficiary_number, delivery_status, processed_date }] } }
-    // NOT a phone-keyed object. The per-item word here is "Sent" (the webhook uses
-    // "Delivered") — both map to "delivered" via classifyDeliveryStatus. processed_date
-    // is a single combined string like "22/Jun/2026, 4:24:29 AM"; split into date + time.
-    const data = await topupghGetDeliveryStatus(batch.topupghOrderId);
-    const rawItems = data.order?.items;
-    if (!Array.isArray(rawItems) || rawItems.length === 0) return;
-
-    const items: TopupghWebhookItem[] = rawItems.map((it) => {
-      const processed = typeof it.processed_date === "string" ? it.processed_date : "";
-      const commaIdx  = processed.indexOf(", ");
-      return {
-        item_id:            "",
-        beneficiary_number: it.beneficiary_number ?? "",
-        network:            "",
-        data_size:          0,
-        delivery_status:    it.delivery_status ?? "",
-        delivery_date:      commaIdx >= 0 ? processed.slice(0, commaIdx) : processed,
-        delivery_time:      commaIdx >= 0 ? processed.slice(commaIdx + 2) : "",
-      };
-    });
-
-    // Persist in the webhook payload shape so the admin delivery columns populate
-    // even when the live webhook was missed.
-    const syntheticPayload: TopupghWebhookPayload = {
-      event:     "delivery_status_updated",
-      timestamp: new Date().toISOString(),
-      order: {
-        order_id:                batch.topupghOrderId,
-        order_number:            "",
-        delivery_info:           "",
-        delivery_date:           "",
-        delivery_time:           "",
-        formatted_delivery_info: "",
-        items,
-      },
-    };
-
-    await db.update(topupghBatchesTable)
-      .set({ deliveryData: syntheticPayload as unknown as Record<string, unknown>, updatedAt: new Date() })
-      .where(eq(topupghBatchesTable.id, batch.id));
-
-    await settleBatchDeliveries(
-      batch,
-      items.map(i => ({ phone: i.beneficiary_number, status: i.delivery_status })),
-    );
+    await fetchAndSettleBatchDelivery(batch);
   } catch { /* transient — retry next cycle */ }
+}
+
+/** Summary of a single batch delivery-status check. */
+export interface BatchDeliveryCheckResult {
+  /** Per-recipient delivery items TopUpGH returned for the batch (0 = none yet / rate-limited). */
+  itemCount: number;
+  delivered: number;
+  failed:    number;
+  pending:   number;
+  unknown:   number;
+}
+
+/** Batch IDs currently being settled — serializes the poller vs. the manual admin check. */
+const _settleInFlight = new Set<number>();
+
+/**
+ * Public entry point for settling a single batch from TopUpGH's LIVE delivery status.
+ * Serializes per batch so the admin "Check delivery status" button and the background
+ * poller (or a rapid double-click) never settle the SAME batch concurrently — settlement
+ * matches delivery items to orders by phone + "next unsettled row", so a concurrent replay
+ * of one delivered item could complete a second same-phone order. Concurrent callers for an
+ * already in-flight batch get an empty (no-op) result; the next poll/click picks it up.
+ */
+export async function fetchAndSettleBatchDelivery(
+  batch: typeof topupghBatchesTable.$inferSelect,
+): Promise<BatchDeliveryCheckResult> {
+  const empty: BatchDeliveryCheckResult = { itemCount: 0, delivered: 0, failed: 0, pending: 0, unknown: 0 };
+  if (!batch.topupghOrderId) return empty;
+  if (_settleInFlight.has(batch.id)) return empty;
+  _settleInFlight.add(batch.id);
+  try {
+    return await settleBatchFromLiveStatus(batch);
+  } finally {
+    _settleInFlight.delete(batch.id);
+  }
+}
+
+/**
+ * Fetch the LIVE per-recipient delivery status for a single dispatched batch, persist it
+ * (in the webhook payload shape so the admin delivery columns populate even when a live
+ * webhook was missed) and settle the batch's orders. Shared by the background round-robin
+ * poller and the admin "Check delivery status" button so both behave identically —
+ * settlement always funnels through settleBatchDeliveries. Always invoked through
+ * fetchAndSettleBatchDelivery so the per-batch in-flight guard applies.
+ *
+ * Polls PER-ITEM delivery status — NOT order-level status. TopUpGH's order-level status
+ * flips to "completed" on acceptance, long before bundles actually reach customers, so
+ * trusting it marked orders delivered prematurely. Real delivery is reported per recipient
+ * via GET /orders/{id}/delivery-status, which returns the SAME shape as the webhook:
+ *   { success, order: { items: [{ beneficiary_number, delivery_status, processed_date }] } }
+ * The per-item word here is "Sent" (the webhook uses "Delivered") — both map to "delivered"
+ * via classifyDeliveryStatus. processed_date is a single combined string like
+ * "22/Jun/2026, 4:24:29 AM"; split into date + time.
+ *
+ * Returns itemCount 0 when TopUpGH has no delivery items yet OR the request was rate-limited
+ * (1 req/min/key, shared with the poller) — topupghRequest deliberately does not throw on
+ * non-2xx, so callers cannot distinguish the two; treat 0 as "nothing to apply yet".
+ */
+async function settleBatchFromLiveStatus(
+  batch: typeof topupghBatchesTable.$inferSelect,
+): Promise<BatchDeliveryCheckResult> {
+  const empty: BatchDeliveryCheckResult = { itemCount: 0, delivered: 0, failed: 0, pending: 0, unknown: 0 };
+  if (!batch.topupghOrderId) return empty;
+
+  const data = await topupghGetDeliveryStatus(batch.topupghOrderId);
+  const rawItems = data.order?.items;
+  if (!Array.isArray(rawItems) || rawItems.length === 0) return empty;
+
+  const items: TopupghWebhookItem[] = rawItems.map((it) => {
+    const processed = typeof it.processed_date === "string" ? it.processed_date : "";
+    const commaIdx  = processed.indexOf(", ");
+    return {
+      item_id:            "",
+      beneficiary_number: it.beneficiary_number ?? "",
+      network:            "",
+      data_size:          0,
+      delivery_status:    it.delivery_status ?? "",
+      delivery_date:      commaIdx >= 0 ? processed.slice(0, commaIdx) : processed,
+      delivery_time:      commaIdx >= 0 ? processed.slice(commaIdx + 2) : "",
+    };
+  });
+
+  // Persist in the webhook payload shape so the admin delivery columns populate
+  // even when the live webhook was missed.
+  const syntheticPayload: TopupghWebhookPayload = {
+    event:     "delivery_status_updated",
+    timestamp: new Date().toISOString(),
+    order: {
+      order_id:                batch.topupghOrderId,
+      order_number:            "",
+      delivery_info:           "",
+      delivery_date:           "",
+      delivery_time:           "",
+      formatted_delivery_info: "",
+      items,
+    },
+  };
+
+  await db.update(topupghBatchesTable)
+    .set({ deliveryData: syntheticPayload as unknown as Record<string, unknown>, updatedAt: new Date() })
+    .where(eq(topupghBatchesTable.id, batch.id));
+
+  await settleBatchDeliveries(
+    batch,
+    items.map(i => ({ phone: i.beneficiary_number, status: i.delivery_status })),
+  );
+
+  const result: BatchDeliveryCheckResult = { ...empty, itemCount: items.length };
+  for (const i of items) {
+    const o = classifyDeliveryStatus(i.delivery_status);
+    if (o === "delivered")      result.delivered++;
+    else if (o === "failed")    result.failed++;
+    else if (o === "pending")   result.pending++;
+    else                        result.unknown++;
+  }
+  return result;
 }
 
 // ─── Webhook payload types ────────────────────────────────────────────────────

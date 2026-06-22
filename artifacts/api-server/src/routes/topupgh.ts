@@ -16,6 +16,7 @@ import {
   diagnoseTopupghWebhookSignature,
   getTopupghSettings,
   extractDeliveryInfo,
+  fetchAndSettleBatchDelivery,
   type TopupghWebhookPayload,
 } from "../lib/topupgh";
 
@@ -233,6 +234,36 @@ router.get("/admin/topupgh/batches/:id/delivery", requireAdmin, async (req, res)
     res.json(data);
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Failed to fetch delivery status";
+    res.status(502).json({ error: msg });
+  }
+});
+
+// ─── Check delivery status + settle (admin manual trigger) ────────────────────
+// POST /admin/topupgh/batches/:id/check-delivery
+// Fetches the LIVE per-recipient status from TopUpGH for this batch, persists it, and
+// auto-completes/fails the orders TopUpGH confirms — the SAME path as the background
+// poller. TopUpGH limits delivery-status to 1 req/min/key (shared with the poller), so an
+// empty result (summary.itemCount 0) means "no update yet OR rate-limited — retry shortly".
+
+router.post("/admin/topupgh/batches/:id/check-delivery", requireAdmin, async (req, res): Promise<void> => {
+  const batchId = parseInt(String(req.params.id));
+  if (isNaN(batchId)) { res.status(400).json({ error: "Invalid batch ID" }); return; }
+
+  const [batch] = await db.select().from(topupghBatchesTable).where(eq(topupghBatchesTable.id, batchId));
+  if (!batch) { res.status(404).json({ error: "Batch not found" }); return; }
+  if (!batch.topupghOrderId) { res.status(400).json({ error: "Batch not yet dispatched to TopUpGH" }); return; }
+
+  const { apiKey, apiSecret } = await getTopupghSettings();
+  if (!apiKey || !apiSecret) { res.status(400).json({ error: "TopUpGH credentials not configured" }); return; }
+
+  try {
+    const summary = await fetchAndSettleBatchDelivery(batch);
+    const [updated] = await db.select({ status: topupghBatchesTable.status })
+      .from(topupghBatchesTable).where(eq(topupghBatchesTable.id, batchId));
+    res.json({ success: true, summary, batchStatus: updated?.status ?? batch.status });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Failed to check delivery status";
+    logger.warn({ err: e, batchId }, `topupgh manual delivery check failed: ${msg}`);
     res.status(502).json({ error: msg });
   }
 });

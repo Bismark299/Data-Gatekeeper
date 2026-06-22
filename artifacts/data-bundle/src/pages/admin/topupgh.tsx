@@ -234,6 +234,73 @@ function QueueTab() {
 
 // ─── Batches Tab ──────────────────────────────────────────────────────────────
 
+interface CheckDeliveryResponse {
+  success: boolean;
+  summary: { itemCount: number; delivered: number; failed: number; pending: number; unknown: number };
+  batchStatus: string;
+}
+
+/**
+ * Per-batch "Check delivery status" button. Calls the live TopUpGH delivery-status +
+ * auto-settle endpoint for one batch, then refreshes the batch list and detail.
+ * `compact` renders an icon-only button for the batch-row table cell.
+ */
+function CheckDeliveryButton({ batchId, compact = false }: { batchId: number; compact?: boolean }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  const mutation = useMutation({
+    mutationFn: () =>
+      fetch(`/api/admin/topupgh/batches/${batchId}/check-delivery`, {
+        method: "POST",
+        credentials: "include",
+      }).then(async r => {
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error ?? "Delivery check failed");
+        return d as CheckDeliveryResponse;
+      }),
+    onSuccess: d => {
+      const s = d.summary;
+      if (s.itemCount === 0) {
+        toast({
+          title: "No delivery update yet",
+          description: "TopUpGH has no new status for this batch. It allows 1 check per minute (shared with the auto-checker) — try again shortly.",
+        });
+      } else {
+        const parts: string[] = [];
+        if (s.delivered) parts.push(`${s.delivered} delivered`);
+        if (s.failed)    parts.push(`${s.failed} failed`);
+        if (s.pending)   parts.push(`${s.pending} pending`);
+        if (s.unknown)   parts.push(`${s.unknown} unknown`);
+        toast({
+          title: `Checked ${s.itemCount} recipient${s.itemCount === 1 ? "" : "s"} — batch ${d.batchStatus}`,
+          description: parts.join(", "),
+        });
+      }
+      queryClient.invalidateQueries({ queryKey: ["topupgh-batch", batchId] });
+      queryClient.invalidateQueries({ queryKey: ["topupgh-batches"] });
+    },
+    onError: (e: unknown) =>
+      toast({ title: e instanceof Error ? e.message : "Delivery check failed", variant: "destructive" }),
+  });
+
+  return (
+    <Button
+      size="sm"
+      variant="outline"
+      onClick={(e) => { e.stopPropagation(); mutation.mutate(); }}
+      disabled={mutation.isPending}
+      title="Check delivery status"
+      className={compact ? "h-7 w-7 p-0" : "gap-1.5 h-7 text-xs"}
+    >
+      {mutation.isPending
+        ? <Loader2 className="w-3 h-3 animate-spin" />
+        : <RefreshCw className="w-3 h-3" />}
+      {!compact && "Check delivery status"}
+    </Button>
+  );
+}
+
 function ExpandedBatch({ batchId }: { batchId: number }) {
   const { data, isLoading } = useQuery<BatchDetail>({
     queryKey: ["topupgh-batch", batchId],
@@ -249,6 +316,12 @@ function ExpandedBatch({ batchId }: { batchId: number }) {
   const orders = data?.orders ?? [];
   return (
     <div className="px-4 pb-4">
+      <div className="flex items-center justify-between gap-2 mb-2.5">
+        <span className="text-[11px] text-muted-foreground">
+          Live status reflects TopUpGH's latest report. Delivered orders auto-complete. (1 check/min)
+        </span>
+        <CheckDeliveryButton batchId={batchId} />
+      </div>
       <div className="rounded-xl overflow-hidden border border-border/60">
         <table className="w-full text-xs">
           <thead>
@@ -489,9 +562,12 @@ function BatchesTab() {
                           {b.dispatchedAt ? timeSince(b.dispatchedAt) : "—"}
                         </td>
                         <td className="px-4 py-2.5 text-center">
-                          {expandedId === b.id
-                            ? <ChevronUp className="w-3.5 h-3.5 text-muted-foreground" />
-                            : <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />}
+                          <div className="flex items-center justify-center gap-1.5">
+                            {b.topupghOrderId && <CheckDeliveryButton batchId={b.id} compact />}
+                            {expandedId === b.id
+                              ? <ChevronUp className="w-3.5 h-3.5 text-muted-foreground" />
+                              : <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />}
+                          </div>
                         </td>
                       </tr>
                       {expandedId === b.id && (
