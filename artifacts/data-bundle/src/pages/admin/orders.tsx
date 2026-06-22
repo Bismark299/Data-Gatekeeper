@@ -8,6 +8,7 @@ import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { AdminSidebar } from "@/components/AdminSidebar";
 import { AdminFinancialSummary } from "@/components/AdminFinancialSummary";
+import { OrderDeliveryCheckButton } from "@/components/OrderDeliveryCheckButton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -836,15 +837,22 @@ function AdminOrdersContent() {
                         </td>
                         <td className="px-5 py-3.5">
                           {order.status !== "completed" && order.status !== "failed" ? (
-                            <button
-                              onClick={() => handleRefund(order.id)}
-                              disabled={refundingId === order.id}
-                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400 hover:bg-red-200 disabled:opacity-50 transition-colors"
-                              data-testid={`button-refund-${order.id}`}
-                            >
-                              <Banknote className="w-3 h-3" />
-                              {refundingId === order.id ? "…" : "Cancel & Refund"}
-                            </button>
+                            <div className="flex items-center gap-1.5">
+                              <OrderDeliveryCheckButton
+                                orderId={order.id}
+                                scope="admin"
+                                invalidateKeys={[getAdminListOrdersQueryKey({})]}
+                              />
+                              <button
+                                onClick={() => handleRefund(order.id)}
+                                disabled={refundingId === order.id}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400 hover:bg-red-200 disabled:opacity-50 transition-colors"
+                                data-testid={`button-refund-${order.id}`}
+                              >
+                                <Banknote className="w-3 h-3" />
+                                {refundingId === order.id ? "…" : "Cancel & Refund"}
+                              </button>
+                            </div>
                           ) : (
                             <span className="text-xs text-muted-foreground/50 italic">—</span>
                           )}
