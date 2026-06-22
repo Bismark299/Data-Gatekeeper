@@ -10,7 +10,7 @@ import {
 import { extractDeliveryInfo } from "../lib/topupgh";
 import { generateApiKey } from "../lib/apiKeyAuth";
 import {
-  getMcbisSettings, mcbisGetBalance, dispatchToMcbis,
+  getMcbisSettings, mcbisGetBalanceCached, dispatchToMcbis,
 } from "../lib/mcbis";
 import {
   getCkgodswaySettings, getCachedCkgodswayBalance,
@@ -1525,8 +1525,10 @@ router.get("/admin/mcbis/balance", requireAdmin, async (_req, res): Promise<void
     return;
   }
   try {
-    const balance = await mcbisGetBalance(apiKey);
-    res.json({ balance });
+    // Cached + graceful: on a Mcbis 429/transient failure this serves the
+    // last-known balance (flagged stale) instead of surfacing a 502 to the admin.
+    const { balance, stale, fetchedAt } = await mcbisGetBalanceCached(apiKey);
+    res.json({ balance, stale, fetchedAt });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "Failed to fetch balance";
     // Log only the message — never the axios error object (it contains the Bearer token in config.headers)

@@ -104,6 +104,38 @@ export async function mcbisGetBalance(apiKey: string): Promise<number> {
   return parseFloat(data.data.walletBalance);
 }
 
+// ─── Balance cache ──────────────────────────────────────────────────────────
+// McbisSolution rate-limits /walletBalance (HTTP 429). Both the admin sidebar
+// (auto-polls) and the dispatch poller (every 30 s) read it, so without caching
+// the endpoint trips the limit and the admin widget surfaces a 502. Cache the
+// value briefly and share it across ALL callers; on failure, fall back to the
+// last-known value (flagged stale) instead of throwing, so the balance widget
+// degrades gracefully rather than erroring out. Single-process safe (WEB_CONCURRENCY=1).
+let balanceCache: { value: number; at: number } | null = null;
+const BALANCE_CACHE_TTL_MS = 60_000;
+
+export async function mcbisGetBalanceCached(
+  apiKey: string,
+  maxAgeMs: number = BALANCE_CACHE_TTL_MS,
+): Promise<{ balance: number; stale: boolean; fetchedAt: number }> {
+  const now = Date.now();
+  if (balanceCache && now - balanceCache.at < maxAgeMs) {
+    return { balance: balanceCache.value, stale: false, fetchedAt: balanceCache.at };
+  }
+  try {
+    const value = await mcbisGetBalance(apiKey);
+    balanceCache = { value, at: now };
+    return { balance: value, stale: false, fetchedAt: now };
+  } catch (err) {
+    // Rate-limited or transient failure: serve the last-known balance if we have
+    // one so callers never see a hard error just because Mcbis throttled us.
+    if (balanceCache) {
+      return { balance: balanceCache.value, stale: true, fetchedAt: balanceCache.at };
+    }
+    throw err;
+  }
+}
+
 export async function mcbisPlaceOrder(opts: {
   apiKey: string;
   network: string;
@@ -347,7 +379,9 @@ export function startMcbisPoller(): void {
       // ── 3. Retry pending platform MTN orders (cap 5, 500 ms apart, 30 s grace) ──
       // Pre-check balance once — skip all dispatches if wallet is empty
       let mcbisBalance = 0;
-      try { mcbisBalance = await mcbisGetBalance(apiKey); } catch { /* assume non-zero so we still try */ mcbisBalance = 1; }
+      // Use the shared cache so the poller doesn't add load to the rate-limited
+      // balance endpoint; on failure assume non-zero so we still attempt dispatch.
+      try { mcbisBalance = (await mcbisGetBalanceCached(apiKey)).balance; } catch { mcbisBalance = 1; }
 
       if (mcbisBalance > 0) { // only attempt dispatch when there's balance
       const pendingPlatform = await db
