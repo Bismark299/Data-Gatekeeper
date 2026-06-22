@@ -21,7 +21,7 @@
 
 import crypto from "crypto";
 import { eq, and, isNull, isNotNull, lt, inArray, sql } from "drizzle-orm";
-import { db, settingsTable, ordersTable, bundlesTable, topupghBatchesTable, storeOrdersTable, storesTable } from "@workspace/db";
+import { db, pool, settingsTable, ordersTable, bundlesTable, topupghBatchesTable, storeOrdersTable, storesTable } from "@workspace/db";
 import { logger } from "./logger";
 import { recoverStuckTopupghBatches } from "./ensureSchema";
 
@@ -229,6 +229,14 @@ export interface DispatchResult {
 // during a Render rolling deploy.
 const DISPATCH_GAP_MIN_MS = 8_000;
 const DISPATCH_GAP_MAX_MS = 90_000;
+// Postgres advisory-lock key that serializes the create-order critical section across
+// ALL processes (in-process runner, admin force-dispatch, multi-pod deploys), so the
+// ambiguous-outcome balance delta can only ever reflect the current batch.
+const DISPATCH_LOCK_KEY = 728_411_001;
+// Give the TopUpGH wallet a moment to reflect a just-landed deduction before reading it
+// to decide whether an unconfirmed create-order actually charged. The dispatch lock is
+// held across this wait, so no other deduction can occur in the window.
+const BALANCE_SETTLE_MS = 2_500;
 let dispatchGapMs   = DISPATCH_GAP_MIN_MS;
 let lastDispatchAt  = 0;
 let dispatchRunning = false;
@@ -271,11 +279,18 @@ async function runDispatchRunner(): Promise<void> {
         dispatchGapMs  = Math.min(DISPATCH_GAP_MAX_MS, Math.round(dispatchGapMs * 2));
         logger.warn({ gapMs: dispatchGapMs }, "TopUpGH dispatch rate-limited — backing off, will retry");
         internalContinue = true; // retry the requeued orders after the wider gap
+      } else if (result.reason === "retry_safe") {
+        // Ambiguous error, but the TopUpGH balance was UNCHANGED — nothing was
+        // charged, so the orders were safely re-queued. Retry after the normal gap.
+        lastDispatchAt   = Date.now();
+        internalContinue = true;
+        logger.info("TopUpGH dispatch hit an unconfirmed error but balance was unchanged — re-queued for retry");
       } else if (
         result.reason !== "empty_queue" &&
         result.reason !== "below_minimum" &&
         result.reason !== "disabled" &&
-        result.reason !== "not_configured"
+        result.reason !== "not_configured" &&
+        result.reason !== "busy"
       ) {
         logger.warn({ reason: result.reason, ordersCount: result.ordersCount }, "TopUpGH dispatch stopped");
       }
@@ -292,10 +307,39 @@ async function runDispatchRunner(): Promise<void> {
 }
 
 /**
- * Collect pending MTN orders and dispatch as a batch to TopUpGH.
- * forceDispatch=true bypasses the minBatch check (admin manual trigger).
+ * Public dispatch entrypoint. Wraps the dispatch body in a Postgres advisory lock so
+ * the balance-read → create-order → balance-read window is serialized GLOBALLY — not
+ * just within one process. This is what makes resolveAmbiguous()'s balance-delta
+ * attribution sound even when admin force-dispatch or a second pod is active. If
+ * another dispatcher holds the lock, returns "busy" and backs off (the pending queue
+ * is global, so the lock holder drains the same orders).
  */
 export async function dispatchPendingQueue(forceDispatch = false): Promise<DispatchResult> {
+  const lockClient = await pool.connect();
+  try {
+    const { rows } = await lockClient.query<{ locked: boolean }>(
+      "SELECT pg_try_advisory_lock($1) AS locked", [DISPATCH_LOCK_KEY],
+    );
+    if (rows[0]?.locked !== true) {
+      return { batchId: null, dispatched: false, reason: "busy", ordersCount: 0 };
+    }
+    try {
+      return await dispatchPendingQueueLocked(forceDispatch);
+    } finally {
+      try { await lockClient.query("SELECT pg_advisory_unlock($1)", [DISPATCH_LOCK_KEY]); }
+      catch { /* lock auto-released when the session ends */ }
+    }
+  } finally {
+    lockClient.release();
+  }
+}
+
+/**
+ * Collect pending MTN orders and dispatch as a batch to TopUpGH. Runs under the
+ * advisory lock acquired by dispatchPendingQueue().
+ * forceDispatch=true bypasses the minBatch check (admin manual trigger).
+ */
+async function dispatchPendingQueueLocked(forceDispatch = false): Promise<DispatchResult> {
   const { enabled, minBatch, maxBatch, apiKey, apiSecret } = await getTopupghSettings();
 
   if (!enabled)              return { batchId: null, dispatched: false, reason: "disabled",        ordersCount: 0 };
@@ -427,9 +471,13 @@ export async function dispatchPendingQueue(forceDispatch = false): Promise<Dispa
     return { batchId: null, dispatched: false, reason: linkedCount === 0 ? "race_condition" : "below_minimum", ordersCount: linkedCount };
   }
 
-  // Pre-flight balance check
+  // Pre-flight balance check. Also capture the balance so the ambiguous-outcome
+  // resolver below can detect — via a balance drop — whether an UNCONFIRMED
+  // create-order actually landed (a success deducts the merchant TopUpGH wallet).
+  let preBalance: number | null = null;
   try {
     const balanceData = await topupghGetBalance();
+    preBalance        = balanceData.balance;
     const totalCost   = [...linked, ...linkedStore].reduce((s, o) => s + parseFloat(o.price), 0);
     if (balanceData.balance < totalCost) {
       await unlinkAll();
@@ -438,7 +486,41 @@ export async function dispatchPendingQueue(forceDispatch = false): Promise<Dispa
         .where(eq(topupghBatchesTable.id, batch.id));
       return { batchId: batch.id, dispatched: false, reason: "insufficient_balance", ordersCount: linkedCount };
     }
-  } catch { /* balance check failed — proceed anyway */ }
+  } catch { /* balance check failed — preBalance stays null; resolver will park safe */ }
+
+  // Resolve an UNCONFIRMED create-order outcome (timeout / 5xx / malformed body)
+  // using the merchant's TopUpGH wallet balance as a hard financial signal. The
+  // dispatch runner is serialized (one create-order at a time), so any balance drop
+  // in this window can only be THIS batch:
+  //   • balance dropped   → order LANDED        → park, never resend (it will deliver)
+  //   • balance unchanged → nothing was charged → unlink + re-queue (self-heals)
+  //   • balance unknown   → cannot prove either → park (safe default, never resend)
+  const resolveAmbiguous = async (context: string): Promise<string> => {
+    let postBalance: number | null = null;
+    // Let the wallet settle so a just-landed deduction is reflected before we read it.
+    await sleep(BALANCE_SETTLE_MS);
+    try { postBalance = (await topupghGetBalance()).balance; } catch { /* undeterminable */ }
+
+    if (preBalance !== null && postBalance !== null) {
+      const drop = preBalance - postBalance;
+      if (drop > 0.01) {
+        logger.warn({ batchId: batch.id, preBalance, postBalance, delta: drop, outcome: "ambiguous_landed" },
+          `TopUpGH ambiguous resolved: balance dropped → order LANDED, parked for manual completion — ${context}`);
+        await parkAmbiguous(`${context} — TopUpGH balance dropped GH₵${drop.toFixed(2)}, order LANDED; will deliver, complete manually`);
+        return "ambiguous_landed";
+      }
+      logger.warn({ batchId: batch.id, preBalance, postBalance, delta: drop, outcome: "retry_safe" },
+        `TopUpGH ambiguous resolved: balance unchanged → nothing charged, re-queuing for retry — ${context}`);
+      await unlinkAll();
+      await db.delete(topupghBatchesTable).where(eq(topupghBatchesTable.id, batch.id));
+      return "retry_safe";
+    }
+
+    logger.warn({ batchId: batch.id, preBalance, postBalance, outcome: "ambiguous" },
+      `TopUpGH ambiguous resolved: balance undeterminable → parked for manual review — ${context}`);
+    await parkAmbiguous(`${context} — TopUpGH balance undeterminable, parked for manual review`);
+    return "ambiguous";
+  };
 
   // Build payload (platform + store orders share one MTN batch)
   const orderItems: TopupghOrderItem[] = [...linked, ...linkedStore].map(o => ({
@@ -476,8 +558,8 @@ export async function dispatchPendingQueue(forceDispatch = false): Promise<Dispa
       // charged the order but returned an error. Treat exactly like a timeout —
       // never unlink; park for manual review.
       if (httpStatus !== undefined && (httpStatus >= 500 || httpStatus === 408)) {
-        await parkAmbiguous(`Create-order server error (HTTP ${httpStatus}) — UNCONFIRMED, manual review: ${failMsg}`);
-        return { batchId: batch.id, dispatched: false, reason: "ambiguous", ordersCount: linkedCount };
+        const reason = await resolveAmbiguous(`Create-order server error (HTTP ${httpStatus}) — UNCONFIRMED: ${failMsg}`);
+        return { batchId: batch.id, dispatched: false, reason, ordersCount: linkedCount };
       }
 
       // Hard 4xx (validation/auth/not-found), or an EXPLICIT success === false →
@@ -496,8 +578,8 @@ export async function dispatchPendingQueue(forceDispatch = false): Promise<Dispa
       // an empty or malformed body that does NOT prove rejection. /orders/create
       // may have accepted + charged the order but returned an unusable response.
       // AMBIGUOUS → park for manual review; never resend.
-      await parkAmbiguous(`Create-order returned no/invalid success flag (HTTP ${httpStatus ?? "2xx"}) — UNCONFIRMED, manual review: ${failMsg}`);
-      return { batchId: batch.id, dispatched: false, reason: "ambiguous", ordersCount: linkedCount };
+      const reason = await resolveAmbiguous(`Create-order returned no/invalid success flag (HTTP ${httpStatus ?? "2xx"}) — UNCONFIRMED: ${failMsg}`);
+      return { batchId: batch.id, dispatched: false, reason, ordersCount: linkedCount };
     }
 
     // Success — update batch
@@ -527,8 +609,8 @@ export async function dispatchPendingQueue(forceDispatch = false): Promise<Dispa
     // AMBIGUOUS FAILURE (network error / create-order timeout via AbortSignal):
     // the request may have reached TopUpGH and actually created + charged the
     // order — we never got the response. Park for manual review; never resend.
-    await parkAmbiguous(`Create-order timed out / network error — UNCONFIRMED, manual review (no order_id): ${msg}`);
-    return { batchId: batch.id, dispatched: false, reason: "exception", ordersCount: linkedCount };
+    const reason = await resolveAmbiguous(`Create-order timed out / network error — UNCONFIRMED (no order_id): ${msg}`);
+    return { batchId: batch.id, dispatched: false, reason, ordersCount: linkedCount };
   }
 }
 
