@@ -862,6 +862,68 @@ export function extractDeliveryInfo(deliveryData: unknown): Map<string, OrderDel
   return map;
 }
 
+// ─── Per-order live delivery check (powers the "Check delivery status" buttons) ─
+
+/** Throttle map: batchId → last live-check epoch ms. Guards the shared TopUpGH budget. */
+const _orderCheckCooldown = new Map<number, number>();
+
+export interface OrderDeliveryCheckResult {
+  /** "not_dispatched": no batch yet. "cooldown": served cache, no live call. "checked": live call ran. */
+  state: "not_dispatched" | "cooldown" | "checked";
+  summary: BatchDeliveryCheckResult | null;
+  delivery: OrderDeliveryInfo | null;
+  orderStatus: string;
+}
+
+/**
+ * Live "check delivery status" for a SINGLE order. Resolves the order's batch, runs the
+ * SAME authenticated re-fetch + settle path as the poller (fetchAndSettleBatchDelivery —
+ * never trusts client input), then returns the per-recipient delivery info for this order's
+ * phone plus its freshest status.
+ *
+ * Safe to expose to end users: settlement is idempotent + status-guarded (can never
+ * double-credit or prematurely complete), and `cooldownMs` makes repeat clicks within the
+ * window serve the cached delivery_data WITHOUT spending the shared TopUpGH 1-req/min budget
+ * (which the background poller also depends on). Pass cooldownMs:0 for trusted admins.
+ */
+export async function checkOrderDeliveryLive(
+  order: { id: number; phoneNumber: string; status: string; topupghBatchId: number | null },
+  opts: { cooldownMs?: number } = {},
+): Promise<OrderDeliveryCheckResult> {
+  const cooldownMs = opts.cooldownMs ?? 0;
+
+  if (!order.topupghBatchId) {
+    return { state: "not_dispatched", summary: null, delivery: null, orderStatus: order.status };
+  }
+
+  const [batch] = await db.select().from(topupghBatchesTable)
+    .where(eq(topupghBatchesTable.id, order.topupghBatchId));
+  if (!batch || !batch.topupghOrderId) {
+    return { state: "not_dispatched", summary: null, delivery: null, orderStatus: order.status };
+  }
+
+  let summary: BatchDeliveryCheckResult | null = null;
+  let state: OrderDeliveryCheckResult["state"] = "checked";
+
+  const now = Date.now();
+  const last = _orderCheckCooldown.get(batch.id) ?? 0;
+  if (cooldownMs > 0 && now - last < cooldownMs) {
+    state = "cooldown"; // serve cached delivery_data; do not spend the shared TopUpGH budget
+  } else {
+    _orderCheckCooldown.set(batch.id, now);
+    summary = await fetchAndSettleBatchDelivery(batch); // idempotent, status-guarded, in-flight guarded
+  }
+
+  // Re-read the freshest persisted delivery payload + order status after any settle.
+  const [freshBatch] = await db.select({ deliveryData: topupghBatchesTable.deliveryData })
+    .from(topupghBatchesTable).where(eq(topupghBatchesTable.id, batch.id));
+  const [freshOrder] = await db.select({ status: ordersTable.status })
+    .from(ordersTable).where(eq(ordersTable.id, order.id));
+
+  const delivery = extractDeliveryInfo(freshBatch?.deliveryData).get(order.phoneNumber) ?? null;
+  return { state, summary, delivery, orderStatus: freshOrder?.status ?? order.status };
+}
+
 /**
  * Verify the X-Webhook-Signature header from TopUpGH.
  * The exact signing scheme is unconfirmed, so we accept several HMAC-SHA256 encodings

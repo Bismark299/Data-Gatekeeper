@@ -7,7 +7,7 @@ import {
   db, usersTable, bundlesTable, ordersTable, walletsTable, depositsTable,
   storesTable, storeOrdersTable, settingsTable, walletLedgerTable, topupghBatchesTable,
 } from "@workspace/db";
-import { extractDeliveryInfo } from "../lib/topupgh";
+import { extractDeliveryInfo, checkOrderDeliveryLive } from "../lib/topupgh";
 import { generateApiKey } from "../lib/apiKeyAuth";
 import {
   getMcbisSettings, mcbisGetBalanceCached, dispatchToMcbis,
@@ -268,6 +268,35 @@ router.get("/admin/orders", requireAdmin, async (req, res): Promise<void> => {
     ...formatOrder(r.order, r.network, r.userName),
     delivery: extractDeliveryInfo(r.deliveryData).get(r.order.phoneNumber) ?? null,
   })));
+});
+
+// Live per-order delivery check (admin manual trigger). Resolves the order's TopUpGH batch
+// and runs the SAME authenticated re-fetch + settle path as the poller. No cooldown — admins
+// are trusted and few. Returns this order's delivery info + freshest status.
+router.post("/admin/orders/:id/check-delivery", requireAdmin, async (req, res): Promise<void> => {
+  const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const orderId = parseInt(String(raw));
+  if (isNaN(orderId)) { res.status(400).json({ error: "Invalid order ID" }); return; }
+
+  const [order] = await db
+    .select({
+      id: ordersTable.id,
+      phoneNumber: ordersTable.phoneNumber,
+      status: ordersTable.status,
+      topupghBatchId: ordersTable.topupghBatchId,
+    })
+    .from(ordersTable)
+    .where(eq(ordersTable.id, orderId));
+  if (!order) { res.status(404).json({ error: "Order not found" }); return; }
+
+  try {
+    const result = await checkOrderDeliveryLive(order);
+    res.json(result);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Failed to check delivery status";
+    req.log?.warn({ err: e, orderId }, "admin per-order delivery check failed");
+    res.status(502).json({ error: msg });
+  }
 });
 
 router.patch("/admin/orders/:id/status", requireAdmin, async (req, res): Promise<void> => {
