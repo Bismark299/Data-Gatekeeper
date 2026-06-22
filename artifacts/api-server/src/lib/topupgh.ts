@@ -69,7 +69,14 @@ async function topupghRequest<T>(method: string, endpoint: string, body?: object
   const txt = await res.text();
   if (!res.ok) {
     logger.warn({ method, endpoint, status: res.status, body: txt.slice(0, 300) }, "TopUpGH API non-OK response");
-    try { return JSON.parse(txt) as T; } catch { return {} as T; }
+    // Surface the HTTP status so callers can reliably detect a rate limit (429)
+    // even when the body is empty or non-JSON (no "rate limit" text to match on).
+    let parsed: unknown;
+    try { parsed = JSON.parse(txt); } catch { parsed = {}; }
+    if (parsed && typeof parsed === "object") {
+      (parsed as Record<string, unknown>).__httpStatus = res.status;
+    }
+    return parsed as T;
   }
   // A 2xx with an EMPTY or non-JSON body must NOT throw. The delivery-status endpoint can
   // return no payload when there is nothing to report; res.json() would throw "Unexpected
@@ -207,6 +214,83 @@ export interface DispatchResult {
   topupghOrderId?: number;
 }
 
+// ─── Instant dispatch runner ────────────────────────────────────────────────
+// TopUpGH rate-limits rapid create-order calls, so we must never fire two within
+// the provider's window. Every dispatch trigger — an MTN order placement
+// (instant) and the backup poller — funnels through this single in-process
+// runner:
+//   • at most one dispatch in flight at a time (coalesces bursts of triggers);
+//   • a self-tuning minimum gap between consecutive create-order calls — the
+//     first is instant, the gap widens on a rate-limit and relaxes after clean
+//     successes;
+//   • a rate-limited batch is retried after the gap, never marked failed.
+// Single process (WEB_CONCURRENCY=1). dispatchPendingQueue()'s order-level
+// optimistic linking prevents any double-charge if a second pod briefly overlaps
+// during a Render rolling deploy.
+const DISPATCH_GAP_MIN_MS = 8_000;
+const DISPATCH_GAP_MAX_MS = 90_000;
+let dispatchGapMs   = DISPATCH_GAP_MIN_MS;
+let lastDispatchAt  = 0;
+let dispatchRunning = false;
+let rerunRequested  = false;
+
+/**
+ * Fire-and-forget nudge to dispatch pending TopUpGH orders as soon as possible.
+ * Safe to call on every MTN order placement — it self-gates on topupgh_enabled
+ * and min_batch, and coalesces concurrent calls into a single serialized runner.
+ */
+export function triggerTopupghDispatch(): void {
+  if (dispatchRunning) { rerunRequested = true; return; }
+  void runDispatchRunner();
+}
+
+async function runDispatchRunner(): Promise<void> {
+  dispatchRunning = true;
+  try {
+    let keepGoing = true;
+    while (keepGoing) {
+      rerunRequested = false; // capture triggers that arrive from here on
+
+      // Respect the minimum gap since the last create-order call (first is instant).
+      const wait = lastDispatchAt === 0 ? 0 : lastDispatchAt + dispatchGapMs - Date.now();
+      if (wait > 0) await sleep(wait);
+
+      const result = await dispatchPendingQueue();
+
+      let internalContinue = false;
+      if (result.dispatched) {
+        lastDispatchAt = Date.now();
+        dispatchGapMs  = Math.max(DISPATCH_GAP_MIN_MS, Math.round(dispatchGapMs * 0.8));
+        logger.info(
+          { batchId: result.batchId, ordersCount: result.ordersCount, topupghOrderId: result.topupghOrderId },
+          "TopUpGH batch dispatched",
+        );
+        internalContinue = true; // more orders may remain — drain, spaced by the gap
+      } else if (result.reason === "rate_limited") {
+        lastDispatchAt = Date.now();
+        dispatchGapMs  = Math.min(DISPATCH_GAP_MAX_MS, Math.round(dispatchGapMs * 2));
+        logger.warn({ gapMs: dispatchGapMs }, "TopUpGH dispatch rate-limited — backing off, will retry");
+        internalContinue = true; // retry the requeued orders after the wider gap
+      } else if (
+        result.reason !== "empty_queue" &&
+        result.reason !== "below_minimum" &&
+        result.reason !== "disabled" &&
+        result.reason !== "not_configured"
+      ) {
+        logger.warn({ reason: result.reason, ordersCount: result.ordersCount }, "TopUpGH dispatch stopped");
+      }
+
+      keepGoing = internalContinue || rerunRequested;
+    }
+  } catch (e) {
+    logger.error({ err: e }, "TopUpGH dispatch runner error");
+  } finally {
+    dispatchRunning = false;
+    // A trigger that landed in the tiny exit window must not be dropped.
+    if (rerunRequested) setTimeout(() => triggerTopupghDispatch(), 100);
+  }
+}
+
 /**
  * Collect pending MTN orders and dispatch as a batch to TopUpGH.
  * forceDispatch=true bypasses the minBatch check (admin manual trigger).
@@ -217,7 +301,11 @@ export async function dispatchPendingQueue(forceDispatch = false): Promise<Dispa
   if (!enabled)              return { batchId: null, dispatched: false, reason: "disabled",        ordersCount: 0 };
   if (!apiKey || !apiSecret) return { batchId: null, dispatched: false, reason: "not_configured",  ordersCount: 0 };
 
-  const GRACE_MS       = 30_000;
+  // No grace delay — dispatch is instant. McBIS is mutually exclusive with
+  // TopUpGH (no McBIS-claim race to wait out) and orders are already confirmed
+  // paid by status (platform "pending" = wallet charged, store "paid"), so an
+  // eligible order can go out the moment the batch quantity is reached.
+  const GRACE_MS       = 0;
   const graceThreshold = new Date(Date.now() - GRACE_MS);
 
   const pendingOrders = await db
@@ -279,10 +367,24 @@ export async function dispatchPendingQueue(forceDispatch = false): Promise<Dispa
     itemCount: valid.length + validStore.length,
   }).returning();
 
-  // Release both tables from this batch (used on every abort path)
+  // Release both tables from this batch. ONLY for abort paths proven to have
+  // created nothing at TopUpGH (rate limit, hard 4xx rejection, pre-send abort).
   const unlinkAll = async () => {
     await db.update(ordersTable).set({ topupghBatchId: null }).where(eq(ordersTable.topupghBatchId, batch.id));
     await db.update(storeOrdersTable).set({ topupghBatchId: null }).where(eq(storeOrdersTable.topupghBatchId, batch.id));
+  };
+
+  // Park orders whose delivery outcome is UNCONFIRMED (create-order timed out,
+  // network error, or a 5xx/408 — TopUpGH may have created + charged the order but
+  // we never got a clean response). NEVER unlink these: returning them to the
+  // pending pool would re-dispatch and double-charge. Advancing them to
+  // "processing" excludes them from re-dispatch (dispatchPendingQueue picks only
+  // pending/paid) AND from the failed-batch safety-net in recoverStuckTopupghBatches
+  // (which frees only pending/paid). The batch is marked failed for manual review.
+  const parkAmbiguous = async (errorMessage: string) => {
+    await db.update(ordersTable).set({ status: "processing" }).where(eq(ordersTable.topupghBatchId, batch.id));
+    await db.update(storeOrdersTable).set({ status: "processing" }).where(eq(storeOrdersTable.topupghBatchId, batch.id));
+    await db.update(topupghBatchesTable).set({ status: "failed", errorMessage }).where(eq(topupghBatchesTable.id, batch.id));
   };
 
   // Atomically link orders to this batch (both tables)
@@ -346,24 +448,56 @@ export async function dispatchPendingQueue(forceDispatch = false): Promise<Dispa
   }));
 
   try {
+    // Durable "send started" marker. If the process crashes after TopUpGH accepts
+    // this create-order but before we record the result below, the batch is left
+    // in 'dispatching' (not 'pending'), so recoverStuckTopupghBatches() parks it
+    // for manual review instead of requeuing it. Closes the crash-between-send-
+    // and-write double-delivery window.
+    await db.update(topupghBatchesTable)
+      .set({ status: "dispatching" })
+      .where(eq(topupghBatchesTable.id, batch.id));
+
     const result = await topupghCreateOrder(orderItems);
 
     if (!result.success) {
       const failMsg = result.message ?? "TopUpGH rejected the order";
-      await unlinkAll();
-      // A rate-limit rejection is transient: TopUpGH throttled this create-order
-      // call and created nothing on their side, so it is safe to retry. Drop the
-      // empty batch row (instead of leaving a confusing "failed" record) and let
-      // the same orders re-queue and dispatch on the next cycle, once the
-      // rate-limit window resets.
-      if (/rate.?limit/i.test(failMsg)) {
+      const httpStatus = (result as { __httpStatus?: number }).__httpStatus;
+
+      // 429 → transient rate limit. TopUpGH throttled this call and created
+      // nothing, so it's safe to retry: drop the empty batch row and let the same
+      // orders re-queue on the next cycle. Detect by HTTP 429 OR the message text.
+      if (httpStatus === 429 || /rate.?limit/i.test(failMsg)) {
+        await unlinkAll();
         await db.delete(topupghBatchesTable).where(eq(topupghBatchesTable.id, batch.id));
         return { batchId: batch.id, dispatched: false, reason: "rate_limited", ordersCount: linkedCount };
       }
-      await db.update(topupghBatchesTable)
-        .set({ status: "failed", errorMessage: failMsg })
-        .where(eq(topupghBatchesTable.id, batch.id));
-      return { batchId: batch.id, dispatched: false, reason: "api_error", ordersCount: linkedCount };
+
+      // 5xx / 408 → AMBIGUOUS server-side error: TopUpGH may have accepted +
+      // charged the order but returned an error. Treat exactly like a timeout —
+      // never unlink; park for manual review.
+      if (httpStatus !== undefined && (httpStatus >= 500 || httpStatus === 408)) {
+        await parkAmbiguous(`Create-order server error (HTTP ${httpStatus}) — UNCONFIRMED, manual review: ${failMsg}`);
+        return { batchId: batch.id, dispatched: false, reason: "ambiguous", ordersCount: linkedCount };
+      }
+
+      // Hard 4xx (validation/auth/not-found), or an EXPLICIT success === false →
+      // the provider rejected the request and created nothing. Safe to unlink and
+      // mark the batch failed.
+      const hard4xx = httpStatus !== undefined && httpStatus >= 400 && httpStatus < 500;
+      if (hard4xx || result.success === false) {
+        await unlinkAll();
+        await db.update(topupghBatchesTable)
+          .set({ status: "failed", errorMessage: failMsg })
+          .where(eq(topupghBatchesTable.id, batch.id));
+        return { batchId: batch.id, dispatched: false, reason: "api_error", ordersCount: linkedCount };
+      }
+
+      // Otherwise the success flag is MISSING on an otherwise-OK (2xx) response —
+      // an empty or malformed body that does NOT prove rejection. /orders/create
+      // may have accepted + charged the order but returned an unusable response.
+      // AMBIGUOUS → park for manual review; never resend.
+      await parkAmbiguous(`Create-order returned no/invalid success flag (HTTP ${httpStatus ?? "2xx"}) — UNCONFIRMED, manual review: ${failMsg}`);
+      return { batchId: batch.id, dispatched: false, reason: "ambiguous", ordersCount: linkedCount };
     }
 
     // Success — update batch
@@ -390,10 +524,10 @@ export async function dispatchPendingQueue(forceDispatch = false): Promise<Dispa
 
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Unknown error";
-    await unlinkAll();
-    await db.update(topupghBatchesTable)
-      .set({ status: "failed", errorMessage: `Dispatch exception: ${msg}` })
-      .where(eq(topupghBatchesTable.id, batch.id));
+    // AMBIGUOUS FAILURE (network error / create-order timeout via AbortSignal):
+    // the request may have reached TopUpGH and actually created + charged the
+    // order — we never got the response. Park for manual review; never resend.
+    await parkAmbiguous(`Create-order timed out / network error — UNCONFIRMED, manual review (no order_id): ${msg}`);
     return { batchId: batch.id, dispatched: false, reason: "exception", ordersCount: linkedCount };
   }
 }
@@ -926,26 +1060,12 @@ export function startTopupghPoller(): void {
 
       if (!enabled || !apiKey || !apiSecret) return;
 
-      // Dispatch at most ONE batch per cycle. TopUpGH rate-limits rapid
-      // consecutive create-order calls, so draining multiple sub-batches
-      // back-to-back made every batch after the first fail with "Rate limit
-      // exceeded". The 2-minute cycle cadence keeps us safely under the limit;
-      // raise max_batch to move more orders through each cycle.
-      const result = await dispatchPendingQueue();
-      if (result.dispatched) {
-        logger.info(
-          { batchId: result.batchId, ordersCount: result.ordersCount, topupghOrderId: result.topupghOrderId },
-          "TopUpGH batch dispatched",
-        );
-      } else if (
-        result.reason !== "empty_queue" &&
-        result.reason !== "below_minimum" &&
-        result.reason !== "disabled" &&
-        result.reason !== "not_configured" &&
-        result.reason !== "rate_limited"
-      ) {
-        logger.warn({ reason: result.reason, ordersCount: result.ordersCount }, "TopUpGH dispatch stopped");
-      }
+      // Backup nudge only. Normal dispatch is instant — fired the moment an MTN
+      // order is placed (triggerTopupghDispatch wired into dispatchOrder). This
+      // catches anything that accumulated below min_batch or was missed, and
+      // shares the same serialized, rate-limit-aware runner so it can never fire
+      // a create-order call back-to-back with an instant dispatch.
+      triggerTopupghDispatch();
 
     } catch (e) {
       logger.error({ err: e }, "TopUpGH poller error");

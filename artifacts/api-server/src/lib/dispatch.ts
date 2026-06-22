@@ -11,6 +11,7 @@
 
 import { dispatchToMcbis } from "./mcbis";
 import { dispatchToCkgodsway } from "./ckgodsway";
+import { triggerTopupghDispatch } from "./topupgh";
 
 export type Provider = "mcbis" | "ckgodsway";
 
@@ -40,6 +41,14 @@ export async function dispatchOrder(opts: {
 
   if (provider === "mcbis") {
     const out = await dispatchToMcbis(opts);
+    if (!out.dispatched) {
+      // McBIS declined — either it's off because TopUpGH is the active MTN
+      // provider, or it couldn't take this order. Nudge the TopUpGH batch
+      // dispatcher so the order goes out instantly instead of waiting for the
+      // 2-minute backup poller. Self-gates on topupgh_enabled + min_batch, so
+      // it's a harmless no-op when McBIS is the active provider.
+      triggerTopupghDispatch();
+    }
     return out.dispatched
       ? { dispatched: true, provider, reference: out.reference }
       : { dispatched: false, provider, reason: out.reason };

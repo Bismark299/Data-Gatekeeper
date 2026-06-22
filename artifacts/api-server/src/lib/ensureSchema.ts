@@ -92,10 +92,39 @@ export async function recoverStuckTopupghBatches(): Promise<void> {
       ((freedOrders as { rowCount?: number }).rowCount ?? 0) +
       ((freedStore as { rowCount?: number }).rowCount ?? 0);
 
-    if (deletedCount > 0 || freedCount > 0) {
+    // (3) Crash-during-send: a batch left in 'dispatching' (the durable marker set
+    // just before the create-order call) that never resolved means the process
+    // died after the request was issued but before the result was recorded. The
+    // order MAY have been created + charged at TopUpGH, so it is AMBIGUOUS — never
+    // requeue it. Park the orders as 'processing' (excluded from re-dispatch and
+    // from the failed-batch safety-net above) and fail the batch for manual review.
+    // The 5-minute age guard avoids touching a dispatch that is legitimately
+    // in-flight (a normal create-order resolves in seconds).
+    await db.execute(sql`
+      UPDATE orders SET status = 'processing'
+      WHERE status = 'pending' AND topupgh_batch_id IN (
+        SELECT id FROM topupgh_batches
+        WHERE status = 'dispatching' AND created_at < now() - interval '5 minutes'
+      )
+    `);
+    await db.execute(sql`
+      UPDATE store_orders SET status = 'processing'
+      WHERE status = 'paid' AND topupgh_batch_id IN (
+        SELECT id FROM topupgh_batches
+        WHERE status = 'dispatching' AND created_at < now() - interval '5 minutes'
+      )
+    `);
+    const parked = await db.execute(sql`
+      UPDATE topupgh_batches
+      SET status = 'failed', error_message = 'Process crashed mid-dispatch — UNCONFIRMED, manual review'
+      WHERE status = 'dispatching' AND created_at < now() - interval '5 minutes'
+    `);
+    const parkedCount = (parked as { rowCount?: number }).rowCount ?? 0;
+
+    if (deletedCount > 0 || freedCount > 0 || parkedCount > 0) {
       logger.info(
-        { deletedBatches: deletedCount, freedFromFailed: freedCount },
-        "Recovered stuck TopUpGH orders (requeued)",
+        { deletedBatches: deletedCount, freedFromFailed: freedCount, parkedAmbiguous: parkedCount },
+        "Recovered stuck TopUpGH orders",
       );
     }
   } catch (err) {
