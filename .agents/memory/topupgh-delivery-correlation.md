@@ -25,6 +25,25 @@ date/time/status on one of the two same-phone orders.
 identifier at dispatch/webhook time and resolve delivery by that key. Until then,
 do NOT assume phone→delivery is 1:1; preserve the ambiguous marking.
 
+# TopUpGH per-item delivery_status has many wordings for one outcome
+
+TopUpGH reports the same per-recipient outcome with different wording/casing across
+its dashboard, webhook, and delivery-status endpoint. A successful delivery can
+arrive as `Delivered`, `Sent`, `Completed`, `Success`, etc. Matching only the
+literal `"delivered"` left settled orders stuck at `processing` (customer reported
+"delivered/sent on TopUpGH site but processing in our system").
+
+**How to apply:** never compare the raw status to a single literal. Use the shared
+`classifyDeliveryStatus()` helper (case-insensitive, trimmed; returns
+delivered/failed/pending/unknown) in BOTH settlement loops. `unknown` (non-empty,
+unrecognized) is logged as a warning and the order is left processing — watch those
+logs to discover new vocabulary and extend the term sets.
+
+**Why:** `sent` is mapped to delivered because on this account's TopUpGH dashboard
+"sent" reflects actual delivery. If an account instead uses `sent` to mean merely
+*submitted/accepted* (not yet delivered), move it to the PENDING set — otherwise
+orders get marked completed (and store profit credited) before real delivery.
+
 # TopUpGH order-level status ≠ actual delivery
 
 TopUpGH's **order-level** status (`GET /orders/{id}` → `order.status === "completed"`)

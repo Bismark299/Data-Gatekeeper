@@ -516,6 +516,40 @@ export function verifyTopupghWebhookSignature(signature: string, rawBody: Buffer
   return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
 }
 
+export type DeliveryOutcome = "delivered" | "failed" | "pending" | "unknown";
+
+/**
+ * Classify a raw TopUpGH per-recipient delivery_status string into a settlement
+ * outcome. TopUpGH reports the SAME outcome with different wordings/casings across
+ * its dashboard, webhook, and delivery-status endpoint — e.g. a successful delivery
+ * may arrive as "Delivered", "Sent", "Completed", or "Success". Matching only the
+ * literal "delivered" left those orders stuck at "processing". We match a known set
+ * of terms instead; anything non-terminal stays "pending" (order kept processing),
+ * and any unrecognized non-empty value is "unknown" so the caller can log it.
+ */
+export function classifyDeliveryStatus(raw: string): DeliveryOutcome {
+  const s = (raw ?? "").trim().toLowerCase();
+  if (!s) return "pending";
+
+  const DELIVERED = new Set([
+    "delivered", "sent", "completed", "complete", "success",
+    "successful", "delivery successful", "delivered successfully",
+  ]);
+  const FAILED = new Set([
+    "failed", "failure", "not delivered", "undelivered", "unsuccessful",
+    "rejected", "reversed", "refunded", "cancelled", "canceled", "delivery failed",
+  ]);
+  const PENDING = new Set([
+    "pending", "processing", "in progress", "in-progress",
+    "queued", "submitted", "accepted", "received",
+  ]);
+
+  if (DELIVERED.has(s)) return "delivered";
+  if (FAILED.has(s))    return "failed";
+  if (PENDING.has(s))   return "pending";
+  return "unknown";
+}
+
 /**
  * Apply per-recipient delivery outcomes to a batch's orders, then finalize the batch.
  * Handles both platform orders and agent store orders linked to the same batch:
@@ -536,10 +570,16 @@ async function settleBatchDeliveries(
   items: Array<{ phone: string; status: string }>,
 ): Promise<void> {
   for (const item of items) {
-    const status    = (item.status ?? "").toLowerCase();
-    const delivered = status === "delivered";
-    const failed    = status === "failed" || status === "not delivered" || status === "unsuccessful";
+    const outcome   = classifyDeliveryStatus(item.status);
+    const delivered = outcome === "delivered";
+    const failed    = outcome === "failed";
 
+    if (outcome === "unknown") {
+      logger.warn(
+        { batchId: batch.id, phone: item.phone, status: item.status },
+        "TopUpGH: unrecognized delivery status — order left processing",
+      );
+    }
     if (!delivered && !failed) continue;
 
     const [orderRow] = await db.select()
@@ -568,9 +608,9 @@ async function settleBatchDeliveries(
   // status guard keeps it idempotent (never double-credits). Failed → marked failed,
   // no refund (admin handles), mirroring platform orders.
   for (const item of items) {
-    const status    = (item.status ?? "").toLowerCase();
-    const delivered = status === "delivered";
-    const failed    = status === "failed" || status === "not delivered" || status === "unsuccessful";
+    const outcome   = classifyDeliveryStatus(item.status);
+    const delivered = outcome === "delivered";
+    const failed    = outcome === "failed";
 
     if (!delivered && !failed) continue;
 
