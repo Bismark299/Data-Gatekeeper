@@ -790,6 +790,117 @@ async function settleBatchFromLiveStatus(
   return result;
 }
 
+// ─── Admin order-LEVEL reconcile (fallback when per-item delivery-status is empty) ─
+
+/** Result of an order-level reconcile for one batch. */
+export interface BatchOrderLevelReconcileResult {
+  batchId:        number;
+  topupghOrderId: number | null;
+  /** TopUpGH order-LEVEL status string (empty when not called / call failed). */
+  orderLevelStatus: string;
+  /** HTTP status of the order-level call (429 = rate-limited); null when forced (no call). */
+  httpStatus:     number | null;
+  /** TopUpGH confirmed the order delivered/completed, OR force was used. */
+  confirmed:      boolean;
+  /** Orders settled by this reconcile (platform + store rows passed to the canonical path). */
+  completed:      number;
+  /** Final batch status after settling. */
+  batchStatus:    string;
+  note:           string;
+}
+
+/**
+ * Admin-gated fallback for batches that TopUpGH's PER-ITEM delivery-status never reports,
+ * even though the TopUpGH dashboard shows the order delivered. The poller settles ONLY from
+ * per-recipient "Sent/Delivered" items; when that endpoint returns no items, those orders
+ * stay "processing" forever.
+ *
+ * This confirms delivery via TopUpGH's ORDER-LEVEL status (GET /orders/{id}, distinct from
+ * the per-item delivery-status endpoint), then completes every still-unsettled order in the
+ * batch through the canonical settleBatchDeliveries path — so agent store profit is credited
+ * exactly once and the batch auto-closes. settleBatchDeliveries is status-guarded + row-locked,
+ * so this is idempotent: already-terminal orders are never re-completed or double-credited.
+ *
+ * `force` skips the TopUpGH call entirely and settles on the admin's own attestation (used
+ * when even order-level status doesn't report, but the admin has verified delivery manually).
+ * Order-level status is NOT trusted by the automatic poller — it can flip to "completed" on
+ * acceptance before per-recipient delivery — which is why this lives behind an explicit admin
+ * action, never the background loop.
+ */
+export async function reconcileBatchOrderLevel(
+  batch: typeof topupghBatchesTable.$inferSelect,
+  opts: { force?: boolean } = {},
+): Promise<BatchOrderLevelReconcileResult> {
+  const force = opts.force ?? false;
+  const out: BatchOrderLevelReconcileResult = {
+    batchId:          batch.id,
+    topupghOrderId:   batch.topupghOrderId,
+    orderLevelStatus: "",
+    httpStatus:       null,
+    confirmed:        false,
+    completed:        0,
+    batchStatus:      batch.status,
+    note:             "",
+  };
+
+  if (!batch.topupghOrderId) {
+    out.note = "Not dispatched to TopUpGH (no order id) — skipped.";
+    return out;
+  }
+
+  let confirmed = force;
+  if (!force) {
+    try {
+      const data = await topupghGetOrderStatus(batch.topupghOrderId);
+      const httpStatus = (data as { __httpStatus?: number }).__httpStatus ?? 200;
+      out.httpStatus = httpStatus;
+      out.orderLevelStatus = data?.order?.status ?? "";
+      if (httpStatus === 429) { out.note = "Rate-limited by TopUpGH — retry shortly."; return out; }
+      confirmed = classifyDeliveryStatus(out.orderLevelStatus) === "delivered";
+    } catch (e) {
+      logger.warn({ err: e, batchId: batch.id }, "reconcileBatchOrderLevel: order-status fetch failed");
+      out.note = "Order-level status fetch failed — left processing.";
+      return out;
+    }
+  }
+
+  out.confirmed = confirmed;
+  if (!confirmed) {
+    out.note = out.orderLevelStatus
+      ? `TopUpGH order-level status "${out.orderLevelStatus}" is not a delivered state — left processing.`
+      : "Not confirmed delivered — left processing.";
+    return out;
+  }
+
+  // Confirmed (or forced): settle every still-unsettled order in the batch through the
+  // canonical path. One synthesized "delivered" item per still-open order (by phone) so
+  // settleBatchDeliveries settles each next-unsettled row and credits store profit once.
+  const [pOrders, sOrders] = await Promise.all([
+    db.select({ phone: ordersTable.phoneNumber }).from(ordersTable)
+      .where(and(
+        eq(ordersTable.topupghBatchId, batch.id),
+        inArray(ordersTable.status, ["pending", "processing"]),
+      )),
+    db.select({ phone: storeOrdersTable.customerPhone }).from(storeOrdersTable)
+      .where(and(
+        eq(storeOrdersTable.topupghBatchId, batch.id),
+        inArray(storeOrdersTable.status, ["paid", "processing"]),
+      )),
+  ]);
+
+  const items = [...pOrders, ...sOrders].map((o) => ({ phone: o.phone, status: "delivered" }));
+  await settleBatchDeliveries(batch, items);
+  out.completed = items.length;
+
+  const [fresh] = await db.select({ status: topupghBatchesTable.status })
+    .from(topupghBatchesTable).where(eq(topupghBatchesTable.id, batch.id));
+  out.batchStatus = fresh?.status ?? batch.status;
+  out.note = force
+    ? "Force-completed on admin attestation."
+    : `Completed — TopUpGH order-level status "${out.orderLevelStatus}".`;
+  return out;
+}
+
 // ─── Webhook payload types ────────────────────────────────────────────────────
 
 export interface TopupghWebhookItem {
