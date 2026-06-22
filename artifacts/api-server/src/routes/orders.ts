@@ -10,7 +10,7 @@ import {
 import { requireAuth, requireAdmin } from "../middlewares/auth";
 import { getOrCreateWallet, insertLedgerEntry } from "./wallet";
 import { dispatchOrder } from "../lib/dispatch";
-import { extractDeliveryInfo, checkOrderDeliveryLive } from "../lib/topupgh";
+import { extractDeliveryInfo } from "../lib/topupgh";
 
 const router: IRouter = Router();
 
@@ -43,35 +43,6 @@ router.get("/orders", requireAuth, async (req, res): Promise<void> => {
     ...formatOrder(r.order, r.network),
     delivery: extractDeliveryInfo(r.deliveryData).get(r.order.phoneNumber) ?? null,
   })));
-});
-
-// Live per-order delivery check for the order's OWNER. Same safe settle path as the poller;
-// ownership is enforced in the WHERE clause, and a 60s cooldown protects the shared TopUpGH
-// 1-req/min budget (so users can't starve the background poller by spamming the button).
-router.post("/orders/:id/check-delivery", requireAuth, async (req, res): Promise<void> => {
-  const userId = req.session.userId!;
-  const orderId = parseInt(String(req.params.id));
-  if (isNaN(orderId)) { res.status(400).json({ error: "Invalid order ID" }); return; }
-
-  const [order] = await db
-    .select({
-      id: ordersTable.id,
-      phoneNumber: ordersTable.phoneNumber,
-      status: ordersTable.status,
-      topupghBatchId: ordersTable.topupghBatchId,
-    })
-    .from(ordersTable)
-    .where(and(eq(ordersTable.id, orderId), eq(ordersTable.userId, userId)));
-  if (!order) { res.status(404).json({ error: "Order not found" }); return; }
-
-  try {
-    const result = await checkOrderDeliveryLive(order, { cooldownMs: 60_000 });
-    res.json(result);
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : "Failed to check delivery status";
-    req.log?.warn({ err: e, orderId }, "user per-order delivery check failed");
-    res.status(502).json({ error: msg });
-  }
 });
 
 router.post("/orders", requireAdmin, async (req, res): Promise<void> => {

@@ -1,7 +1,6 @@
 import { useState, useMemo } from "react";
-import { useListMyOrders, getListMyOrdersQueryKey } from "@workspace/api-client-react";
+import { useListMyOrders } from "@workspace/api-client-react";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
-import { OrderDeliveryCheckButton } from "@/components/OrderDeliveryCheckButton";
 import { Navbar } from "@/components/Navbar";
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
@@ -296,7 +295,6 @@ function OrdersContent() {
                     const netColor = NETWORK_COLORS[order.network ?? ""] ?? "bg-muted text-foreground";
                     const netLabel = NETWORK_LABELS[order.network ?? ""] ?? (order.network ?? "—");
                     const del = (order as { delivery?: { status?: string; date?: string; time?: string } | null }).delivery ?? null;
-                    const isTerminal = order.status === "completed" || order.status === "failed";
                     return (
                       <tr
                         key={order.id}
@@ -327,24 +325,14 @@ function OrdersContent() {
                           </span>
                         </td>
                         <td className="px-5 py-3.5">
-                          <div className="flex items-center gap-2">
-                            {del?.status ? (
-                              <span className="text-xs text-muted-foreground capitalize whitespace-nowrap">
-                                {del.status}
-                                {(del.date || del.time) ? ` · ${[del.date, del.time].filter(Boolean).join(" ")}` : ""}
-                              </span>
-                            ) : (
-                              <span className="text-xs text-muted-foreground/50">—</span>
-                            )}
-                            {!isTerminal && (
-                              <OrderDeliveryCheckButton
-                                orderId={order.id}
-                                scope="user"
-                                compact
-                                invalidateKeys={[getListMyOrdersQueryKey()]}
-                              />
-                            )}
-                          </div>
+                          {del?.status ? (
+                            <span className="text-xs text-muted-foreground capitalize whitespace-nowrap">
+                              {del.status}
+                              {(del.date || del.time) ? ` · ${[del.date, del.time].filter(Boolean).join(" ")}` : ""}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-muted-foreground/50">—</span>
+                          )}
                         </td>
                       </tr>
                     );
