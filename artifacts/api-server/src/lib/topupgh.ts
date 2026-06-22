@@ -128,7 +128,20 @@ export async function topupghGetOrderStatus(orderId: number): Promise<{
 }
 
 export async function topupghGetDeliveryStatus(orderId: number): Promise<{
-  success: boolean; order_id: number; delivery_status: Record<string, unknown>;
+  success: boolean;
+  order?: {
+    id: number;
+    delivery_info?: string;
+    date_created?: string;
+    payment_status?: string;
+    items?: Array<{
+      name?:               string;
+      beneficiary_number?: string;
+      data_size?:          string;
+      delivery_status?:    string;
+      processed_date?:     string;
+    }>;
+  };
 }> {
   return topupghRequest("GET", `/orders/${orderId}/delivery-status`);
 }
@@ -389,19 +402,26 @@ async function checkProcessingBatches(): Promise<void> {
     // status flips to "completed" on acceptance, long before bundles actually reach
     // customers, so trusting it marked orders delivered prematurely. Real delivery is
     // reported per recipient via the delivery-status endpoint, mirroring the webhook.
+    // GET /orders/{id}/delivery-status returns the SAME shape as the webhook:
+    //   { success, order: { items: [{ beneficiary_number, delivery_status, processed_date }] } }
+    // NOT a phone-keyed object. The per-item word here is "Sent" (the webhook uses
+    // "Delivered") — both map to "delivered" via classifyDeliveryStatus. processed_date
+    // is a single combined string like "22/Jun/2026, 4:24:29 AM"; split into date + time.
     const data = await topupghGetDeliveryStatus(batch.topupghOrderId);
-    if (!data.delivery_status || typeof data.delivery_status !== "object") return;
+    const rawItems = data.order?.items;
+    if (!Array.isArray(rawItems) || rawItems.length === 0) return;
 
-    const items: TopupghWebhookItem[] = Object.entries(data.delivery_status).map(([phone, info]) => {
-      const i = info as { delivery_status?: string; delivery_date?: string; delivery_time?: string };
+    const items: TopupghWebhookItem[] = rawItems.map((it) => {
+      const processed = typeof it.processed_date === "string" ? it.processed_date : "";
+      const commaIdx  = processed.indexOf(", ");
       return {
         item_id:            "",
-        beneficiary_number: phone,
+        beneficiary_number: it.beneficiary_number ?? "",
         network:            "",
         data_size:          0,
-        delivery_status:    i.delivery_status ?? "",
-        delivery_date:      i.delivery_date ?? "",
-        delivery_time:      i.delivery_time ?? "",
+        delivery_status:    it.delivery_status ?? "",
+        delivery_date:      commaIdx >= 0 ? processed.slice(0, commaIdx) : processed,
+        delivery_time:      commaIdx >= 0 ? processed.slice(commaIdx + 2) : "",
       };
     });
 
@@ -582,15 +602,20 @@ async function settleBatchDeliveries(
     }
     if (!delivered && !failed) continue;
 
+    // Filter to non-terminal rows only. A batch can hold several platform orders to
+    // the SAME phone (one delivery item each); selecting without this filter would keep
+    // re-picking the first already-settled row and strand its siblings in "processing".
+    // Each delivered/failed item settles the next unsettled order for that phone.
     const [orderRow] = await db.select()
       .from(ordersTable)
       .where(and(
         eq(ordersTable.topupghBatchId, batch.id),
         eq(ordersTable.phoneNumber, item.phone),
+        inArray(ordersTable.status, ["pending", "processing"]),
       ))
       .limit(1);
 
-    if (!orderRow || orderRow.status === "completed" || orderRow.status === "failed") continue;
+    if (!orderRow) continue;
 
     // Mark the order completed or failed. No wallet refund on failure — a failed
     // delivery is left for an admin to handle manually.

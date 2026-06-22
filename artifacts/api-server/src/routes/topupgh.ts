@@ -378,10 +378,18 @@ router.post("/admin/topupgh/search", requireAdmin, async (req, res): Promise<voi
       try {
         const data = await topupghGetDeliveryStatus(tgId);
         const byPhone: Record<string, { status: string; date: string; time: string }> = {};
-        if (data.delivery_status && typeof data.delivery_status === "object") {
-          for (const [phone, info] of Object.entries(data.delivery_status)) {
-            const i = info as { delivery_status?: string; delivery_date?: string; delivery_time?: string };
-            byPhone[phone] = { status: i.delivery_status ?? "unknown", date: i.delivery_date ?? "", time: i.delivery_time ?? "" };
+        const liveItems = data.order?.items;
+        if (Array.isArray(liveItems)) {
+          for (const it of liveItems) {
+            const phone = it.beneficiary_number;
+            if (!phone) continue;
+            const processed = typeof it.processed_date === "string" ? it.processed_date : "";
+            const commaIdx  = processed.indexOf(", ");
+            byPhone[phone] = {
+              status: it.delivery_status ?? "unknown",
+              date:   commaIdx >= 0 ? processed.slice(0, commaIdx) : processed,
+              time:   commaIdx >= 0 ? processed.slice(commaIdx + 2) : "",
+            };
           }
         }
         deliveryMap.set(tgId, byPhone);
