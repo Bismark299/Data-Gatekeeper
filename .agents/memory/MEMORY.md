@@ -3,6 +3,7 @@
 - [Orders data model quirks](orders-data-model.md) — bundleData is a text label (parse for GB), buyingCost nullable, Report = completed platform orders only
 - [Withdrawal terminal states](withdrawal-terminal-states.md) — every store_withdrawals status transition (complete/reject/force-cancel/webhook/reconciler) must be tx + FOR UPDATE + status-guarded so refund and "paid" stay mutually exclusive.
 - [TopUpGH delivery correlation](topupgh-delivery-correlation.md) — no per-order TopUpGH item id; delivery date/time matched to orders by phone only; same-phone items in one batch are marked ambiguous, not guessed.
+- [TopUpGH settlement diagnosis](topupgh-settlement-diagnosis.md) — delivery_data fingerprint shows poller vs webhook; polled-but-stuck = TopUpGH undelivered (not a code bug); null order_id batches never dispatched; dev IP not whitelisted.
 - [TopUpGH settlement channels](topupgh-settlement-channels.md) — backup poller must round-robin by updatedAt (bump every check) or one stuck order jams the whole backlog; webhook 401 is likely encoding/raw-body, not a wrong secret.
 - [TopUpGH delivery-status endpoint](topupgh-delivery-status-endpoint.md) — GET delivery-status returns webhook-shaped `order.items[]` (NOT phone-keyed); word is "Sent" vs webhook "Delivered"; 1 req/min/key.
 - [MTN dual-provider mutual exclusion](mtn-provider-mutual-exclusion.md) — McBIS claims via mcbisReference, TopUpGH via topupghBatchId; each claim UPDATE must check the other's column or both fulfill the same order. Store orders ride TopUpGH batches too.
