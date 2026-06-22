@@ -12,7 +12,6 @@ import {
   topupghTestConnection,
   dispatchPendingQueue,
   handleTopupghWebhook,
-  verifyTopupghWebhookSignature,
   diagnoseTopupghWebhookSignature,
   getTopupghSettings,
   extractDeliveryInfo,
@@ -462,38 +461,30 @@ router.post("/admin/topupgh/search", requireAdmin, async (req, res): Promise<voi
   res.status(400).json({ error: "Provide topupghOrderId (number) or phones (string[])" });
 });
 
-// ─── Webhook (public — no auth) ───────────────────────────────────────────────
-
+// ─── Webhook (public — unauthenticated TRIGGER, never trusted for settlement) ────
+//
+// TopUpGH's webhook carries no usable signature (their integration docs POST the bare
+// payload), so requiring one rejected every callback with 401 — that is the "Failed"
+// count on the TopUpGH dashboard, and a non-200 makes them stop retrying. We therefore
+// ALWAYS ack 200. Security does NOT come from trusting this request: handleTopupghWebhook
+// uses it only as a TRIGGER to re-fetch the AUTHENTICATED, HMAC-signed delivery-status for
+// the order and settle from that verified response. A forged webhook can at most cause an
+// idempotent, rate-limited re-check of our own data — it can never mark an order delivered
+// or credit an agent's profit.
 router.post("/topupgh/webhook", async (req, res): Promise<void> => {
+  // Best-effort only: if a signature happens to be present, log whether any known scheme
+  // matches so TopUpGH's scheme can be learned over time. Never used to accept/reject.
   const sig = req.headers["x-webhook-signature"];
   const raw = req.rawBody;
-  const ts = typeof req.headers["x-timestamp"] === "string" ? req.headers["x-timestamp"] : undefined;
-
-  if (!sig || typeof sig !== "string" || !raw) {
-    logger.warn({ hasSig: !!sig, hasRaw: !!raw, headerNames: Object.keys(req.headers) }, "TopUpGH webhook: missing signature or raw body");
-    res.sendStatus(401);
-    return;
+  const ts  = typeof req.headers["x-timestamp"] === "string" ? req.headers["x-timestamp"] : undefined;
+  if (typeof sig === "string" && raw) {
+    try {
+      logger.info({ diag: diagnoseTopupghWebhookSignature(sig, raw, ts) }, "TopUpGH webhook signature diagnostic");
+    } catch { /* diagnostic only */ }
   }
 
-  let valid = false;
-  try {
-    valid = verifyTopupghWebhookSignature(sig, raw, ts);
-  } catch {
-    valid = false;
-  }
+  res.sendStatus(200); // ack immediately — any non-200 shows as "Failed" on TopUpGH and halts callbacks
 
-  if (!valid) {
-    // TEMPORARY DIAGNOSTIC: reveals which HMAC scheme (if any) TopUpGH uses, so the
-    // verifier can be locked to it. Logs no secret. Remove once the scheme is confirmed.
-    logger.warn(
-      { headerNames: Object.keys(req.headers), diag: diagnoseTopupghWebhookSignature(sig, raw, ts) },
-      "TopUpGH webhook: invalid signature — request rejected",
-    );
-    res.sendStatus(401);
-    return;
-  }
-
-  res.sendStatus(200); // ack immediately before processing
   try {
     await handleTopupghWebhook(req.body as TopupghWebhookPayload);
   } catch (e) {

@@ -28,17 +28,28 @@ Returning `res.json()` without checking `res.ok` parses a 429/error into an erro
 object, so the caller silently no-op's (`data.order?.items` undefined → early return) with
 no log. Always log non-2xx from the TopUpGH API or failures look like "poller does nothing".
 
-# Webhook scheme is HMAC-SHA256 over body with the API Secret — debugging a 401
+# The webhook carries NO usable signature — ack 200 always, treat it as a trigger only
 
-TopUpGH signs webhooks with `X-Webhook-Signature` = HMAC-SHA256, verified with the API
-Secret, and this worked historically before starting to 401. Because outbound API calls
-still succeed with the same secret, a 401 is most likely an **encoding difference**
-(base64 vs hex) or a **raw-body mismatch**, NOT a wrong secret.
+The earlier assumption that TopUpGH HMAC-signs webhooks was WRONG. In practice TopUpGH
+POSTs the bare payload with no usable `X-Webhook-Signature`, so a handler that required a
+signature 401'd every callback (this is the "Failed" count on the TopUpGH dashboard). A
+non-200 response makes TopUpGH stop retrying, which is why delivery confirmations never
+arrived and orders sat in `processing` until the slow poller caught them.
 
-**How to apply:** the verifier accepts several candidate encodings (hex, `sha256=` hex,
-base64, x-timestamp variants), all derived from the secret (not weakened), and honors an
-optional `TOPUPGH_WEBHOOK_SECRET` env. A temporary `diagnoseTopupghWebhookSignature` logs
-which candidate matches a captured webhook (no secret logged). The TopUpGH dashboard has
-"Test Webhook" / "Retry All" buttons to trigger one on demand. Read the Render log: if a
-candidate matches → lock to it and drop the others; if `anyMatch:false` → it's a raw-body
-capture problem (verify `req.rawBody` is the exact untouched bytes).
+**Rule:** the webhook endpoint must ALWAYS `res.sendStatus(200)` and must be treated as an
+unauthenticated, untrusted TRIGGER — never trust its body for settlement.
+
+**Why:** any non-200 halts TopUpGH callbacks; and since the request is unauthenticated, a
+forged body could otherwise falsely complete orders / credit agent profit.
+
+**How to apply:** on `delivery_status_updated`, cheap-reject unless `order.order_id` is a
+positive number, look up the batch by `topupghOrderId`, then settle via
+`fetchAndSettleBatchDelivery(batch)` — the AUTHENTICATED HMAC-signed `GET
+/orders/{id}/delivery-status` re-fetch — NOT from the webhook payload. That path is
+idempotent (status-guarded) + per-batch in-flight guarded, so forged/replayed webhooks can
+at most cause a bounded, harmless re-check. A forged webhook can never settle or credit.
+The endpoint is public+always-200, so it has its own dedicated generous rate limiter
+(300/min/IP, `webhookLimiter`) and is exempted from the general 120/min `apiLimiter` so a
+real burst of per-item callbacks for a large batch is never dropped. `verifyTopupghWebhook-
+Signature` is now dead in the route (kept exported); `diagnoseTopupghWebhookSignature` is
+kept as a best-effort log only when a signature header happens to be present.

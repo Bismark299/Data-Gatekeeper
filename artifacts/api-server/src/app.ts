@@ -131,6 +131,10 @@ const walletLimiter = rateLimit({
 const apiLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 120,
+  // The TopUpGH webhook has its own (more generous) limiter below — exempt it here so a
+  // legitimate burst of delivery callbacks for a large batch is never dropped by the
+  // general per-IP cap.
+  skip: (req) => req.originalUrl.split("?")[0] === "/api/topupgh/webhook",
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Too many requests. Please slow down." },
@@ -155,6 +159,19 @@ const publicApiLimiter = rateLimit({
   message: { error: "Rate limit exceeded. Maximum 60 requests per minute per API key." },
 });
 
+// Dedicated limiter for the public TopUpGH delivery webhook. Generous (300/min/IP) so a
+// real burst of per-item delivery callbacks for a large batch is never dropped, while still
+// bounding abuse of this unauthenticated endpoint. apiLimiter skips this path so the general
+// 120/min cap can't throttle legitimate callbacks.
+const webhookLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many requests." },
+});
+
+app.use("/api/topupgh/webhook", webhookLimiter);
 app.use("/api/auth", authLimiter);
 app.use("/api/wallet", walletLimiter);
 app.use("/api/orders", orderLimiter);

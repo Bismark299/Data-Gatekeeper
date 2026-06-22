@@ -1086,32 +1086,35 @@ async function settleBatchDeliveries(
 }
 
 /**
- * Process a delivery_status_updated webhook from TopUpGH.
- * Marks individual platform and store orders completed or failed via
- * settleBatchDeliveries. No auto-refunds — failed deliveries are left to an admin.
+ * Handle a delivery_status_updated webhook from TopUpGH.
+ *
+ * SECURITY: the webhook endpoint is public and unauthenticated, so its BODY is never
+ * trusted for settlement. We use it purely as a TRIGGER — look up the batch by the
+ * reported order_id, then re-fetch the AUTHENTICATED (HMAC-signed) delivery-status from
+ * TopUpGH and settle from that verified response via fetchAndSettleBatchDelivery. This
+ * makes settlement near-instant when TopUpGH delivers (instead of waiting for the slow
+ * 1-req/min poll) while keeping it impossible for a forged webhook to mark an order
+ * delivered or credit an agent's profit. fetchAndSettleBatchDelivery is idempotent
+ * (status-guarded) and per-batch in-flight guarded, so repeated triggers are harmless.
  */
 export async function handleTopupghWebhook(payload: TopupghWebhookPayload): Promise<void> {
-  if (payload.event !== "delivery_status_updated") return;
+  if (payload?.event !== "delivery_status_updated") return;
 
-  const { order } = payload;
+  // Cheap reject for noise/forged payloads before touching the DB. order_id must be a
+  // positive number; anything else can't match a real batch.
+  const orderId = payload?.order?.order_id;
+  if (typeof orderId !== "number" || !Number.isFinite(orderId) || orderId <= 0) return;
 
   const [batch] = await db.select().from(topupghBatchesTable)
-    .where(eq(topupghBatchesTable.topupghOrderId, order.order_id));
+    .where(eq(topupghBatchesTable.topupghOrderId, orderId));
 
   if (!batch) {
-    logger.warn({ topupghOrderId: order.order_id }, "TopUpGH webhook: batch not found");
+    logger.warn({ topupghOrderId: orderId }, "TopUpGH webhook: no batch for order_id — ignoring");
     return;
   }
 
-  // Store latest webhook payload on batch (powers the admin delivery columns)
-  await db.update(topupghBatchesTable)
-    .set({ deliveryData: payload as unknown as Record<string, unknown>, updatedAt: new Date() })
-    .where(eq(topupghBatchesTable.id, batch.id));
-
-  await settleBatchDeliveries(
-    batch,
-    order.items.map(i => ({ phone: i.beneficiary_number, status: i.delivery_status })),
-  );
+  // Settle from the AUTHENTICATED delivery-status re-fetch, never from the webhook body.
+  await fetchAndSettleBatchDelivery(batch);
 }
 
 // ─── Background poller ────────────────────────────────────────────────────────
