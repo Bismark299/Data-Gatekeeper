@@ -349,9 +349,19 @@ export async function dispatchPendingQueue(forceDispatch = false): Promise<Dispa
     const result = await topupghCreateOrder(orderItems);
 
     if (!result.success) {
+      const failMsg = result.message ?? "TopUpGH rejected the order";
       await unlinkAll();
+      // A rate-limit rejection is transient: TopUpGH throttled this create-order
+      // call and created nothing on their side, so it is safe to retry. Drop the
+      // empty batch row (instead of leaving a confusing "failed" record) and let
+      // the same orders re-queue and dispatch on the next cycle, once the
+      // rate-limit window resets.
+      if (/rate.?limit/i.test(failMsg)) {
+        await db.delete(topupghBatchesTable).where(eq(topupghBatchesTable.id, batch.id));
+        return { batchId: batch.id, dispatched: false, reason: "rate_limited", ordersCount: linkedCount };
+      }
       await db.update(topupghBatchesTable)
-        .set({ status: "failed", errorMessage: result.message ?? "TopUpGH rejected the order" })
+        .set({ status: "failed", errorMessage: failMsg })
         .where(eq(topupghBatchesTable.id, batch.id));
       return { batchId: batch.id, dispatched: false, reason: "api_error", ordersCount: linkedCount };
     }
@@ -916,23 +926,25 @@ export function startTopupghPoller(): void {
 
       if (!enabled || !apiKey || !apiSecret) return;
 
-      // Drain the pending queue — dispatch sequential sub-batches until empty or below minBatch
-      let batchesDispatched = 0;
-      while (true) {
-        const result = await dispatchPendingQueue();
-        if (result.dispatched) {
-          batchesDispatched++;
-          logger.info(
-            { batchId: result.batchId, ordersCount: result.ordersCount, topupghOrderId: result.topupghOrderId, batchNumber: batchesDispatched },
-            "TopUpGH batch dispatched",
-          );
-          // Continue loop — there may be more pending orders to drain
-        } else {
-          if (result.reason !== "empty_queue" && result.reason !== "below_minimum" && result.reason !== "disabled" && result.reason !== "not_configured") {
-            logger.warn({ reason: result.reason, ordersCount: result.ordersCount }, "TopUpGH dispatch stopped");
-          }
-          break;
-        }
+      // Dispatch at most ONE batch per cycle. TopUpGH rate-limits rapid
+      // consecutive create-order calls, so draining multiple sub-batches
+      // back-to-back made every batch after the first fail with "Rate limit
+      // exceeded". The 2-minute cycle cadence keeps us safely under the limit;
+      // raise max_batch to move more orders through each cycle.
+      const result = await dispatchPendingQueue();
+      if (result.dispatched) {
+        logger.info(
+          { batchId: result.batchId, ordersCount: result.ordersCount, topupghOrderId: result.topupghOrderId },
+          "TopUpGH batch dispatched",
+        );
+      } else if (
+        result.reason !== "empty_queue" &&
+        result.reason !== "below_minimum" &&
+        result.reason !== "disabled" &&
+        result.reason !== "not_configured" &&
+        result.reason !== "rate_limited"
+      ) {
+        logger.warn({ reason: result.reason, ordersCount: result.ordersCount }, "TopUpGH dispatch stopped");
       }
 
     } catch (e) {
