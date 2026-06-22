@@ -850,6 +850,16 @@ export async function reconcileBatchOrderLevel(
 
   let confirmed = force;
   if (!force) {
+    // Guard the documented premature-acceptance window: TopUpGH order-level status can flip
+    // to "completed" on acceptance, before recipients actually receive data. Refuse to trust
+    // it for very recently dispatched batches so a transient "completed" can't complete an
+    // order whose delivery hasn't really happened yet. Stuck batches needing reconcile are
+    // hours old, so this never blocks the real use case.
+    const PREMATURE_MS = 10 * 60 * 1000;
+    if (batch.dispatchedAt && Date.now() - batch.dispatchedAt.getTime() < PREMATURE_MS) {
+      out.note = "Dispatched <10 min ago — order-level status may be premature; retry later or use force.";
+      return out;
+    }
     try {
       const data = await topupghGetOrderStatus(batch.topupghOrderId);
       const httpStatus = (data as { __httpStatus?: number }).__httpStatus ?? 200;
@@ -872,25 +882,39 @@ export async function reconcileBatchOrderLevel(
     return out;
   }
 
-  // Confirmed (or forced): settle every still-unsettled order in the batch through the
-  // canonical path. One synthesized "delivered" item per still-open order (by phone) so
-  // settleBatchDeliveries settles each next-unsettled row and credits store profit once.
-  const [pOrders, sOrders] = await Promise.all([
-    db.select({ phone: ordersTable.phoneNumber }).from(ordersTable)
-      .where(and(
-        eq(ordersTable.topupghBatchId, batch.id),
-        inArray(ordersTable.status, ["pending", "processing"]),
-      )),
-    db.select({ phone: storeOrdersTable.customerPhone }).from(storeOrdersTable)
-      .where(and(
-        eq(storeOrdersTable.topupghBatchId, batch.id),
-        inArray(storeOrdersTable.status, ["paid", "processing"]),
-      )),
-  ]);
+  // Serialize with the poller / manual "check delivery" via the same per-batch in-flight
+  // guard, so reconcile and a concurrent live settle can never apply to the same batch at
+  // once (settlement matches items to "next unsettled row" by phone — concurrent runs could
+  // otherwise race). Concurrent caller backs off; the admin can re-run.
+  if (_settleInFlight.has(batch.id)) {
+    out.confirmed = false;
+    out.note = "Batch settle already in progress — retry shortly.";
+    return out;
+  }
+  _settleInFlight.add(batch.id);
+  try {
+    // Confirmed (or forced): settle every still-unsettled order in the batch through the
+    // canonical path. One synthesized "delivered" item per still-open order (by phone) so
+    // settleBatchDeliveries settles each next-unsettled row and credits store profit once.
+    const [pOrders, sOrders] = await Promise.all([
+      db.select({ phone: ordersTable.phoneNumber }).from(ordersTable)
+        .where(and(
+          eq(ordersTable.topupghBatchId, batch.id),
+          inArray(ordersTable.status, ["pending", "processing"]),
+        )),
+      db.select({ phone: storeOrdersTable.customerPhone }).from(storeOrdersTable)
+        .where(and(
+          eq(storeOrdersTable.topupghBatchId, batch.id),
+          inArray(storeOrdersTable.status, ["paid", "processing"]),
+        )),
+    ]);
 
-  const items = [...pOrders, ...sOrders].map((o) => ({ phone: o.phone, status: "delivered" }));
-  await settleBatchDeliveries(batch, items);
-  out.completed = items.length;
+    const items = [...pOrders, ...sOrders].map((o) => ({ phone: o.phone, status: "delivered" }));
+    await settleBatchDeliveries(batch, items);
+    out.completed = items.length;
+  } finally {
+    _settleInFlight.delete(batch.id);
+  }
 
   const [fresh] = await db.select({ status: topupghBatchesTable.status })
     .from(topupghBatchesTable).where(eq(topupghBatchesTable.id, batch.id));

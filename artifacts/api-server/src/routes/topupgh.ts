@@ -16,6 +16,8 @@ import {
   getTopupghSettings,
   extractDeliveryInfo,
   fetchAndSettleBatchDelivery,
+  reconcileBatchOrderLevel,
+  type BatchOrderLevelReconcileResult,
   type TopupghWebhookPayload,
 } from "../lib/topupgh";
 
@@ -265,6 +267,72 @@ router.post("/admin/topupgh/batches/:id/check-delivery", requireAdmin, async (re
     logger.warn({ err: e, batchId }, `topupgh manual delivery check failed: ${msg}`);
     res.status(502).json({ error: msg });
   }
+});
+
+// ─── Bulk reconcile a stuck range via order-LEVEL status ──────────────────────
+// POST /admin/topupgh/reconcile-range
+// Body: { minOrderId: number; maxOrderId: number; force?: boolean; limit?: number }
+// For each "processing" batch whose TopUpGH order id falls in [min,max], confirms delivery
+// via TopUpGH's ORDER-LEVEL status and completes the still-open orders through the canonical
+// settle path (credits store profit, idempotent). `force` skips the TopUpGH call and settles
+// on admin attestation. Use for orders TopUpGH's per-item delivery-status never reports.
+
+router.post("/admin/topupgh/reconcile-range", requireAdmin, async (req, res): Promise<void> => {
+  const { apiKey, apiSecret } = await getTopupghSettings();
+  if (!apiKey || !apiSecret) { res.status(400).json({ error: "TopUpGH credentials not configured" }); return; }
+
+  const body = (req.body ?? {}) as { minOrderId?: number; maxOrderId?: number; force?: boolean; limit?: number };
+  const min  = Number(body.minOrderId);
+  const max  = Number(body.maxOrderId);
+  if (!Number.isFinite(min) || !Number.isFinite(max) || min <= 0 || max < min) {
+    res.status(400).json({ error: "Provide a valid minOrderId/maxOrderId range" });
+    return;
+  }
+  const force = body.force === true;
+  const limit = Math.min(50, Math.max(1, Number(body.limit) || 30));
+
+  const batches = await db.select().from(topupghBatchesTable)
+    .where(and(
+      eq(topupghBatchesTable.status, "processing"),
+      isNotNull(topupghBatchesTable.topupghOrderId),
+      gte(topupghBatchesTable.topupghOrderId, min),
+      lte(topupghBatchesTable.topupghOrderId, max),
+    ))
+    .orderBy(topupghBatchesTable.topupghOrderId)
+    .limit(limit);
+
+  const results: BatchOrderLevelReconcileResult[] = [];
+  for (let i = 0; i < batches.length; i++) {
+    try {
+      results.push(await reconcileBatchOrderLevel(batches[i], { force }));
+    } catch (e) {
+      logger.warn({ err: e, batchId: batches[i].id }, "reconcile-range: batch failed");
+      results.push({
+        batchId: batches[i].id, topupghOrderId: batches[i].topupghOrderId,
+        orderLevelStatus: "", httpStatus: null, confirmed: false, completed: 0,
+        batchStatus: batches[i].status, note: "Error during reconcile.",
+      });
+    }
+    // Gentle pacing between order-level calls to respect TopUpGH rate limits.
+    // No API calls are made when forced, so pacing is unnecessary then.
+    if (!force && i < batches.length - 1) await new Promise((r) => setTimeout(r, 1300));
+  }
+
+  const batchesCompleted = results.filter((r) => r.batchStatus !== "processing").length;
+  const ordersCompleted  = results.reduce((n, r) => n + r.completed, 0);
+  logger.info(
+    { minOrderId: min, maxOrderId: max, force, batchesScanned: batches.length, batchesCompleted, ordersCompleted },
+    "Admin ran TopUpGH reconcile-range",
+  );
+  res.json({
+    success: true,
+    range: { minOrderId: min, maxOrderId: max },
+    force,
+    batchesScanned: batches.length,
+    batchesCompleted,
+    ordersCompleted,
+    results,
+  });
 });
 
 // ─── Force dispatch ───────────────────────────────────────────────────────────
