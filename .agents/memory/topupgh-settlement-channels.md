@@ -88,3 +88,22 @@ The endpoint is public+always-200, so it has its own dedicated generous rate lim
 real burst of per-item callbacks for a large batch is never dropped. `verifyTopupghWebhook-
 Signature` is now dead in the route (kept exported); `diagnoseTopupghWebhookSignature` is
 kept as a best-effort log only when a signature header happens to be present.
+
+# "15 webhooks failed / check endpoint availability" = body-parser rejects BEFORE the 200 ack
+
+The route always `res.sendStatus(200)`, but that only runs if the request REACHES the route.
+The GLOBAL `express.json({ limit: "1mb" })` runs first and returns **400** on an unparseable
+body or **413** on a body >1mb, BEFORE the handler — TopUpGH counts those as failures and
+flags the endpoint "unavailable" (it stops retrying on non-2xx). Verified against prod:
+malformed JSON→400, >1mb→413, clean small payload→200; GET/HEAD→200 (SPA catch-all).
+
+**Fix / principle:** a webhook endpoint must ack 2xx for ANY request shape. (1) Mount a
+dedicated `express.json({ limit:"5mb", verify: capture rawBody })` at the webhook path BEFORE
+the global parser (body-parser no-ops once a body is parsed, so other routes keep their 1mb
+cap). (2) In the global error handler, special-case the webhook path → log + `sendStatus(200)`
+so even an unparseable/oversized body still acks 200. Settlement is unaffected — it only runs
+from an HMAC-verified body, so acking 200 on a junk body settles nothing.
+
+**Diagnosing remotely:** you can't read Render logs from Replit, but you CAN curl the public
+domain to observe status codes per payload shape (malformed / oversized / clean) — that
+pinned the cause without prod log access.

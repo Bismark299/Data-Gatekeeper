@@ -74,6 +74,16 @@ app.use(
   }),
 );
 
+// TopUpGH delivery callbacks carry a per-recipient items[] array that can exceed the 1mb
+// global limit; the global parser would 413 BEFORE the webhook handler runs (its guaranteed
+// 200 ack never fires) and TopUpGH then flags the endpoint "unavailable". Parse this path
+// first with a generous limit so legitimate large snapshots are accepted and still settle;
+// the global parser below skips it (body-parser no-ops once a body is already parsed).
+app.use("/api/topupgh/webhook", express.json({
+  limit: "5mb",
+  verify: (req: express.Request, _res, buf) => { req.rawBody = buf; },
+}));
+
 // Capture the raw body buffer for webhook HMAC verification (Paystack signs raw bytes).
 // Must be set up before express.json() so the buffer is available in webhook handlers.
 app.use(express.json({
@@ -186,6 +196,15 @@ app.use("/api", router);
 // 4-argument signature (err, req, res, next). Without this, Express falls back
 // to its built-in handler which sends HTML — never acceptable for an API server.
 app.use((err: unknown, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  // The TopUpGH webhook must ALWAYS ack 200 — even when body-parser rejects the body as
+  // unparseable (400) or oversized (413) before the route runs. A non-200 makes TopUpGH flag
+  // the endpoint "unavailable" and stop retrying. We log so a dropped payload can be
+  // reconciled; settlement itself is unaffected (it only ever runs from a verified body).
+  if (req.originalUrl.split("?")[0] === "/api/topupgh/webhook") {
+    req.log?.warn({ err }, "TopUpGH webhook body rejected pre-handler — acking 200 anyway");
+    if (!res.headersSent) res.sendStatus(200);
+    return;
+  }
   const status = (err as { status?: number; statusCode?: number })?.status
     ?? (err as { statusCode?: number })?.statusCode
     ?? 500;
