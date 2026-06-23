@@ -653,7 +653,7 @@ async function checkProcessingBatches(): Promise<void> {
     .where(eq(topupghBatchesTable.id, batch.id));
 
   try {
-    await fetchAndSettleBatchDelivery(batch);
+    await fetchAndSettleBatchDelivery(batch, { gateMode: "queue" });
   } catch { /* transient — retry next cycle */ }
 }
 
@@ -670,6 +670,62 @@ export interface BatchDeliveryCheckResult {
 /** Batch IDs currently being settled — serializes the poller vs. the manual admin check. */
 const _settleInFlight = new Set<number>();
 
+// ─── Shared delivery-status rate gate ──────────────────────────────────────────
+// TopUpGH caps GET /orders/{id}/delivery-status at 1 req/min/key. The background
+// poller, the webhook-triggered re-fetch, the manual "check delivery" button and the
+// admin phone search ALL hit this one endpoint and share that single budget. Without
+// a shared gate, a webhook burst across different batches or a multi-batch search
+// fires several calls within seconds — TopUpGH then drops the connections (surfacing
+// as aborted-timeout warnings) AND the poller's own legitimate check gets starved.
+// This gate guarantees >= DELIVERY_STATUS_MIN_INTERVAL_MS between the START of any two
+// delivery-status calls, across every caller.
+//   - "queue": wait in line until a slot frees. For background callers (poller,
+//     webhook) where latency does not matter.
+//   - "skip":  run only if a slot is free right now; otherwise return { ran: false }
+//     WITHOUT calling, so interactive callers (admin button / search) fall back to
+//     stored data instead of hanging for up to a minute or busting the rate limit.
+export type DeliveryGateMode = "queue" | "skip";
+const DELIVERY_STATUS_MIN_INTERVAL_MS = 60_000;
+// Hard cap on queued "queue"-mode waiters. Calls drain at 1/min, so a webhook storm across
+// many distinct batches could otherwise retain one long-lived closure per batch for the
+// whole drain. Beyond this depth we refuse new queue-mode calls (ran:false) rather than
+// grow unbounded — the round-robin poller still settles those batches on a later cycle, so
+// no order is stranded. Same-batch storms never reach here: _settleInFlight coalesces them
+// before the gate, and unknown order_ids are rejected before any settle is attempted.
+const MAX_DELIVERY_GATE_QUEUE = 50;
+let _deliveryGateChain: Promise<void> = Promise.resolve();
+let _deliveryGateLastStart = 0;
+let _deliveryGateActive = 0;
+
+export async function runDeliveryStatusCall<T>(
+  fn: () => Promise<T>,
+  mode: DeliveryGateMode = "queue",
+): Promise<{ ran: true; value: T } | { ran: false }> {
+  if (mode === "skip") {
+    // Best-effort: never call while a queued caller holds/awaits the slot, nor within
+    // the interval since the last call started. There is no await between the read and
+    // the timestamp write, so two skip callers in the same tick cannot both pass.
+    if (_deliveryGateActive > 0) return { ran: false };
+    if (Date.now() - _deliveryGateLastStart < DELIVERY_STATUS_MIN_INTERVAL_MS) return { ran: false };
+    _deliveryGateLastStart = Date.now();
+    return { ran: true, value: await fn() };
+  }
+  if (_deliveryGateActive >= MAX_DELIVERY_GATE_QUEUE) return { ran: false };
+  _deliveryGateActive++;
+  const wait = _deliveryGateChain.then(async () => {
+    const remaining = DELIVERY_STATUS_MIN_INTERVAL_MS - (Date.now() - _deliveryGateLastStart);
+    if (remaining > 0) await sleep(remaining);
+    _deliveryGateLastStart = Date.now();
+  });
+  _deliveryGateChain = wait.catch(() => {}); // keep the chain alive across errors
+  try {
+    await wait;
+    return { ran: true, value: await fn() };
+  } finally {
+    _deliveryGateActive--;
+  }
+}
+
 /**
  * Public entry point for settling a single batch from TopUpGH's LIVE delivery status.
  * Serializes per batch so the admin "Check delivery status" button and the background
@@ -680,13 +736,14 @@ const _settleInFlight = new Set<number>();
  */
 export async function fetchAndSettleBatchDelivery(
   batch: typeof topupghBatchesTable.$inferSelect,
+  opts: { gateMode?: DeliveryGateMode } = {},
 ): Promise<BatchDeliveryCheckResult> {
   const empty: BatchDeliveryCheckResult = { itemCount: 0, delivered: 0, failed: 0, pending: 0, unknown: 0 };
   if (!batch.topupghOrderId) return empty;
   if (_settleInFlight.has(batch.id)) return empty;
   _settleInFlight.add(batch.id);
   try {
-    return await settleBatchFromLiveStatus(batch);
+    return await settleBatchFromLiveStatus(batch, opts.gateMode ?? "queue");
   } finally {
     _settleInFlight.delete(batch.id);
   }
@@ -715,17 +772,24 @@ export async function fetchAndSettleBatchDelivery(
  */
 async function settleBatchFromLiveStatus(
   batch: typeof topupghBatchesTable.$inferSelect,
+  gateMode: DeliveryGateMode = "queue",
 ): Promise<BatchDeliveryCheckResult> {
   const empty: BatchDeliveryCheckResult = { itemCount: 0, delivered: 0, failed: 0, pending: 0, unknown: 0 };
   if (!batch.topupghOrderId) return empty;
+  const tgOrderId = batch.topupghOrderId;
 
   // Fetching live status must never hard-fail the caller. topupghRequest already swallows
   // non-2xx (returns {}), but a network error or the 20s timeout still throws — catch it
   // here so the manual admin button (and the poller) degrade gracefully to "no items" and
   // still run the reconciliation/close below instead of surfacing an opaque 502.
+  //
+  // The call goes through the shared 1-req/min delivery-status gate. In "skip" mode an
+  // interactive caller that can't get a slot returns ran:false — we treat that exactly like
+  // a rate-limited/empty response: no items to apply, but the reconcile/close below still runs.
   let data: Awaited<ReturnType<typeof topupghGetDeliveryStatus>> | undefined;
   try {
-    data = await topupghGetDeliveryStatus(batch.topupghOrderId);
+    const slot = await runDeliveryStatusCall(() => topupghGetDeliveryStatus(tgOrderId), gateMode);
+    data = slot.ran ? slot.value : undefined;
   } catch (e) {
     logger.warn({ err: e, batchId: batch.id }, "TopUpGH delivery fetch failed — reconciling batch from current order states");
     data = undefined;
@@ -1046,7 +1110,10 @@ export async function checkOrderDeliveryLive(
     state = "cooldown"; // serve cached delivery_data; do not spend the shared TopUpGH budget
   } else {
     _orderCheckCooldown.set(batch.id, now);
-    summary = await fetchAndSettleBatchDelivery(batch); // idempotent, status-guarded, in-flight guarded
+    // Interactive caller: use the "skip" gate so a busy 1-req/min budget never makes the
+    // button hang for up to a minute. On skip it returns no items and we serve the freshest
+    // stored delivery_data below; the background poller settles it within the next cycle.
+    summary = await fetchAndSettleBatchDelivery(batch, { gateMode: "skip" }); // idempotent, status-guarded, in-flight guarded
   }
 
   // Re-read the freshest persisted delivery payload + order status after any settle.
@@ -1311,7 +1378,10 @@ export async function handleTopupghWebhook(payload: TopupghWebhookPayload): Prom
   }
 
   // Settle from the AUTHENTICATED delivery-status re-fetch, never from the webhook body.
-  await fetchAndSettleBatchDelivery(batch);
+  // The route has already acked 200, so we settle in the background through the shared
+  // rate gate ("queue"): a webhook burst across many batches drains at 1/min instead of
+  // firing all the re-fetches at once and tripping TopUpGH's limit.
+  await fetchAndSettleBatchDelivery(batch, { gateMode: "queue" });
 }
 
 // ─── Background poller ────────────────────────────────────────────────────────

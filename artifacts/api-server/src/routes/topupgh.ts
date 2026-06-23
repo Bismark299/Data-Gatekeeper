@@ -16,6 +16,7 @@ import {
   getTopupghSettings,
   extractDeliveryInfo,
   fetchAndSettleBatchDelivery,
+  runDeliveryStatusCall,
   reconcileBatchOrderLevel,
   type BatchOrderLevelReconcileResult,
   type TopupghWebhookPayload,
@@ -231,8 +232,14 @@ router.get("/admin/topupgh/batches/:id/delivery", requireAdmin, async (req, res)
   if (!apiKey || !apiSecret) { res.status(400).json({ error: "TopUpGH credentials not configured" }); return; }
 
   try {
-    const data = await topupghGetDeliveryStatus(batch.topupghOrderId);
-    res.json(data);
+    // Through the shared 1-req/min gate ("skip"): if no slot is free, return the batch's
+    // last stored delivery payload instead of bursting the limit or starving the poller.
+    const slot = await runDeliveryStatusCall(() => topupghGetDeliveryStatus(batch.topupghOrderId as number), "skip");
+    if (slot.ran) {
+      res.json({ ...slot.value, liveSkipped: false });
+    } else {
+      res.json({ success: true, order: (batch.deliveryData as { order?: unknown })?.order ?? undefined, liveSkipped: true });
+    }
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Failed to fetch delivery status";
     res.status(502).json({ error: msg });
@@ -258,7 +265,9 @@ router.post("/admin/topupgh/batches/:id/check-delivery", requireAdmin, async (re
   if (!apiKey || !apiSecret) { res.status(400).json({ error: "TopUpGH credentials not configured" }); return; }
 
   try {
-    const summary = await fetchAndSettleBatchDelivery(batch);
+    // Interactive admin trigger: "skip" gate so it never hangs up to a minute waiting on
+    // the shared 1-req/min budget. itemCount 0 already means "no update yet / rate-limited".
+    const summary = await fetchAndSettleBatchDelivery(batch, { gateMode: "skip" });
     const [updated] = await db.select({ status: topupghBatchesTable.status })
       .from(topupghBatchesTable).where(eq(topupghBatchesTable.id, batchId));
     res.json({ success: true, summary, batchStatus: updated?.status ?? batch.status });
@@ -415,7 +424,11 @@ router.post("/admin/topupgh/search", requireAdmin, async (req, res): Promise<voi
       .where(eq(topupghBatchesTable.topupghOrderId, tgId));
 
     try {
-      const delivery = await topupghGetDeliveryStatus(tgId);
+      // Through the shared 1-req/min gate ("skip"): if no slot is free we return the last
+      // stored delivery payload instead of bursting the limit (or starving the poller).
+      const slot = await runDeliveryStatusCall(() => topupghGetDeliveryStatus(tgId), "skip");
+      const liveSkipped = !slot.ran;
+      const delivery = slot.ran ? slot.value : (batch?.deliveryData ?? null);
       const localOrders = batch
         ? await db.select({
             id: ordersTable.id, phone: ordersTable.phoneNumber,
@@ -423,7 +436,12 @@ router.post("/admin/topupgh/search", requireAdmin, async (req, res): Promise<voi
             createdAt: ordersTable.createdAt,
           }).from(ordersTable).where(eq(ordersTable.topupghBatchId, batch.id))
         : [];
-      res.json({ mode: "order", topupghOrderId: tgId, batch: batch ?? null, delivery, localOrders });
+      res.json({
+        mode: "order", topupghOrderId: tgId, batch: batch ?? null, delivery, localOrders, liveSkipped,
+        message: liveSkipped
+          ? "Showing last saved status — a live check was skipped to respect TopUpGH's 1 req/min limit (shared with the poller). Retry shortly for live."
+          : null,
+      });
     } catch (e) {
       res.status(502).json({ error: e instanceof Error ? e.message : "Failed to fetch delivery status" });
     }
@@ -447,6 +465,7 @@ router.post("/admin/topupgh/search", requireAdmin, async (req, res): Promise<voi
         topupghOrderId: topupghBatchesTable.topupghOrderId,
         batchStatus:    topupghBatchesTable.status,
         dispatchedAt:   topupghBatchesTable.dispatchedAt,
+        deliveryData:   topupghBatchesTable.deliveryData,
       })
       .from(ordersTable)
       .innerJoin(topupghBatchesTable, eq(topupghBatchesTable.id, ordersTable.topupghBatchId))
@@ -461,39 +480,55 @@ router.post("/admin/topupgh/search", requireAdmin, async (req, res): Promise<voi
     }
 
     // Group by unique topupghOrderId then fetch live delivery-status (1 call per batch)
+    // Keep each batch's last stored delivery payload alongside its rows so we can fall back
+    // to it when the shared 1-req/min gate has no free slot for a live call (see below).
     const byTgId = new Map<number, typeof rows>();
+    const storedByTgId = new Map<number, unknown>();
     for (const row of rows) {
       if (!row.topupghOrderId) continue;
       const arr = byTgId.get(row.topupghOrderId) ?? [];
       arr.push(row);
       byTgId.set(row.topupghOrderId, arr);
+      if (!storedByTgId.has(row.topupghOrderId)) storedByTgId.set(row.topupghOrderId, row.deliveryData);
     }
 
     const uniqueIds = [...byTgId.keys()].slice(0, 5);
     const deliveryMap = new Map<number, Record<string, { status: string; date: string; time: string }>>();
     let apiCallsMade = 0;
+    let liveSkipped = false;
 
     for (const tgId of uniqueIds) {
+      const byPhone: Record<string, { status: string; date: string; time: string }> = {};
       try {
-        const data = await topupghGetDeliveryStatus(tgId);
-        const byPhone: Record<string, { status: string; date: string; time: string }> = {};
-        const liveItems = data.order?.items;
-        if (Array.isArray(liveItems)) {
-          for (const it of liveItems) {
-            const phone = it.beneficiary_number;
-            if (!phone) continue;
-            const processed = typeof it.processed_date === "string" ? it.processed_date : "";
-            const commaIdx  = processed.indexOf(", ");
-            byPhone[phone] = {
-              status: it.delivery_status ?? "unknown",
-              date:   commaIdx >= 0 ? processed.slice(0, commaIdx) : processed,
-              time:   commaIdx >= 0 ? processed.slice(commaIdx + 2) : "",
-            };
+        // Live call funnels through the shared delivery-status gate in "skip" mode: it runs
+        // only if a slot is free right now, so this admin search can never burst past the
+        // 1-req/min limit or starve the poller. When skipped we serve the last stored
+        // delivery payload for that batch instead of making a call.
+        const slot = await runDeliveryStatusCall(() => topupghGetDeliveryStatus(tgId), "skip");
+        if (slot.ran) {
+          const liveItems = slot.value.order?.items;
+          if (Array.isArray(liveItems)) {
+            for (const it of liveItems) {
+              const phone = it.beneficiary_number;
+              if (!phone) continue;
+              const processed = typeof it.processed_date === "string" ? it.processed_date : "";
+              const commaIdx  = processed.indexOf(", ");
+              byPhone[phone] = {
+                status: it.delivery_status ?? "unknown",
+                date:   commaIdx >= 0 ? processed.slice(0, commaIdx) : processed,
+                time:   commaIdx >= 0 ? processed.slice(commaIdx + 2) : "",
+              };
+            }
+          }
+          apiCallsMade++;
+        } else {
+          liveSkipped = true;
+          for (const [phone, info] of extractDeliveryInfo(storedByTgId.get(tgId))) {
+            byPhone[phone] = { status: info.status, date: info.date, time: info.time };
           }
         }
-        deliveryMap.set(tgId, byPhone);
-        apiCallsMade++;
       } catch { /* skip — return partial results */ }
+      deliveryMap.set(tgId, byPhone);
     }
 
     const notFound = phones.filter(p => !rows.some(r => r.phone === p));
@@ -519,9 +554,13 @@ router.post("/admin/topupgh/search", requireAdmin, async (req, res): Promise<voi
       notFound,
       apiCallsMade,
       truncated,
-      message: truncated
-        ? `Results span ${byTgId.size} batches; only first 5 fetched live (rate limit: 1 req/min).`
-        : null,
+      liveSkipped,
+      message: [
+        truncated ? `Results span ${byTgId.size} batches; only first 5 shown.` : null,
+        liveSkipped
+          ? "Some batches show the last saved status — a live check was skipped to respect TopUpGH's 1 req/min limit (shared with the poller). Retry shortly for live."
+          : null,
+      ].filter(Boolean).join(" ") || null,
     });
     return;
   }
