@@ -28,13 +28,20 @@ Returning `res.json()` without checking `res.ok` parses a 429/error into an erro
 object, so the caller silently no-op's (`data.order?.items` undefined → early return) with
 no log. Always log non-2xx from the TopUpGH API or failures look like "poller does nothing".
 
-# The webhook carries NO usable signature — ack 200 always, treat it as a trigger only
+# The webhook signature scheme is UNCONFIRMED — ack 200 always, treat it as a trigger only
 
-The earlier assumption that TopUpGH HMAC-signs webhooks was WRONG. In practice TopUpGH
-POSTs the bare payload with no usable `X-Webhook-Signature`, so a handler that required a
-signature 401'd every callback (this is the "Failed" count on the TopUpGH dashboard). A
-non-200 response makes TopUpGH stop retrying, which is why delivery confirmations never
-arrived and orders sat in `processing` until the slow poller caught them.
+History: requiring a signature 401'd every callback (the "Failed" count on the dashboard),
+and a non-200 makes TopUpGH stop retrying — so confirmations never arrived and orders sat in
+`processing` until the slow poller caught them. We removed the hard requirement.
+
+Signature status is CONTESTED, do not assume either way: an external TopUpGH integration doc
+later claimed webhooks DO sign with `X-Webhook-Signature = HMAC-SHA256(rawBody, API_SECRET)`,
+hex (raw bytes, not parsed JSON). The code already computes that exact `hex` candidate AND
+logs `diagnoseTopupghWebhookSignature` whenever a signature header is present. **Confirm the
+real scheme from a prod (Render) log line `TopUpGH webhook signature diagnostic`** before
+ever trusting the signature. Only after it's confirmed should you consider verify-and-settle
+directly from the webhook (which would bypass the 1/min poll bottleneck for instant
+settlement) — until then, keep re-fetching the authenticated delivery-status.
 
 **Rule:** the webhook endpoint must ALWAYS `res.sendStatus(200)` and must be treated as an
 unauthenticated, untrusted TRIGGER — never trust its body for settlement.
@@ -42,9 +49,18 @@ unauthenticated, untrusted TRIGGER — never trust its body for settlement.
 **Why:** any non-200 halts TopUpGH callbacks; and since the request is unauthenticated, a
 forged body could otherwise falsely complete orders / credit agent profit.
 
-**How to apply:** on `delivery_status_updated`, cheap-reject unless `order.order_id` is a
-positive number, look up the batch by `topupghOrderId`, then settle via
-`fetchAndSettleBatchDelivery(batch)` — the AUTHENTICATED HMAC-signed `GET
+**Payload shape is also uncertain — tolerate BOTH.** Our handler historically modeled the
+NESTED shape `{ event:"delivery_status_updated", order:{ order_id, items:[...] } }` (copied
+from the GET delivery-status response), but the external doc shows a FLAT shape
+`{ order_id, status, network, recipient, data_size, updated_at }` with no `event`/`order`
+wrapper. If the real webhook is flat, a handler that hard-requires `event` or `order.order_id`
+silently no-ops on every callback. The handler now extracts `order_id` from either shape
+(nested `order.order_id` OR top-level `order_id`, number or numeric string) and only enforces
+`event === delivery_status_updated` when an `event` field is actually present. Confirm the
+real shape from prod `no batch for order_id` / `no usable order_id` warnings.
+
+**How to apply:** extract `order_id` from either shape, look up the batch by
+`topupghOrderId`, then settle via `fetchAndSettleBatchDelivery(batch)` — the AUTHENTICATED HMAC-signed `GET
 /orders/{id}/delivery-status` re-fetch — NOT from the webhook payload. That path is
 idempotent (status-guarded) + per-batch in-flight guarded, so forged/replayed webhooks can
 at most cause a bounded, harmless re-check. A forged webhook can never settle or credit.

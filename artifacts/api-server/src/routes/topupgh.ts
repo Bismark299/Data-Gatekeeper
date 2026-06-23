@@ -19,7 +19,6 @@ import {
   runDeliveryStatusCall,
   reconcileBatchOrderLevel,
   type BatchOrderLevelReconcileResult,
-  type TopupghWebhookPayload,
 } from "../lib/topupgh";
 
 const router = Router();
@@ -593,7 +592,7 @@ router.post("/topupgh/webhook", async (req, res): Promise<void> => {
   res.sendStatus(200); // ack immediately — any non-200 shows as "Failed" on TopUpGH and halts callbacks
 
   try {
-    await handleTopupghWebhook(req.body as TopupghWebhookPayload);
+    await handleTopupghWebhook(req.body);
   } catch (e) {
     logger.error({ err: e }, "TopUpGH webhook processing error");
   }

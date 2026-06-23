@@ -1361,13 +1361,38 @@ async function settleBatchDeliveries(
  * delivered or credit an agent's profit. fetchAndSettleBatchDelivery is idempotent
  * (status-guarded) and per-batch in-flight guarded, so repeated triggers are harmless.
  */
-export async function handleTopupghWebhook(payload: TopupghWebhookPayload): Promise<void> {
-  if (payload?.event !== "delivery_status_updated") return;
+// Pull a positive-integer order_id out of either documented webhook shape, tolerating a
+// numeric string. Returns undefined for anything that can't be a real order_id.
+function coerceWebhookOrderId(v: unknown): number | undefined {
+  if (typeof v === "number") return Number.isFinite(v) && v > 0 ? v : undefined;
+  if (typeof v === "string" && /^\d+$/.test(v.trim())) {
+    const n = Number(v.trim());
+    return Number.isFinite(n) && n > 0 ? n : undefined;
+  }
+  return undefined;
+}
 
-  // Cheap reject for noise/forged payloads before touching the DB. order_id must be a
-  // positive number; anything else can't match a real batch.
-  const orderId = payload?.order?.order_id;
-  if (typeof orderId !== "number" || !Number.isFinite(orderId) || orderId <= 0) return;
+export async function handleTopupghWebhook(payload: unknown): Promise<void> {
+  const p = (payload && typeof payload === "object" ? payload : {}) as Record<string, unknown>;
+
+  // Accept BOTH documented callback shapes:
+  //   • nested: { event:"delivery_status_updated", order:{ order_id, items:[...] } }
+  //   • flat:   { order_id, status, network, recipient, data_size, updated_at }
+  // The nested shape carries an `event`; when one is present, only act on delivery-status
+  // events so other event types don't burn rate-gate slots. The flat shape has no `event`
+  // and is itself a delivery callback, so it is allowed through.
+  const event = typeof p.event === "string" ? p.event : undefined;
+  if (event !== undefined && event !== "delivery_status_updated") return;
+
+  // order_id may live under `order` (nested) or at the top level (flat). We only need the
+  // id — settlement always re-fetches the AUTHENTICATED delivery-status and never trusts
+  // these body fields, so tolerating extra shapes carries no credit risk.
+  const nestedOrder = p.order && typeof p.order === "object" ? (p.order as Record<string, unknown>) : undefined;
+  const orderId = coerceWebhookOrderId(nestedOrder?.order_id) ?? coerceWebhookOrderId(p.order_id);
+  if (orderId === undefined) {
+    logger.warn({ payloadKeys: Object.keys(p).slice(0, 12) }, "TopUpGH webhook: no usable order_id in payload — ignoring");
+    return;
+  }
 
   const [batch] = await db.select().from(topupghBatchesTable)
     .where(eq(topupghBatchesTable.topupghOrderId, orderId));
