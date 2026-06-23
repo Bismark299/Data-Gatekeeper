@@ -1,0 +1,43 @@
+These logs tell the exact story of why your system is struggling. You are currently polling the TopUpGH API manually via GET requests inside a loop (cron job or worker), and it is actively crashing your background worker due to a Timeout Error (DOMException: The operation was aborted due to timeout).
+Here is the breakdown of what is happening and how to fix it on Render:
+The Problem: API Polling Overload
+Looking at your log timestamps, your server is hitting the TopUpGH API for individual order statuses literally every single second (e.g., order 1392 at 00:23:47, order 1394 at 00:23:48, order 1393 at 00:23:50).
+Rate Limiting: Your TopUpGH documentation strictly says the limit for the delivery-status endpoint is 1 request per minute. You are making roughly 60 requests per minute.
+The Crash: TopUpGH's server is dropping or ignoring your connections because you are exceeding their rate limits. Your code waits for a response, hits its maximum timeout threshold, throws an unhandled TimeoutError, and terminates the thread ("msg":"TopUpGH delivery fetch failed").
+How to Fix It Right Now
+Step 1: Switch Off the Manual Sync Loop
+You do not need to fetch /api/v1/orders/{id}/delivery-status in a background batch loop anymore. Your TopUpGH Webhook setup already completely replaces this resource-heavy polling loop.
+Comment out or disable the background batch function (referenced as batchId: 104 in your logs) that handles the automatic recursive loop.
+Step 2: Handle the Webhook via POST Instead
+Make sure your Render application code includes a dedicated POST endpoint matching the URL you set on TopUpGH (/api/topupgh/webhook). Instead of your server constantly asking TopUpGH "Is it ready yet?", TopUpGH will just call this endpoint once when the status changes.
+Here is what your Node.js routing code should look like to replace that crashing logic:
+javascript
+// Map your webhook path perfectly to match TopUpGH settings
+app.post('/api/topupgh/webhook', async (req, res) => {
+    try {
+        const { order_id, status } = req.body;
+        
+        console.log(`Received TopUpGH webhook for Order ${order_id}: Status is ${status}`);
+        
+        // 1. Find the order in your database using order_id
+        // 2. If status === 'delivered', credit your user's wallet
+        
+        // Critically important: return a 200 OK immediately so TopUpGH knows you got it
+        return res.status(200).json({ success: true, message: "Received successfully" });
+    } catch (error) {
+        console.error("Webhook processing error:", error);
+        return res.status(500).json({ success: false });
+    }
+});
+Use code with caution.
+Step 3: Increase Network Timeout Thresholds (If you must poll)
+If you absolutely must keep using a batch polling script as a safety fallback, you need to catch the timeout error so it doesn't break your backend, and add a heavy delay (setTimeout or a sleep function) between each request to respect the 1 request per minute rule.
+If you use Axios for your polling loops, wrap it inside a structured try/catch block to handle timeouts safely:
+javascript
+try {
+    const res = await axios.get(`.../delivery-status`, { timeout: 10000 }); // 10 second limit
+} catch (err) {
+    if (err.code === 'ECONNABORTED') {
+        console.log('TopUpGH timed out. Skipping this execution cycle safely.');
+    }
+}
