@@ -1,0 +1,86 @@
+To check the delivery status of your TopUpGH orders, you have two professional methods: Webhooks (Automated / Recommended) or API Polling (Manual Query). 
+Since your dashboard shows that webhooks are already configured for https://datagatekeeper.pro, the automated method is currently trying to send data to your site, but 50 requests have failed because your server endpoint is either not ready or rejecting them.
+Here is exactly how to implement both methods.
+Method 1: Handle Automated Webhooks (Recommended)
+TopUpGH will instantly send an asynchronous POST request to your webhook URL whenever an order status changes (e.g., Pending → Delivered or Failed). 
+1. The JSON Payload Structure
+Your server must listen at your webhook URL to receive a payload that looks like this:
+json
+{
+  "order_id": 1921972,
+  "status": "delivered", 
+  "network": "mtn",
+  "recipient": "024XXXXXXX",
+  "data_size": "1GB",
+  "updated_at": "2026-06-22 23:02:00"
+}
+Use code with caution.
+2. Verification Code (Node.js Express)
+To ensure the incoming webhook is genuinely from TopUpGH and not a hacker, you must verify the X-Webhook-Signature header using your API_SECRET.
+javascript
+const express = require('express');
+const crypto = require('crypto');
+const app = express();
+
+// Crucial: You need the raw body to verify the cryptographic signature
+app.use(express.json({
+    verify: (req, res, buf) => { req.rawBody = buf.toString(); }
+}));
+
+app.post('/api/topupgh/webhook', (req, res) => {
+    const secret = process.env.TOPUPGH_API_SECRET;
+    const incomingSignature = req.headers['x-webhook-signature'];
+    
+    // Compute expected signature using raw request body
+    const expectedSignature = crypto
+        .createHmac('sha256', secret)
+        .update(req.rawBody)
+        .digest('hex');
+
+    if (incomingSignature !== expectedSignature) {
+        return res.status(401).send('Invalid signature. Authentication failed.');
+    }
+
+    // Signature is valid! Process the order status
+    const { order_id, status } = req.body;
+    console.log(`Order ${order_id} status updated to: ${status}`);
+
+    // Update your user's balance or display success on your site here...
+
+    // Always send a 200 OK back to stop TopUpGH from retrying
+    res.status(200).json({ success: true });
+});
+Use code with caution.
+Method 2: Poll via GET Request (Fallback)
+If your webhook fails or you need to check an order's status manually, you can query their tracking endpoint. Note your strict rate limit: 1 request per minute for this endpoint.
+Base URL: https://etopupgh.com
+Endpoint: /orders/{order_id}/delivery-status
+Method: GET
+Required Headers
+Because this is a GET request, you do not need to generate an X-API-Signature (signatures are strictly for POST requests according to your documentation). You only need your Key and Timestamp.
+Header Name
+Value	Description
+X-API-Key	YOUR_API_KEY	Obtained from your account dashboard.
+X-Timestamp	1782172320	Current Unix timestamp in seconds.
+Implementation Example (Node.js Axios)
+javascript
+const axios = require('axios');
+
+async function checkOrderStatus(orderId) {
+    const apiKey = process.env.TOPUPGH_API_KEY;
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    
+    try {
+        const response = await axios.get(`https://etopupgh.com{orderId}/delivery-status`, {
+            headers: {
+                'X-API-Key': apiKey,
+                'X-Timestamp': timestamp,
+                'Accept': 'application/json'
+            }
+        });
+        
+        return response.data; // Returns status details
+    } catch (error) {
+        console.error('Error fetching order status:', error.response?.data || error.message);
+    }
+}
