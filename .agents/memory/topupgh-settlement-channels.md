@@ -10,6 +10,25 @@ req/min, but in practice the prod poller calls it every 2 min and gets HTTP 200 
 429s seen from the Replit dev env are just collisions with the prod poller — they are
 NOT evidence the poller is starved. Do not conclude "rate limited" from a dev-side 429.
 
+# A flood of `TimeoutError` (NOT 429) = connection blackhole, two possible causes
+
+Symptom: prod logs show the SAME warn every 2 min — `TopUpGH delivery fetch failed —
+reconciling…`, `name:"TimeoutError"` (the 20s `AbortSignal.timeout` firing) — across MANY
+different batchIds, steadily. A hang-until-timeout is NOT a rate-limit 429 (those return
+instantly) and NOT a single stuck batch (round-robin is rotating). The TCP connection is
+being silently dropped/blackholed. Two leading causes, both consistent with the symptom:
+1. **TopUpGH may enforce the 1/min cap by DROPPING connections, not returning 429.** If so,
+   a burst from ANY caller (admin search, webhook re-fetch) poisons the shared budget and
+   the poller's own call then also times out — collateral damage. → The shared delivery gate
+   (`runDeliveryStatusCall`) is the fix; deploy it and the steady timeouts should stop.
+2. **Prod egress IP no longer on TopUpGH's allowlist** (Render's outbound IP can change
+   across pod restarts — the changing pod hostnames in the logs hint at this). → Ops fix:
+   re-confirm the current prod egress IP is whitelisted, and that TopUpGH's API is up.
+Money is safe either way: the timeout is caught and the batch is reconciled from order
+states — no double-charge, no loss; only live delivery confirmation lags. Distinguish the
+two by whether timeouts persist with zero admin/webhook activity (→ #2) or correlate with
+bursts (→ #1).
+
 The real bug: a backup poller that always picks the **stalest batch by dispatchedAt** and
 checks only ONE per cycle will jam. If that order's 200 yields no settleable items (still
 pending on TopUpGH's side, or empty `order.items`), the batch never settles, stays the
