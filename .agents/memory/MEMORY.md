@@ -10,3 +10,4 @@
 - [TopUpGH delivery-status endpoint](topupgh-delivery-status-endpoint.md) — GET delivery-status returns webhook-shaped `order.items[]` (NOT phone-keyed); word is "Sent" vs webhook "Delivered"; 1 req/min/key.
 - [TopUpGH delivery-status gate](topupgh-delivery-status-gate.md) — EVERY delivery-status caller must go through `runDeliveryStatusCall` (queue=background, skip=interactive→stored fallback); skip is money-safe; queue capped at 50.
 - [MTN dual-provider mutual exclusion](mtn-provider-mutual-exclusion.md) — McBIS claims via mcbisReference, TopUpGH via topupghBatchId; each claim UPDATE must check the other's column or both fulfill the same order. Store orders ride TopUpGH batches too.
+- [Verified-webhook direct-settle](topupgh-webhook-direct-settle.md) — sig-verified delivery webhook may settle directly (egress blocked), but MUST gate on same-phone conflicting outcomes + exact per-phone multiset match or it mis-maps same-phone siblings.

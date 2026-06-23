@@ -13,6 +13,7 @@ import {
   dispatchPendingQueue,
   handleTopupghWebhook,
   diagnoseTopupghWebhookSignature,
+  verifyTopupghWebhookSignature,
   getTopupghSettings,
   extractDeliveryInfo,
   fetchAndSettleBatchDelivery,
@@ -567,32 +568,42 @@ router.post("/admin/topupgh/search", requireAdmin, async (req, res): Promise<voi
   res.status(400).json({ error: "Provide topupghOrderId (number) or phones (string[])" });
 });
 
-// ─── Webhook (public — unauthenticated TRIGGER, never trusted for settlement) ────
+// ─── Webhook (public — settles from a SIGNATURE-VERIFIED body, else re-fetch TRIGGER) ──
 //
-// TopUpGH's webhook carries no usable signature (their integration docs POST the bare
-// payload), so requiring one rejected every callback with 401 — that is the "Failed"
-// count on the TopUpGH dashboard, and a non-200 makes them stop retrying. We therefore
-// ALWAYS ack 200. Security does NOT come from trusting this request: handleTopupghWebhook
-// uses it only as a TRIGGER to re-fetch the AUTHENTICATED, HMAC-signed delivery-status for
-// the order and settle from that verified response. A forged webhook can at most cause an
-// idempotent, rate-limited re-check of our own data — it can never mark an order delivered
-// or credit an agent's profit.
+// TopUpGH signs each callback with an X-Webhook-Signature header (HMAC-SHA256 of the raw
+// body using our API Secret). We compute that over req.rawBody and pass the result to
+// handleTopupghWebhook:
+//   • verified  → settle DIRECTLY from the trusted body (bypasses the outbound delivery-
+//                 status re-fetch, which is the only path that works when our egress to
+//                 TopUpGH is blocked). Only a full, unambiguous snapshot is trusted — see
+//                 settleBatchFromVerifiedWebhookPayload — and settlement is idempotent +
+//                 status-guarded, so a replayed verified callback can never double-credit.
+//   • unverified/ambiguous → fall back to the previous behaviour: use the body only as a
+//                 TRIGGER to re-fetch the AUTHENTICATED delivery-status and settle from
+//                 that. A forged webhook fails the HMAC check and can at most cause an
+//                 idempotent, rate-limited re-check of our own data.
+// We ALWAYS ack 200 regardless: any non-200 shows as "Failed" on the TopUpGH dashboard and
+// makes them stop retrying.
 router.post("/topupgh/webhook", async (req, res): Promise<void> => {
-  // Best-effort only: if a signature happens to be present, log whether any known scheme
-  // matches so TopUpGH's scheme can be learned over time. Never used to accept/reject.
   const sig = req.headers["x-webhook-signature"];
   const raw = req.rawBody;
   const ts  = typeof req.headers["x-timestamp"] === "string" ? req.headers["x-timestamp"] : undefined;
+
+  let verified = false;
   if (typeof sig === "string" && raw) {
+    verified = verifyTopupghWebhookSignature(sig, raw, ts);
     try {
-      logger.info({ diag: diagnoseTopupghWebhookSignature(sig, raw, ts) }, "TopUpGH webhook signature diagnostic");
+      logger.info(
+        { verified, diag: diagnoseTopupghWebhookSignature(sig, raw, ts) },
+        "TopUpGH webhook signature diagnostic",
+      );
     } catch { /* diagnostic only */ }
   }
 
   res.sendStatus(200); // ack immediately — any non-200 shows as "Failed" on TopUpGH and halts callbacks
 
   try {
-    await handleTopupghWebhook(req.body);
+    await handleTopupghWebhook(req.body, { verified });
   } catch (e) {
     logger.error({ err: e }, "TopUpGH webhook processing error");
   }

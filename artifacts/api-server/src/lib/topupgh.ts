@@ -1349,17 +1349,198 @@ async function settleBatchDeliveries(
   }
 }
 
+interface NormalizedWebhookItem { phone: string; status: string; date: string; time: string; }
+
+/** Pull date + time out of either a combined `processed_date` ("22/Jun/2026, 4:24:29 AM")
+ *  or split `delivery_date`/`delivery_time` fields on a webhook item. */
+function splitWebhookProcessed(o: Record<string, unknown>): { date: string; time: string } {
+  const d = typeof o.delivery_date === "string" ? o.delivery_date : "";
+  const t = typeof o.delivery_time === "string" ? o.delivery_time : "";
+  if (d || t) return { date: d, time: t };
+  const processed = typeof o.processed_date === "string" ? o.processed_date : "";
+  const comma = processed.indexOf(", ");
+  return comma >= 0
+    ? { date: processed.slice(0, comma), time: processed.slice(comma + 2) }
+    : { date: processed, time: "" };
+}
+
+/** Normalize a webhook body into per-recipient {phone,status,date,time} items, tolerating
+ *  both the nested ({order:{items:[...]}}) and flat (single recipient) callback shapes. */
+function normalizeWebhookItems(p: Record<string, unknown>): NormalizedWebhookItem[] {
+  const nestedOrder = p.order && typeof p.order === "object" ? (p.order as Record<string, unknown>) : undefined;
+  const rawItems = nestedOrder?.items;
+  if (Array.isArray(rawItems)) {
+    const out: NormalizedWebhookItem[] = [];
+    for (const it of rawItems) {
+      if (!it || typeof it !== "object") continue;
+      const o = it as Record<string, unknown>;
+      const phone =
+        typeof o.beneficiary_number === "string" ? o.beneficiary_number
+        : typeof o.recipient === "string" ? o.recipient : "";
+      const status =
+        typeof o.delivery_status === "string" ? o.delivery_status
+        : typeof o.status === "string" ? o.status : "";
+      if (!phone || !status) continue;
+      out.push({ phone, status, ...splitWebhookProcessed(o) });
+    }
+    return out;
+  }
+  // Flat single-recipient shape.
+  const phone =
+    typeof p.recipient === "string" ? p.recipient
+    : typeof p.beneficiary_number === "string" ? p.beneficiary_number : "";
+  const status =
+    typeof p.status === "string" ? p.status
+    : typeof p.delivery_status === "string" ? p.delivery_status : "";
+  if (phone && status) return [{ phone, status, ...splitWebhookProcessed(p) }];
+  return [];
+}
+
+interface VerifiedSettleResult {
+  /** true → the webhook is fully handled; caller must NOT fall back to a re-fetch. */
+  handled: boolean;
+  settled: boolean;
+  itemCount: number;
+  mode: "full" | "partial" | "busy" | "ambiguous" | "empty";
+}
+
+/**
+ * Settle a batch DIRECTLY from a signature-verified webhook body — no outbound re-fetch.
+ * Only called after verifyTopupghWebhookSignature passed, so the body's integrity is trusted.
+ *
+ * Even with a trusted body we refuse to settle an AMBIGUOUS payload, because
+ * settleBatchDeliveries settles "the next unsettled order for this phone": a partial
+ * callback naming a phone that holds 2+ orders in the batch could prematurely complete a
+ * sibling. We therefore direct-settle only when:
+ *   • full snapshot  — items.length === total linked orders (platform + store) in the batch
+ *                      (status guards keep a replay or mixed pending/delivered safe), OR
+ *   • partial unique — every item's phone maps to exactly ONE linked order and no phone is
+ *                      repeated in the payload, so each item resolves to a unique order.
+ * Anything else returns handled:false so the caller falls back to the re-fetch trigger.
+ *
+ * deliveryData is persisted only for a full snapshot, so a partial body never overwrites
+ * richer recorded delivery data. settleBatchDeliveries is idempotent + status-guarded and
+ * runs here under the shared _settleInFlight guard to avoid racing the poller/reconcile.
+ */
+async function settleBatchFromVerifiedWebhookPayload(
+  batch: typeof topupghBatchesTable.$inferSelect,
+  p: Record<string, unknown>,
+): Promise<VerifiedSettleResult> {
+  const items = normalizeWebhookItems(p);
+  if (items.length === 0) return { handled: false, settled: false, itemCount: 0, mode: "empty" };
+
+  // Refuse to settle when a phone appears with CONFLICTING outcomes. settleBatchDeliveries
+  // settles "the next unsettled order for this phone", so two siblings to the same phone that
+  // ended differently (e.g. one delivered + one failed) could be mapped to the wrong order —
+  // completing/crediting the order that actually failed and failing the one that delivered.
+  // There is no per-order id to disambiguate, so we hand these to a human (fallback re-fetch
+  // / admin reconcile) instead of guessing. Same-phone siblings that share ONE outcome (all
+  // delivered, or all failed) are symmetric and safe.
+  const outcomesByPhone = new Map<string, Set<DeliveryOutcome>>();
+  for (const it of items) {
+    const set = outcomesByPhone.get(it.phone) ?? new Set<DeliveryOutcome>();
+    set.add(classifyDeliveryStatus(it.status));
+    outcomesByPhone.set(it.phone, set);
+  }
+  for (const [, set] of outcomesByPhone) {
+    if (set.size > 1) return { handled: false, settled: false, itemCount: items.length, mode: "ambiguous" };
+  }
+
+  // Count every order linked to this batch (any status), per phone — platform + store.
+  const [pRows, sRows] = await Promise.all([
+    db.select({ phone: ordersTable.phoneNumber }).from(ordersTable)
+      .where(eq(ordersTable.topupghBatchId, batch.id)),
+    db.select({ phone: storeOrdersTable.customerPhone }).from(storeOrdersTable)
+      .where(eq(storeOrdersTable.topupghBatchId, batch.id)),
+  ]);
+  const totalLinked = pRows.length + sRows.length;
+  const phoneCounts = new Map<string, number>();
+  for (const r of [...pRows, ...sRows]) phoneCounts.set(r.phone, (phoneCounts.get(r.phone) ?? 0) + 1);
+
+  // Per-phone webhook tally, used to require an EXACT multiset match in full mode (below).
+  const webhookCounts = new Map<string, number>();
+  for (const it of items) webhookCounts.set(it.phone, (webhookCounts.get(it.phone) ?? 0) + 1);
+
+  // Full mode demands the webhook's phone multiset equal the linked-orders' phone multiset
+  // EXACTLY (same phones, same per-phone counts). settleBatchDeliveries settles "next
+  // unsettled order for phone" independently in the platform and store loops, so a merely
+  // count-equal but phone-skewed snapshot (e.g. one delivered item for a phone that has both
+  // a platform and a store order, padded by an unrelated phone) would let that single item
+  // settle BOTH the platform and store order off ONE real delivery. Requiring an exact
+  // per-phone match makes each loop consume exactly as many orders as there are deliveries.
+  const phonesMatchExactly =
+    webhookCounts.size === phoneCounts.size &&
+    [...phoneCounts].every(([phone, c]) => webhookCounts.get(phone) === c);
+
+  let mode: "full" | "partial";
+  if (totalLinked > 0 && items.length === totalLinked && phonesMatchExactly) {
+    mode = "full";
+  } else {
+    const seen = new Set<string>();
+    for (const it of items) {
+      if ((phoneCounts.get(it.phone) ?? 0) !== 1 || seen.has(it.phone)) {
+        return { handled: false, settled: false, itemCount: items.length, mode: "ambiguous" };
+      }
+      seen.add(it.phone);
+    }
+    mode = "partial";
+  }
+
+  // Someone (poller / reconcile / another callback) is already settling this batch — skip
+  // rather than race. Report handled so we don't stack a redundant re-fetch on top.
+  if (_settleInFlight.has(batch.id)) {
+    return { handled: true, settled: false, itemCount: items.length, mode: "busy" };
+  }
+  _settleInFlight.add(batch.id);
+  try {
+    if (mode === "full") {
+      // Persist the trusted snapshot in the webhook payload shape so the admin delivery
+      // columns populate (mirrors settleBatchFromLiveStatus).
+      const syntheticPayload: TopupghWebhookPayload = {
+        event:     "delivery_status_updated",
+        timestamp: new Date().toISOString(),
+        order: {
+          order_id:                batch.topupghOrderId ?? 0,
+          order_number:            "",
+          delivery_info:           "",
+          delivery_date:           "",
+          delivery_time:           "",
+          formatted_delivery_info: "",
+          items: items.map(i => ({
+            item_id:            "",
+            beneficiary_number: i.phone,
+            network:            "",
+            data_size:          0,
+            delivery_status:    i.status,
+            delivery_date:      i.date,
+            delivery_time:      i.time,
+          })),
+        },
+      };
+      await db.update(topupghBatchesTable)
+        .set({ deliveryData: syntheticPayload as unknown as Record<string, unknown>, updatedAt: new Date() })
+        .where(eq(topupghBatchesTable.id, batch.id));
+    }
+    await settleBatchDeliveries(batch, items.map(i => ({ phone: i.phone, status: i.status })));
+    return { handled: true, settled: true, itemCount: items.length, mode };
+  } finally {
+    _settleInFlight.delete(batch.id);
+  }
+}
+
 /**
  * Handle a delivery_status_updated webhook from TopUpGH.
  *
- * SECURITY: the webhook endpoint is public and unauthenticated, so its BODY is never
- * trusted for settlement. We use it purely as a TRIGGER — look up the batch by the
- * reported order_id, then re-fetch the AUTHENTICATED (HMAC-signed) delivery-status from
- * TopUpGH and settle from that verified response via fetchAndSettleBatchDelivery. This
- * makes settlement near-instant when TopUpGH delivers (instead of waiting for the slow
- * 1-req/min poll) while keeping it impossible for a forged webhook to mark an order
- * delivered or credit an agent's profit. fetchAndSettleBatchDelivery is idempotent
- * (status-guarded) and per-batch in-flight guarded, so repeated triggers are harmless.
+ * Two paths, chosen by the route's HMAC check (passed in as opts.verified):
+ *   • verified  → settle DIRECTLY from the trusted body via
+ *     settleBatchFromVerifiedWebhookPayload (no outbound call). This is the only settle
+ *     path that works while our egress to TopUpGH is blocked, because the re-fetch below
+ *     hits the same unreachable delivery-status endpoint. Only a full/unambiguous snapshot
+ *     is trusted; settlement is idempotent + status-guarded so a replay can't double-credit.
+ *   • unverified or ambiguous → use the body purely as a TRIGGER: look up the batch by the
+ *     reported order_id and re-fetch the AUTHENTICATED delivery-status, settling from that
+ *     verified response. A forged webhook fails the HMAC check and can at most cause an
+ *     idempotent, rate-limited re-check of our own data.
  */
 // Pull a positive-integer order_id out of either documented webhook shape, tolerating a
 // numeric string. Returns undefined for anything that can't be a real order_id.
@@ -1372,7 +1553,10 @@ function coerceWebhookOrderId(v: unknown): number | undefined {
   return undefined;
 }
 
-export async function handleTopupghWebhook(payload: unknown): Promise<void> {
+export async function handleTopupghWebhook(
+  payload: unknown,
+  opts: { verified?: boolean } = {},
+): Promise<void> {
   const p = (payload && typeof payload === "object" ? payload : {}) as Record<string, unknown>;
 
   // Accept BOTH documented callback shapes:
@@ -1384,9 +1568,7 @@ export async function handleTopupghWebhook(payload: unknown): Promise<void> {
   const event = typeof p.event === "string" ? p.event : undefined;
   if (event !== undefined && event !== "delivery_status_updated") return;
 
-  // order_id may live under `order` (nested) or at the top level (flat). We only need the
-  // id — settlement always re-fetches the AUTHENTICATED delivery-status and never trusts
-  // these body fields, so tolerating extra shapes carries no credit risk.
+  // order_id may live under `order` (nested) or at the top level (flat).
   const nestedOrder = p.order && typeof p.order === "object" ? (p.order as Record<string, unknown>) : undefined;
   const orderId = coerceWebhookOrderId(nestedOrder?.order_id) ?? coerceWebhookOrderId(p.order_id);
   if (orderId === undefined) {
@@ -1402,10 +1584,29 @@ export async function handleTopupghWebhook(payload: unknown): Promise<void> {
     return;
   }
 
-  // Settle from the AUTHENTICATED delivery-status re-fetch, never from the webhook body.
-  // The route has already acked 200, so we settle in the background through the shared
-  // rate gate ("queue"): a webhook burst across many batches drains at 1/min instead of
-  // firing all the re-fetches at once and tripping TopUpGH's limit.
+  // When the signature is verified we trust the body and settle from it directly — the ONLY
+  // settle path that works while our egress to TopUpGH is blocked, since the re-fetch below
+  // hits the same unreachable delivery-status endpoint. Only a full/unambiguous snapshot is
+  // trusted; anything else falls through to the re-fetch trigger.
+  if (opts.verified) {
+    const r = await settleBatchFromVerifiedWebhookPayload(batch, p);
+    if (r.handled) {
+      logger.info(
+        { batchId: batch.id, topupghOrderId: orderId, settled: r.settled, items: r.itemCount, mode: r.mode },
+        "TopUpGH webhook: handled from verified payload",
+      );
+      return;
+    }
+    logger.info(
+      { batchId: batch.id, topupghOrderId: orderId, mode: r.mode },
+      "TopUpGH webhook: verified but payload not safely settleable — falling back to re-fetch",
+    );
+  }
+
+  // Unverified or ambiguous: use the body only as a TRIGGER and settle from the
+  // AUTHENTICATED delivery-status re-fetch. The route has already acked 200, so this drains
+  // through the shared rate gate ("queue"): a webhook burst across many batches drains at
+  // 1/min instead of firing every re-fetch at once and tripping TopUpGH's limit.
   await fetchAndSettleBatchDelivery(batch, { gateMode: "queue" });
 }
 
