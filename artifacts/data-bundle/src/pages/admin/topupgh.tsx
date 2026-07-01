@@ -946,6 +946,7 @@ interface OrderSearchResult {
   mode: "order"; topupghOrderId: number; batch: Batch | null;
   delivery: { success: boolean; order_id: number; delivery_status: Record<string, { delivery_status?: string; delivery_date?: string; delivery_time?: string }> };
   localOrders: { id: number; phone: string; bundleName: string; status: string; createdAt: string }[];
+  liveSkipped?: boolean; liveNotFound?: boolean; message?: string | null;
 }
 
 interface PhonesSearchResult {
@@ -1101,6 +1102,17 @@ function SearchTab() {
       {/* Results */}
       {result && result.mode === "order" && (
         <div className="space-y-4">
+          {/* Notice: rate-limit fallback, order-not-found, or no-data-yet */}
+          {result.message && (
+            <div className={`flex items-start gap-2 px-3 py-2 rounded-xl border ${
+              result.liveNotFound
+                ? "bg-red-50 dark:bg-red-900/10 border-red-200 dark:border-red-800"
+                : "bg-amber-50 dark:bg-amber-900/10 border-amber-200 dark:border-amber-800"
+            }`}>
+              <AlertTriangle className={`w-3.5 h-3.5 shrink-0 mt-0.5 ${result.liveNotFound ? "text-red-500" : "text-amber-500"}`} />
+              <p className={`text-[11px] ${result.liveNotFound ? "text-red-700 dark:text-red-400" : "text-amber-700 dark:text-amber-400"}`}>{result.message}</p>
+            </div>
+          )}
           {/* Batch summary */}
           {result.batch && (
             <div className="bg-card border border-border rounded-2xl p-4 flex flex-wrap gap-4 text-sm">

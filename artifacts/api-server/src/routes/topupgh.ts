@@ -466,11 +466,52 @@ router.post("/admin/topupgh/search", requireAdmin, async (req, res): Promise<voi
       .where(eq(topupghBatchesTable.topupghOrderId, tgId));
 
     try {
-      // Through the shared 1-req/min gate ("skip"): if no slot is free we return the last
+      // Through the shared 1-req/min gate ("skip"): if no slot is free we serve the last
       // stored delivery payload instead of bursting the limit (or starving the poller).
       const slot = await runDeliveryStatusCall(() => topupghGetDeliveryStatus(tgId), "skip");
       const liveSkipped = !slot.ran;
-      const delivery = slot.ran ? slot.value : (batch?.deliveryData ?? null);
+
+      // Normalize to the phone-keyed shape the UI renders. The LIVE delivery-status payload and
+      // the STORED webhook payload carry different item field names:
+      //   • live   → items[].processed_date  ("YYYY-MM-DD, HH:mm:ss" — date & time combined)
+      //   • stored → items[].delivery_date + items[].delivery_time (already split)
+      // extractDeliveryInfo() understands the stored shape; we parse processed_date for live.
+      const deliveryStatus: Record<string, { delivery_status: string; delivery_date: string; delivery_time: string }> = {};
+      let liveHttpStatus = 0;
+      let liveSuccess = false;
+
+      if (slot.ran) {
+        const payload = slot.value as {
+          success?: boolean; __httpStatus?: number;
+          order?: { items?: Array<{ beneficiary_number?: string; delivery_status?: string; processed_date?: string }> };
+        };
+        liveHttpStatus = typeof payload.__httpStatus === "number" ? payload.__httpStatus : 200;
+        const items = payload.order?.items;
+        liveSuccess = payload.success === true || (liveHttpStatus >= 200 && liveHttpStatus < 300 && Array.isArray(items));
+        if (Array.isArray(items)) {
+          for (const it of items) {
+            const phone = it.beneficiary_number;
+            if (!phone) continue;
+            const processed = typeof it.processed_date === "string" ? it.processed_date : "";
+            const commaIdx  = processed.indexOf(", ");
+            deliveryStatus[phone] = {
+              delivery_status: it.delivery_status ?? "unknown",
+              delivery_date:   commaIdx >= 0 ? processed.slice(0, commaIdx) : processed,
+              delivery_time:   commaIdx >= 0 ? processed.slice(commaIdx + 2) : "",
+            };
+          }
+        }
+      } else {
+        // Gate busy → fall back to this batch's last stored delivery payload.
+        for (const [phone, info] of extractDeliveryInfo(batch?.deliveryData ?? null)) {
+          deliveryStatus[phone] = {
+            delivery_status: info.status || "unknown",
+            delivery_date:   info.date,
+            delivery_time:   info.time,
+          };
+        }
+      }
+
       const localOrders = batch
         ? await db.select({
             id: ordersTable.id, phone: ordersTable.phoneNumber,
@@ -478,11 +519,43 @@ router.post("/admin/topupgh/search", requireAdmin, async (req, res): Promise<voi
             createdAt: ordersTable.createdAt,
           }).from(ordersTable).where(eq(ordersTable.topupghBatchId, batch.id))
         : [];
+
+      // If the live call ran but returned nothing usable (404 / empty) while we DO hold a
+      // stored delivery payload for this batch (from an earlier webhook/poll), surface that as
+      // the last-known status instead of an empty table — useful for older orders that have
+      // aged out of TopUpGH's active window. Read-only: this never re-settles or re-credits.
+      let servedStored = false;
+      if (slot.ran && Object.keys(deliveryStatus).length === 0 && batch?.deliveryData) {
+        for (const [phone, info] of extractDeliveryInfo(batch.deliveryData)) {
+          deliveryStatus[phone] = {
+            delivery_status: info.status || "unknown",
+            delivery_date:   info.date,
+            delivery_time:   info.time,
+          };
+        }
+        servedStored = Object.keys(deliveryStatus).length > 0;
+      }
+
+      const liveNotFound = slot.ran && liveHttpStatus === 404 && !servedStored;
+      const noItems = Object.keys(deliveryStatus).length === 0;
+
       res.json({
-        mode: "order", topupghOrderId: tgId, batch: batch ?? null, delivery, localOrders, liveSkipped,
+        mode: "order",
+        topupghOrderId: tgId,
+        batch: batch ?? null,
+        delivery: { success: liveSuccess, order_id: tgId, delivery_status: deliveryStatus },
+        localOrders,
+        liveSkipped,
+        liveNotFound,
         message: liveSkipped
           ? "Showing last saved status — a live check was skipped to respect TopUpGH's 1 req/min limit (shared with the poller). Retry shortly for live."
-          : null,
+          : servedStored
+            ? `TopUpGH no longer returns #${tgId} live (it's outside their active delivery window), so this shows the last delivery status we recorded for the batch.`
+            : liveNotFound
+              ? `TopUpGH returned "Order not found" for #${tgId}. This order is outside their active delivery window (only recent orders stay queryable live). Reconcile it from the TopUpGH dashboard instead.`
+              : noItems
+                ? "TopUpGH returned no delivery items for this order yet. Try again shortly."
+                : null,
       });
     } catch (e) {
       res.status(502).json({ error: e instanceof Error ? e.message : "Failed to fetch delivery status" });
