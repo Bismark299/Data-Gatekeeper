@@ -783,6 +783,11 @@ paths:
           in: query
           schema:
             type: integer
+        - name: search
+          in: query
+          description: Partial phone number match, or exact order id.
+          schema:
+            type: string
       responses:
         "200":
           description: OK

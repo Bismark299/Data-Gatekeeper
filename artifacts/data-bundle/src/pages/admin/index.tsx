@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import { Link } from "wouter";
 import {
   useAdminGetStats,
@@ -136,6 +136,19 @@ function AdminDashboardContent() {
   } as any);
   const updateStatus = useAdminUpdateOrderStatus();
 
+  // Server-side search across ALL orders (debounced). Kept separate from `allOrders`
+  // so the pending-fulfillment counts / stat cards stay on the operational set.
+  const searchTerm = phoneSearch.trim() || orderIdSearch.trim();
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchTerm), 300);
+    return () => clearTimeout(t);
+  }, [searchTerm]);
+  const { data: searchResults } = useAdminListOrders(
+    debouncedSearch ? { search: debouncedSearch } : {},
+    { query: { enabled: !!debouncedSearch } } as any,
+  );
+
   const { data: storeOrders, refetch: refetchStoreOrders } = useQuery<any[]>({
     queryKey: ["adminStoreOrdersDash"],
     queryFn: async () => {
@@ -151,7 +164,9 @@ function AdminDashboardContent() {
   const handleRefresh = () => { refetchStats(); refetchOrders(); refetchStoreOrders(); toast({ title: "Dashboard refreshed" }); };
 
   const invalidateOrders = useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: getAdminListOrdersQueryKey({}) });
+    // No args -> bare prefix key ["/api/admin/orders"], which prefix-matches BOTH
+    // the operational list ({}) and the active search list ({ search }) queries.
+    queryClient.invalidateQueries({ queryKey: getAdminListOrdersQueryKey() });
   }, [queryClient]);
 
   const handleStatusChange = (orderId: number, status: string) => {
@@ -322,14 +337,17 @@ function AdminDashboardContent() {
   const pendingDeposits = useMemo(() => (deposits ?? []).filter(d => d.status === "pending"), [deposits]);
 
   const filteredOrders = useMemo(() => {
-    let src = allOrders ?? [];
-    if (dateFrom) src = src.filter(o => new Date(o.createdAt) >= new Date(dateFrom));
-    if (dateTo) { const to = new Date(dateTo); to.setHours(23, 59, 59, 999); src = src.filter(o => new Date(o.createdAt) <= to); }
+    const searching = !!(phoneSearch.trim() || orderIdSearch.trim());
+    let src = searching ? (searchResults ?? []) : (allOrders ?? []);
+    if (!searching) {
+      if (dateFrom) src = src.filter(o => new Date(o.createdAt) >= new Date(dateFrom));
+      if (dateTo) { const to = new Date(dateTo); to.setHours(23, 59, 59, 999); src = src.filter(o => new Date(o.createdAt) <= to); }
+    }
     if (statusTab !== "all") src = src.filter(o => o.status === statusTab);
     if (phoneSearch.trim()) src = src.filter(o => o.phoneNumber.includes(phoneSearch.trim()));
     if (orderIdSearch.trim()) src = src.filter(o => String(o.id).includes(orderIdSearch.trim()));
     return src;
-  }, [allOrders, statusTab, phoneSearch, orderIdSearch, dateFrom, dateTo]);
+  }, [allOrders, searchResults, statusTab, phoneSearch, orderIdSearch, dateFrom, dateTo]);
 
   const statusCounts = useMemo(() => {
     // Status counts from date-filtered orders (dayOrders)

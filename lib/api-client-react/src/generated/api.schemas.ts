@@ -257,6 +257,10 @@ export type AdminListUsersParams = {
 export type AdminListOrdersParams = {
   status?: string;
   userId?: number;
+  /**
+   * Partial phone number match, or exact order id.
+   */
+  search?: string;
 };
 
 export type AdminListDepositsParams = {

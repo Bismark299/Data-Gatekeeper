@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import {
-  eq, count, sum, desc, gte, lte, and, ilike, inArray, isNull, isNotNull, lt, ne,
+  eq, count, sum, desc, gte, lte, and, or, ilike, inArray, isNull, isNotNull, lt, ne,
   type SQL, sql,
 } from "drizzle-orm";
 import {
@@ -243,10 +243,17 @@ router.get("/admin/orders", requireAdmin, async (req, res): Promise<void> => {
     return;
   }
 
-  const { status, userId } = params.data;
+  const { status, userId, search } = params.data;
   const conditions: SQL[] = [];
   if (status)               conditions.push(eq(ordersTable.status, status));
   if (userId !== undefined) conditions.push(eq(ordersTable.userId, userId));
+  if (search && search.trim()) {
+    const s = search.trim();
+    const searchConds: SQL[] = [ilike(ordersTable.phoneNumber, `%${s}%`)];
+    const asId = Number(s);
+    if (Number.isInteger(asId) && asId > 0) searchConds.push(eq(ordersTable.id, asId));
+    conditions.push(or(...searchConds)!);
+  }
 
   const baseQuery = db
     .select({
@@ -261,8 +268,8 @@ router.get("/admin/orders", requireAdmin, async (req, res): Promise<void> => {
     .leftJoin(topupghBatchesTable, eq(topupghBatchesTable.id, ordersTable.topupghBatchId));
 
   const rows = conditions.length > 0
-    ? await baseQuery.where(and(...conditions)).orderBy(desc(ordersTable.id)).limit(500)
-    : await baseQuery.orderBy(desc(ordersTable.id)).limit(500);
+    ? await baseQuery.where(and(...conditions)).orderBy(desc(ordersTable.id)).limit(2000)
+    : await baseQuery.orderBy(desc(ordersTable.id)).limit(2000);
 
   res.json(rows.map(r => ({
     ...formatOrder(r.order, r.network, r.userName),

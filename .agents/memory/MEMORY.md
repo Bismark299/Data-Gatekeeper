@@ -11,4 +11,5 @@
 - [TopUpGH delivery-status gate](topupgh-delivery-status-gate.md) — EVERY delivery-status caller must go through `runDeliveryStatusCall` (queue=background, skip=interactive→stored fallback); skip is money-safe; queue capped at 50.
 - [MTN dual-provider mutual exclusion](mtn-provider-mutual-exclusion.md) — McBIS claims via mcbisReference, TopUpGH via topupghBatchId; each claim UPDATE must check the other's column or both fulfill the same order. Store orders ride TopUpGH batches too.
 - [Verified-webhook direct-settle](topupgh-webhook-direct-settle.md) — sig-verified delivery webhook may settle directly (egress blocked), but MUST gate on same-phone conflicting outcomes + exact per-phone multiset match or it mis-maps same-phone siblings.
+- [Admin list search server-side](admin-list-search.md) — admin phone/id search must hit a server `search` param (ilike phone OR id) & skip the today-default date filter; client-side search over a newest-N slice hides old rows.
 - [TopUpGH request signing](topupgh-request-signing.md) — sign HMAC over INTERNAL prefix `/topupgh-api/v1`+path (NO query string)+body; 401=bad sig, 404 on path-only GET=order-not-found not auth.

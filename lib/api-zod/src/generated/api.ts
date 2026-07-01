@@ -417,6 +417,10 @@ export const AdminDeleteUserParams = zod.object({
 export const AdminListOrdersQueryParams = zod.object({
   status: zod.coerce.string().optional(),
   userId: zod.coerce.number().optional(),
+  search: zod.coerce
+    .string()
+    .optional()
+    .describe("Partial phone number match, or exact order id."),
 });
 
 export const AdminListOrdersResponseItem = zod.object({

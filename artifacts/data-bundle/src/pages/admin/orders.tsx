@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import {
   useAdminListOrders,
   useAdminUpdateOrderStatus,
@@ -93,19 +93,29 @@ function AdminOrdersContent() {
   const { toast }   = useToast();
   const queryClient = useQueryClient();
 
-  const { data: allOrders, isLoading, refetch } = useAdminListOrders({});
+  // Server-side search: when an admin types a phone number / order id, ask the
+  // server for matches across ALL orders (not just the recent page), debounced.
+  const searchTerm = phoneSearch.trim() || orderIdSearch.trim();
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchTerm), 300);
+    return () => clearTimeout(t);
+  }, [searchTerm]);
+  const listParams = useMemo(() => (debouncedSearch ? { search: debouncedSearch } : {}), [debouncedSearch]);
+
+  const { data: allOrders, isLoading, refetch } = useAdminListOrders(listParams);
   const updateStatus = useAdminUpdateOrderStatus();
 
   const patchOrder = useCallback((orderId: number, patch: Record<string, unknown>) => {
     queryClient.setQueryData(
-      getAdminListOrdersQueryKey({}),
+      getAdminListOrdersQueryKey(listParams),
       (old: unknown) => Array.isArray(old) ? old.map((o: { id: number }) => o.id === orderId ? { ...o, ...patch } : o) : old
     );
-  }, [queryClient]);
+  }, [queryClient, listParams]);
 
   const invalidate = useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: getAdminListOrdersQueryKey({}) });
-  }, [queryClient]);
+    queryClient.invalidateQueries({ queryKey: getAdminListOrdersQueryKey(listParams) });
+  }, [queryClient, listParams]);
 
   const handleStatusChange = (orderId: number, status: string) => {
     updateStatus.mutate({ id: orderId, data: { status } }, {
@@ -179,8 +189,10 @@ function AdminOrdersContent() {
   const filteredStoreOrders = useMemo(() => {
     let src = Array.isArray(storeOrders) ? storeOrders : [];
     if (storeStatusFilter !== "all") src = src.filter((o: any) => o.status === storeStatusFilter);
-    if (storeDateFrom) src = src.filter((o: any) => new Date(o.createdAt) >= new Date(storeDateFrom));
-    if (storeDateTo) { const to = new Date(storeDateTo); to.setHours(23, 59, 59, 999); src = src.filter((o: any) => new Date(o.createdAt) <= to); }
+    if (!storePhoneSearch.trim()) {
+      if (storeDateFrom) src = src.filter((o: any) => new Date(o.createdAt) >= new Date(storeDateFrom));
+      if (storeDateTo) { const to = new Date(storeDateTo); to.setHours(23, 59, 59, 999); src = src.filter((o: any) => new Date(o.createdAt) <= to); }
+    }
     if (storePhoneSearch.trim()) src = src.filter((o: any) => String(o.customerPhone ?? "").includes(storePhoneSearch.trim()));
     return src;
   }, [storeOrders, storeStatusFilter, storeDateFrom, storeDateTo, storePhoneSearch]);
@@ -341,10 +353,12 @@ function AdminOrdersContent() {
       const q = orderIdSearch.trim();
       src = src.filter(o => String(o.id).includes(q));
     }
-    if (dateFrom) src = src.filter(o => new Date(o.createdAt) >= new Date(dateFrom));
-    if (dateTo) {
-      const to = new Date(dateTo); to.setHours(23, 59, 59, 999);
-      src = src.filter(o => new Date(o.createdAt) <= to);
+    if (!searchTerm) {
+      if (dateFrom) src = src.filter(o => new Date(o.createdAt) >= new Date(dateFrom));
+      if (dateTo) {
+        const to = new Date(dateTo); to.setHours(23, 59, 59, 999);
+        src = src.filter(o => new Date(o.createdAt) <= to);
+      }
     }
 
     src = [...src].sort((a, b) => {
