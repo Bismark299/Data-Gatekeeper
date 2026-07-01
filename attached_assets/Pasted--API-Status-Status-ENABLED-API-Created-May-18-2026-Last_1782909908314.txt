@@ -1,0 +1,126 @@
+📊 API Status
+Status: ENABLED
+
+API Created
+May 18, 2026
+Last Used
+Jul 01, 2026
+🔴 Disable API Access
+🚦 Rate Limit Usage
+Requests Used
+0 / 5
+Remaining
+5
+Resets In
+60s
+✅ No requests made in current window. You can make 5 requests.
+Per-Endpoint Limits:
+/topupgh-api/v1/test
+2 req/min
+/topupgh-api/v1/products
+1 req/min
+/topupgh-api/v1/orders/create
+2 req/min
+/topupgh-api/v1/orders
+1 req/min
+/topupgh-api/v1/orders/{order_id}/delivery-status
+1 req/min
+💡 Rate limit counter resets every minute. Use bulk orders (up to 100 items) to maximize efficiency!
+
+🔑 API Credentials
+API Key:
+
+tugh_live_AEl24QOK6hOEKNGqhx25PQdcNuxJFp6p 📋 Copy
+API Secret:
+
+)Jbu,p,N]m YH<l+q:+yC^>rFmNFW|p4M,IIOx19eUk^RVeY2PhI0;Wp}80mr|mZ 📋 Copy
+⚠️ Keep your API secret secure! Never share it publicly or commit it to version control.
+
+🔄 Regenerate Keys
+🌐 Domain Whitelist
+Add the domain/server that is allowed to use your API.
+
+✅ Whitelisted Domain: datagatekeeper.pro
+
+🛡️ Only this domain/server can use your API. It automatically bypasses security plugins and firewalls.
+
+datagatekeeper.pro
+ℹ️ Domain Whitelist Security:
+
+Specified domain: ONLY that domain/server can use your API (secure)
+Security bypass: Whitelisted domains automatically bypass WordPress security plugins and firewalls (including country blocking)
+Wildcards supported: Use *.example.com to allow all subdomains
+Server-to-server: Whitelist server IPs or domains (e.g., 192.168.20.5 or myserver.com)
+Empty whitelist: ALL API requests will be blocked - You must add a domain/server to use the API
+Protection: Prevents unauthorized websites from using your API
+💡 Required:
+
+You must add your domain/server to use the API. Without a whitelist, all API requests will be blocked. This ensures your API only works on authorized domains and prevents unauthorized use.
+
+Examples:
+• example.com - Allow only example.com (strict)
+• *.example.com - Allow all subdomains of example.com
+• yoursite.com - Allow your server domain
+• 192.168.20.5 - Allow specific server IP (not recommended, use domain instead)
+
+💾 Save Domain
+🔔 Delivery Status Webhooks
+Receive real-time delivery status updates via webhooks.
+
+When your orders are processed and delivery status updates, we'll automatically send a POST request to your webhook URL with the delivery information.
+
+Webhook URL:
+
+https://datagatekeeper.pro/api/topupgh/webhook
+
+Enable webhook notifications
+✅ Webhook Configured: https://datagatekeeper.pro/api/topupgh/webhook
+
+Statistics:
+• Sent: 36060 | Failed: 562
+• Last Sent: Jun 28, 2026 01:26
+ℹ️ How Webhooks Work:
+
+Real-time updates: Receive instant notifications when delivery status changes
+Automatic retries: Failed webhooks are automatically retried (3 attempts)
+Secure: Each webhook includes HMAC signature for verification
+Non-blocking: Webhooks are sent asynchronously, won't slow down your orders
+Format: POST request with JSON payload containing order and delivery info
+🔐 Security:
+
+Each webhook includes an X-Webhook-Signature header with HMAC SHA-256 signature. Verify the signature using your API Secret to ensure the webhook is authentic.
+
+💾 Save Webhook Settings
+🧪 Test Webhook
+📊 Webhook Status Dashboard
+Real-time monitoring of your webhook delivery status.
+
+✅ Delivered
+36060
+⏳ Pending
+0
+❌ Failed
+0
+🕐 Last Delivery
+Jun 28, 01:26
+✅ No failed webhooks! All deliveries successful.
+
+📧 Email me when webhooks fail permanently
+Receive email notifications when webhook delivery fails after all retry attempts.
+
+📚 API Documentation
+View interactive API documentation and test endpoints:
+
+📖 View API Documentation
+📊 Recent API Activity
+Endpoint	Method	Status	Time
+/orders/1921895/delivery-status	GET	404	Jul 01, 12:39
+/orders/1922001/delivery-status	GET	404	Jul 01, 12:37
+/orders/1922210/delivery-status	GET	404	Jul 01, 12:35
+/orders/1922124/delivery-status	GET	404	Jul 01, 12:33
+/orders/1921879/delivery-status	GET	404	Jul 01, 12:31
+/orders/1921939/delivery-status	GET	404	Jul 01, 12:29
+/orders/1922082/delivery-status	GET	404	Jul 01, 12:27
+/orders/1921907/delivery-status	GET	404	Jul 01, 12:25
+/orders/1922026/delivery-status	GET	404	Jul 01, 12:23
+/orders/1922161/delivery-status	GET	404	Jul 01, 12:21
