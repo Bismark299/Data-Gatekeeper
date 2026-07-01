@@ -340,42 +340,73 @@ router.patch("/admin/orders/:id/status", requireAdmin, async (req, res): Promise
   res.json(formatOrder(order));
 });
 
+// Shared money-safe refund: locks the order row, guards terminal states, marks
+// it failed, credits the customer's wallet, and records both ledger entries.
+// Used by the single-order refund route AND the bulk cancel-and-refund route so
+// they behave identically. Must be called inside a db.transaction.
+type OrderRefundTx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+async function refundOrderInTx(
+  tx: OrderRefundTx,
+  id: number,
+  adminId: number,
+  opts?: { allowedStatuses?: string[] },
+): Promise<number> {
+  const [locked] = await tx
+    .select()
+    .from(ordersTable)
+    .where(eq(ordersTable.id, id))
+    .for("update");
+
+  if (!locked) throw Object.assign(new Error("Order not found"), { status: 404 });
+  if (locked.status === "completed") throw Object.assign(new Error("Cannot refund a completed order"), { status: 400 });
+  if (locked.status === "failed" || locked.status === "cancelled") {
+    throw Object.assign(new Error("Order is already failed/refunded"), { status: 400 });
+  }
+  // Callers (e.g. bulk cancel) may restrict which statuses are eligible.
+  if (opts?.allowedStatuses && !opts.allowedStatuses.includes(locked.status)) {
+    throw Object.assign(new Error(`Order is ${locked.status}; not eligible for bulk cancel`), { status: 400 });
+  }
+
+  // Durable idempotency independent of orders.status (which other writers — admin
+  // status routes, provider pollers — can change): never credit twice for the
+  // same order. The order row is locked above, so concurrent refunds on this
+  // order serialize and the second one sees this committed ledger entry.
+  const [existingRefund] = await tx
+    .select({ ref: walletLedgerTable.reference })
+    .from(walletLedgerTable)
+    .where(and(
+      eq(walletLedgerTable.reference, `refund-order-${id}`),
+      eq(walletLedgerTable.type, "credit"),
+    ))
+    .limit(1);
+  if (existingRefund) throw Object.assign(new Error("Order is already failed/refunded"), { status: 400 });
+
+  await tx.update(ordersTable).set({ status: "failed" }).where(eq(ordersTable.id, id));
+
+  // Credit the refund amount back to wallet and record in the ledger
+  await creditWallet(locked.userId, parseFloat(locked.price), tx, {
+    source: "refund",
+    reference: `refund-order-${id}`,
+    note: `Refund for cancelled order #${id} (${locked.bundleName})`,
+  });
+
+  // Log the cancellation in the admin's own ledger for audit trail
+  await insertLedgerEntry(
+    tx, adminId, parseFloat(locked.price), "debit", "order_cancelled",
+    `cancel-order-${id}`,
+    `Cancelled order #${id} for user #${locked.userId} — GH₵${locked.price} refunded`,
+  );
+
+  return Number(locked.price);
+}
+
 router.post("/admin/orders/:id/refund", requireAdmin, async (req, res): Promise<void> => {
   const id = Number(req.params.id);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid order ID" }); return; }
 
   try {
-    const refunded = await db.transaction(async (tx) => {
-      const [locked] = await tx
-        .select()
-        .from(ordersTable)
-        .where(eq(ordersTable.id, id))
-        .for("update");
-
-      if (!locked) throw Object.assign(new Error("Order not found"), { status: 404 });
-      if (locked.status === "completed") throw Object.assign(new Error("Cannot refund a completed order"), { status: 400 });
-      if (locked.status === "failed")    throw Object.assign(new Error("Order is already failed/refunded"), { status: 400 });
-
-      await tx.update(ordersTable).set({ status: "failed" }).where(eq(ordersTable.id, id));
-
-      // Credit the refund amount back to wallet and record in the ledger
-      await creditWallet(locked.userId, parseFloat(locked.price), tx, {
-        source: "refund",
-        reference: `refund-order-${id}`,
-        note: `Refund for cancelled order #${id} (${locked.bundleName})`,
-      });
-
-      // Log the cancellation in the admin's own ledger for audit trail
-      const adminId = req.session.userId!;
-      await insertLedgerEntry(
-        tx, adminId, parseFloat(locked.price), "debit", "order_cancelled",
-        `cancel-order-${id}`,
-        `Cancelled order #${id} for user #${locked.userId} — GH₵${locked.price} refunded`,
-      );
-
-      return Number(locked.price);
-    });
-
+    const refunded = await db.transaction((tx) => refundOrderInTx(tx, id, req.session.userId!));
     res.json({ success: true, refunded });
   } catch (err: unknown) {
     const e = err as { message?: string; status?: number };
@@ -399,6 +430,136 @@ router.post("/admin/orders/bulk-status", requireAdmin, async (req, res): Promise
 
   await db.update(ordersTable).set({ status }).where(inArray(ordersTable.id, numIds));
   res.json({ updated: numIds.length });
+});
+
+// ── Bulk cancel & refund ────────────────────────────────────────────────────
+// The preview route resolves a pasted list of phone numbers (or order IDs) to
+// the actual orders that would be affected, WITHOUT mutating anything, so the
+// admin can confirm exactly what will be cancelled/refunded (and how much money
+// moves) before anything happens. The confirm route then runs each order through
+// the SAME money-safe path as the single-order refund.
+
+const BulkRefundResolveBody = z.object({
+  mode: z.enum(["phone", "id"]),
+  values: z.array(z.string()).min(1).max(2000),
+  dateFrom: z.string().optional(),
+  dateTo: z.string().optional(),
+});
+
+// Bulk cancel is restricted to PENDING orders only. A "processing" order may be
+// mid-delivery at a provider (McBIS / CKG / TopUpGH), so cancelling it in bulk
+// risks refund + delivery. Processing orders show up as "skipped" and must be
+// cancelled individually after a delivery check.
+const REFUNDABLE_STATUSES = ["pending"];
+
+router.post("/admin/orders/bulk-refund-preview", requireAdmin, async (req, res): Promise<void> => {
+  const parsed = BulkRefundResolveBody.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
+  const { mode, values, dateFrom, dateTo } = parsed.data;
+
+  // Fail closed on malformed dates rather than silently ignoring them (which
+  // would widen the set of orders shown to refund).
+  const conditions: SQL[] = [];
+  if (dateFrom) {
+    const f = new Date(dateFrom);
+    if (isNaN(f.getTime())) { res.status(400).json({ error: "Invalid dateFrom" }); return; }
+    conditions.push(gte(ordersTable.createdAt, f));
+  }
+  if (dateTo) {
+    const t = new Date(dateTo);
+    if (isNaN(t.getTime())) { res.status(400).json({ error: "Invalid dateTo" }); return; }
+    t.setHours(23, 59, 59, 999);
+    conditions.push(lte(ordersTable.createdAt, t));
+  }
+
+  let inputKeys: string[];
+  if (mode === "id") {
+    const ids = [...new Set(values.map(v => Number(String(v).trim())).filter(n => Number.isInteger(n) && n > 0))];
+    if (ids.length === 0) { res.status(400).json({ error: "No valid order IDs" }); return; }
+    inputKeys = ids.map(String);
+    conditions.push(inArray(ordersTable.id, ids));
+  } else {
+    const phones9 = [...new Set(values.map(v => String(v).replace(/[^0-9]/g, "").slice(-9)).filter(p => p.length >= 9))];
+    if (phones9.length === 0) { res.status(400).json({ error: "No valid phone numbers" }); return; }
+    inputKeys = phones9;
+    const suffix = sql`right(regexp_replace(${ordersTable.phoneNumber}, '[^0-9]', '', 'g'), 9)`;
+    conditions.push(inArray(suffix, phones9));
+  }
+
+  const rows = await db
+    .select({
+      id: ordersTable.id,
+      phoneNumber: ordersTable.phoneNumber,
+      bundleName: ordersTable.bundleName,
+      bundleData: ordersTable.bundleData,
+      price: ordersTable.price,
+      status: ordersTable.status,
+      createdAt: ordersTable.createdAt,
+    })
+    .from(ordersTable)
+    .where(and(...conditions))
+    .orderBy(desc(ordersTable.createdAt))
+    .limit(5000);
+
+  const refundable = rows.filter(r => REFUNDABLE_STATUSES.includes(r.status));
+  const skipped = rows
+    .filter(r => !REFUNDABLE_STATUSES.includes(r.status))
+    .map(r => ({
+      id: r.id, phoneNumber: r.phoneNumber, bundleName: r.bundleName, bundleData: r.bundleData,
+      price: r.price, status: r.status, createdAt: r.createdAt.toISOString(),
+      reason:
+        r.status === "processing" ? "processing — being delivered; cancel individually after a delivery check"
+        : r.status === "completed" ? "already completed"
+        : "already failed/cancelled",
+    }));
+
+  const matchedKeys = new Set(
+    mode === "id" ? rows.map(r => String(r.id)) : rows.map(r => r.phoneNumber.replace(/[^0-9]/g, "").slice(-9)),
+  );
+  const notFound = inputKeys.filter(k => !matchedKeys.has(k));
+  const totalRefund = refundable.reduce((s, r) => s + parseFloat(r.price), 0);
+
+  res.json({
+    refundable: refundable.map(r => ({ ...r, createdAt: r.createdAt.toISOString() })),
+    skipped,
+    notFound,
+    totalRefund,
+    counts: { refundable: refundable.length, skipped: skipped.length, notFound: notFound.length },
+  });
+});
+
+const BulkRefundConfirmBody = z.object({
+  ids: z.array(z.number().int().positive()).min(1).max(2000),
+});
+
+router.post("/admin/orders/bulk-refund", requireAdmin, async (req, res): Promise<void> => {
+  const parsed = BulkRefundConfirmBody.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
+  const adminId = req.session.userId!;
+  const ids = [...new Set(parsed.data.ids)];
+
+  const refunded: { id: number; refunded: number }[] = [];
+  const skipped: { id: number; reason: string }[] = [];
+
+  // Each order refunds in its OWN transaction so one failure can't roll back the
+  // rest, and each is independently row-locked + status-guarded — already
+  // failed/completed orders are skipped, never double-refunded.
+  for (const id of ids) {
+    try {
+      const amount = await db.transaction((tx) => refundOrderInTx(tx, id, adminId, { allowedStatuses: ["pending"] }));
+      refunded.push({ id, refunded: amount });
+    } catch (err: unknown) {
+      const e = err as { message?: string };
+      skipped.push({ id, reason: e.message ?? "Refund failed" });
+    }
+  }
+
+  const totalRefunded = refunded.reduce((s, r) => s + r.refunded, 0);
+  req.log?.info(
+    { adminId, refundedCount: refunded.length, totalRefunded, skippedCount: skipped.length },
+    "admin bulk cancel & refund",
+  );
+  res.json({ refundedCount: refunded.length, totalRefunded, skipped });
 });
 
 router.post("/admin/orders/complete-processing", requireAdmin, async (req, res): Promise<void> => {

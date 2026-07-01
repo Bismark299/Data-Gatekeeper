@@ -9,6 +9,7 @@ import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { AdminSidebar } from "@/components/AdminSidebar";
 import { AdminFinancialSummary } from "@/components/AdminFinancialSummary";
 import { OrderDeliveryCheckButton } from "@/components/OrderDeliveryCheckButton";
+import { BulkCancelRefundDialog } from "@/components/BulkCancelRefundDialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -452,6 +453,7 @@ function AdminOrdersContent() {
                 <Button variant="outline" size="sm" onClick={handleExport} disabled={processedOrders.length === 0} className="gap-1.5" data-testid="button-export-csv">
                   <Download className="w-3.5 h-3.5" /> Export CSV
                 </Button>
+                <BulkCancelRefundDialog onDone={() => { invalidate(); refetch(); }} />
               </>
             )}
             {pageView === "store" && (
