@@ -7,6 +7,10 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { Input } from "@/components/ui/input";
 import {
+  AlertDialog, AlertDialogTrigger, AlertDialogContent, AlertDialogHeader,
+  AlertDialogFooter, AlertDialogTitle, AlertDialogDescription, AlertDialogAction, AlertDialogCancel,
+} from "@/components/ui/alert-dialog";
+import {
   Menu, RefreshCw, Loader2, Package2, Zap, CheckCircle2, AlertCircle,
   Clock, Send, Wifi, Info, ChevronDown, ChevronUp, AlertTriangle,
   BarChart3, ArrowRight, Search, Hash, Phone, Filter, X,
@@ -301,6 +305,102 @@ function CheckDeliveryButton({ batchId, compact = false }: { batchId: number; co
   );
 }
 
+interface CompleteBatchResponse {
+  success: boolean; batchId: number; completed: number; batchStatus: string; note: string;
+}
+
+/**
+ * Per-batch "Complete" button — a manual override for when TopUpGH never confirms delivery
+ * but the admin has verified it on the TopUpGH dashboard. Force-completes every still-open
+ * order in the batch on the admin's attestation (no TopUpGH call). The backend reuses the
+ * canonical, idempotent settle path, so already completed/failed orders are never touched
+ * and store profit is never double-credited. Gated behind a confirmation dialog.
+ */
+function CompleteBatchButton({ batchId, compact = false }: { batchId: number; compact?: boolean }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+
+  const mutation = useMutation({
+    mutationFn: () =>
+      fetch(`/api/admin/topupgh/batches/${batchId}/complete`, {
+        method: "POST",
+        credentials: "include",
+      }).then(async r => {
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error ?? "Complete failed");
+        return d as CompleteBatchResponse;
+      }),
+    onSuccess: d => {
+      toast({
+        title: d.completed > 0
+          ? `Batch #${batchId} completed — ${d.completed} order${d.completed === 1 ? "" : "s"} settled`
+          : `Nothing to complete in batch #${batchId}`,
+        description: d.note,
+      });
+      queryClient.invalidateQueries({ queryKey: ["topupgh-batch", batchId] });
+      queryClient.invalidateQueries({ queryKey: ["topupgh-batches"] });
+      queryClient.invalidateQueries({ queryKey: ["topupgh-all-orders"] });
+      setOpen(false);
+    },
+    onError: (e: unknown) => {
+      toast({ title: e instanceof Error ? e.message : "Complete failed", variant: "destructive" });
+      setOpen(false);
+    },
+  });
+
+  return (
+    <AlertDialog open={open} onOpenChange={(o) => { if (!mutation.isPending) setOpen(o); }}>
+      <AlertDialogTrigger asChild>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={(e) => e.stopPropagation()}
+          disabled={mutation.isPending}
+          title="Manually complete this batch (admin attestation)"
+          className={compact
+            ? "h-7 w-7 p-0 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800 hover:border-emerald-400 hover:text-emerald-700"
+            : "gap-1.5 h-7 text-xs text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800 hover:border-emerald-400"}
+        >
+          {mutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />}
+          {!compact && "Complete"}
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent onClick={(e) => e.stopPropagation()}>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Force-complete batch #{batchId}?</AlertDialogTitle>
+          <AlertDialogDescription asChild>
+            <div className="space-y-2 text-sm">
+              <p>
+                This marks every still-open order in this batch as{" "}
+                <span className="font-semibold text-emerald-600 dark:text-emerald-400">delivered / completed</span>{" "}
+                without asking TopUpGH — it settles on <span className="font-semibold">your attestation</span> that
+                the bundles actually reached the customers. Any linked agent-store orders will have their profit credited.
+              </p>
+              <p className="text-amber-600 dark:text-amber-400 font-medium">
+                Only do this after confirming delivery on the TopUpGH dashboard. Orders already completed or failed are
+                left untouched — nothing is double-credited.
+              </p>
+            </div>
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={mutation.isPending}>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={(e) => { e.preventDefault(); mutation.mutate(); }}
+            disabled={mutation.isPending}
+            className="bg-emerald-600 hover:bg-emerald-700 text-white"
+          >
+            {mutation.isPending
+              ? <><Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> Completing…</>
+              : "Yes, complete batch"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
 function ExpandedBatch({ batchId }: { batchId: number }) {
   const { data, isLoading } = useQuery<BatchDetail>({
     queryKey: ["topupgh-batch", batchId],
@@ -564,6 +664,7 @@ function BatchesTab() {
                         <td className="px-4 py-2.5 text-center">
                           <div className="flex items-center justify-center gap-1.5">
                             {b.topupghOrderId && <CheckDeliveryButton batchId={b.id} compact />}
+                            {b.topupghOrderId && b.status === "processing" && <CompleteBatchButton batchId={b.id} compact />}
                             {expandedId === b.id
                               ? <ChevronUp className="w-3.5 h-3.5 text-muted-foreground" />
                               : <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />}

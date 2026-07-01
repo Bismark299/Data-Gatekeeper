@@ -278,6 +278,48 @@ router.post("/admin/topupgh/batches/:id/check-delivery", requireAdmin, async (re
   }
 });
 
+// ─── Force-complete a single batch (admin attestation) ────────────────────────
+// POST /admin/topupgh/batches/:id/complete
+// Manually marks every still-open order in ONE batch as delivered/completed WITHOUT
+// calling TopUpGH — it settles on the admin's own attestation that the bundles actually
+// reached the customers. Reuses reconcileBatchOrderLevel({ force: true }) → the canonical
+// settleBatchDeliveries path, so it is idempotent + row-locked + status-guarded: already
+// completed/failed orders are never re-completed or double-credited, and each agent store
+// order's profit is credited exactly once. Use ONLY when TopUpGH never confirms delivery
+// but you have verified it on the TopUpGH dashboard.
+router.post("/admin/topupgh/batches/:id/complete", requireAdmin, async (req, res): Promise<void> => {
+  const batchId = parseInt(String(req.params.id));
+  if (isNaN(batchId)) { res.status(400).json({ error: "Invalid batch ID" }); return; }
+
+  const [batch] = await db.select().from(topupghBatchesTable).where(eq(topupghBatchesTable.id, batchId));
+  if (!batch) { res.status(404).json({ error: "Batch not found" }); return; }
+  if (!batch.topupghOrderId) {
+    res.status(400).json({ error: "Batch was never dispatched to TopUpGH — its orders were never sent, so there is nothing to complete." });
+    return;
+  }
+  // Only "processing" (stuck) batches can be force-completed. settleBatchDeliveries only
+  // recomputes a batch's final status when it started as "processing", so allowing this on a
+  // partial/failed/completed batch would settle stray orders while leaving the batch label
+  // stale. This also mirrors the reconcile-range tool, which scans only "processing" batches.
+  if (batch.status !== "processing") {
+    res.status(400).json({ error: `Only batches stuck in "processing" can be force-completed — this batch is "${batch.status}".` });
+    return;
+  }
+
+  try {
+    const result = await reconcileBatchOrderLevel(batch, { force: true });
+    logger.info(
+      { batchId, adminId: req.session.userId!, completed: result.completed, batchStatus: result.batchStatus },
+      "Admin force-completed TopUpGH batch on attestation",
+    );
+    res.json({ success: true, ...result });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Failed to complete batch";
+    logger.error({ err: e, batchId }, `topupgh force-complete failed: ${msg}`);
+    res.status(500).json({ error: msg });
+  }
+});
+
 // ─── Bulk reconcile a stuck range via order-LEVEL status ──────────────────────
 // POST /admin/topupgh/reconcile-range
 // Body: { minOrderId: number; maxOrderId: number; force?: boolean; limit?: number }
