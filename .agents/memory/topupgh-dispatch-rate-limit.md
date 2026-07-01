@@ -71,3 +71,13 @@ this needs zero prod migration. Then `recoverStuckTopupghBatches` has 3 parts:
 ## Accepted trade-off
 Genuinely-unsent ambiguous orders may need manual review instead of auto-retry.
 That is intentional: never auto-resend a possibly-charged order.
+
+# Create-order batch size limits (E-TopUpGH, updated 2026-07-01)
+
+TopUpGH's official create-order limits: **min 5, max 300 items per request** (previously
+min 1 / max 100). They asked integrators to send 5–300 items per batch.
+
+Our `getTopupghSettings()` clamps: `minBatch = Math.max(5, …)` (already matches the new min)
+but `maxBatch = Math.min(100, …)` — the **100 ceiling is now stale** and should become 300
+when we act on this. Bumping it lets each dispatch pack more orders per request, which also
+eases the tight per-minute rate limit (fewer create calls for the same volume).
