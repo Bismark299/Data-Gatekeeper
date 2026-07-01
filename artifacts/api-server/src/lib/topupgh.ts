@@ -43,7 +43,12 @@ function getCredentials() {
 function buildHeaders(method: string, endpoint: string, body = ""): Record<string, string> {
   const { apiKey, apiSecret } = getCredentials();
   const timestamp = Math.floor(Date.now() / 1000).toString();
-  const signatureString = timestamp + method + TOPUPGH_INTERNAL_PREFIX + endpoint + body;
+  // TopUpGH signs the INTERNAL route PATH ONLY — excluding the query string. Their Swagger
+  // code samples sign endpoint="/topupgh-api/v1/products" while fetching "/products?network=mtn",
+  // so query params (e.g. /products?network=, /orders?page=) must be stripped from the signed
+  // string or the signature won't match and the request 401s. Path-only endpoints are unaffected.
+  const pathForSig = endpoint.split("?")[0];
+  const signatureString = timestamp + method + TOPUPGH_INTERNAL_PREFIX + pathForSig + body;
   const signature = crypto.createHmac("sha256", apiSecret).update(signatureString).digest("hex");
   return {
     "Accept":          "application/json",
