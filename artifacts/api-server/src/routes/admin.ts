@@ -350,7 +350,7 @@ async function refundOrderInTx(
   tx: OrderRefundTx,
   id: number,
   adminId: number,
-  opts?: { allowedStatuses?: string[] },
+  opts?: { allowedStatuses?: string[]; requireNoProviderRef?: boolean },
 ): Promise<number> {
   const [locked] = await tx
     .select()
@@ -366,6 +366,12 @@ async function refundOrderInTx(
   // Callers (e.g. bulk cancel) may restrict which statuses are eligible.
   if (opts?.allowedStatuses && !opts.allowedStatuses.includes(locked.status)) {
     throw Object.assign(new Error(`Order is ${locked.status}; not eligible for bulk cancel`), { status: 400 });
+  }
+  // A "pending" order can already be provider-locked (LOCK-* reference set before
+  // its status flips to "processing"), so refuse to bulk-refund anything that has
+  // been handed to a provider — that would risk refund + delivery.
+  if (opts?.requireNoProviderRef && (locked.mcbisReference || locked.ckgodswayReference || locked.topupghBatchId != null)) {
+    throw Object.assign(new Error("Order is already dispatched/in-flight; cancel individually after a delivery check"), { status: 400 });
   }
 
   // Durable idempotency independent of orders.status (which other writers — admin
@@ -495,20 +501,32 @@ router.post("/admin/orders/bulk-refund-preview", requireAdmin, async (req, res):
       price: ordersTable.price,
       status: ordersTable.status,
       createdAt: ordersTable.createdAt,
+      mcbisReference: ordersTable.mcbisReference,
+      ckgodswayReference: ordersTable.ckgodswayReference,
+      topupghBatchId: ordersTable.topupghBatchId,
     })
     .from(ordersTable)
     .where(and(...conditions))
     .orderBy(desc(ordersTable.createdAt))
     .limit(5000);
 
-  const refundable = rows.filter(r => REFUNDABLE_STATUSES.includes(r.status));
+  const hasProviderRef = (r: (typeof rows)[number]) =>
+    !!r.mcbisReference || !!r.ckgodswayReference || r.topupghBatchId != null;
+  // Refundable = pending AND not already handed to a provider. A pending order can
+  // still be provider-locked (LOCK-* ref set before status flips to processing),
+  // so status alone is not enough to rule out an in-flight delivery.
+  const isRefundable = (r: (typeof rows)[number]) =>
+    REFUNDABLE_STATUSES.includes(r.status) && !hasProviderRef(r);
+
+  const refundable = rows.filter(isRefundable);
   const skipped = rows
-    .filter(r => !REFUNDABLE_STATUSES.includes(r.status))
+    .filter(r => !isRefundable(r))
     .map(r => ({
       id: r.id, phoneNumber: r.phoneNumber, bundleName: r.bundleName, bundleData: r.bundleData,
       price: r.price, status: r.status, createdAt: r.createdAt.toISOString(),
       reason:
-        r.status === "processing" ? "processing — being delivered; cancel individually after a delivery check"
+        r.status === "pending" && hasProviderRef(r) ? "already dispatched/in-flight — cancel individually after a delivery check"
+        : r.status === "processing" ? "processing — being delivered; cancel individually after a delivery check"
         : r.status === "completed" ? "already completed"
         : "already failed/cancelled",
     }));
@@ -546,7 +564,7 @@ router.post("/admin/orders/bulk-refund", requireAdmin, async (req, res): Promise
   // failed/completed orders are skipped, never double-refunded.
   for (const id of ids) {
     try {
-      const amount = await db.transaction((tx) => refundOrderInTx(tx, id, adminId, { allowedStatuses: ["pending"] }));
+      const amount = await db.transaction((tx) => refundOrderInTx(tx, id, adminId, { allowedStatuses: ["pending"], requireNoProviderRef: true }));
       refunded.push({ id, refunded: amount });
     } catch (err: unknown) {
       const e = err as { message?: string };
