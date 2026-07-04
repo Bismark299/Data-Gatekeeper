@@ -1283,10 +1283,16 @@ async function settleBatchDeliveries(
     if (!orderRow) continue;
 
     // Mark the order completed or failed. No wallet refund on failure — a failed
-    // delivery is left for an admin to handle manually.
+    // delivery is left for an admin to handle manually. The status guard makes the
+    // write authoritative for terminal states: if an admin bulk-refund committed
+    // between the SELECT above and here (flipping the row to failed+refunded), this
+    // UPDATE matches nothing and cannot resurrect it to completed — no refund+delivery.
     await db.update(ordersTable)
       .set({ status: delivered ? "completed" : "failed" })
-      .where(eq(ordersTable.id, orderRow.id));
+      .where(and(
+        eq(ordersTable.id, orderRow.id),
+        inArray(ordersTable.status, ["pending", "processing"]),
+      ));
 
     if (failed) {
       logger.info({ orderId: orderRow.id, phone: item.phone }, "TopUpGH delivery failed — order marked failed (no auto-refund)");

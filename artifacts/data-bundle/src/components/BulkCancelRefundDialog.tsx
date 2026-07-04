@@ -105,7 +105,7 @@ export function BulkCancelRefundDialog({ onDone }: { onDone: () => void }) {
         <DialogHeader>
           <DialogTitle>Bulk Cancel &amp; Refund</DialogTitle>
           <DialogDescription>
-            Paste phone numbers or order IDs. Preview first to see exactly which pending orders will be cancelled and refunded to each customer&apos;s wallet. Only pending orders are eligible — orders already being delivered (processing) are listed as skipped and must be cancelled individually after a delivery check.
+            Paste phone numbers or order IDs. Preview first to see exactly which orders will be cancelled and refunded to each customer&apos;s wallet. Pending and processing orders are eligible and are refunded the same way. A pending order that&apos;s already been handed to a provider is skipped (to avoid refund + delivery) — cancel those individually after a delivery check.
           </DialogDescription>
         </DialogHeader>
 
@@ -192,7 +192,7 @@ export function BulkCancelRefundDialog({ onDone }: { onDone: () => void }) {
                             <td className="px-2 py-1">{o.bundleData || o.bundleName}</td>
                             <td className="px-2 py-1 font-semibold">{Number(o.price).toFixed(2)}</td>
                             <td className="px-2 py-1">
-                              <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-900/20 dark:text-amber-400">{o.status}</span>
+                              <span className={`px-1.5 py-0.5 rounded ${o.status === "processing" ? "bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400" : "bg-amber-100 text-amber-800 dark:bg-amber-900/20 dark:text-amber-400"}`}>{o.status}</span>
                             </td>
                           </tr>
                         ))}

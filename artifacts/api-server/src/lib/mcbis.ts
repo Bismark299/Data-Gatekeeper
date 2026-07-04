@@ -331,10 +331,13 @@ export function startMcbisPoller(): void {
         if (!o.ref) continue;
         try {
           const s = await mcbisCheckStatus(apiKey, o.ref);
+          // Guard on status="processing": an admin bulk-refund can commit during the
+          // network call above (flipping this row to failed+refunded). Without the
+          // guard this write would resurrect it to completed → refund + delivery.
           if (s === "success" || s === "completed") {
-            await db.update(ordersTable).set({ status: "completed" }).where(eq(ordersTable.id, o.id));
+            await db.update(ordersTable).set({ status: "completed" }).where(and(eq(ordersTable.id, o.id), eq(ordersTable.status, "processing")));
           } else if (s === "failed") {
-            await db.update(ordersTable).set({ status: "failed" }).where(eq(ordersTable.id, o.id));
+            await db.update(ordersTable).set({ status: "failed" }).where(and(eq(ordersTable.id, o.id), eq(ordersTable.status, "processing")));
           }
         } catch { /* transient error — retry next cycle */ }
         await sleep(STATUS_DELAY_MS);

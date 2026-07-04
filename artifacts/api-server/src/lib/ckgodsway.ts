@@ -333,10 +333,13 @@ export async function handleCkgodswayWebhook(payload: CkgodswayWebhookPayload): 
     if (!row) { logger.warn({ reference }, "CK Godsway webhook: platform order not found"); return; }
     if (row.status === "completed" || row.status === "failed") return; // idempotent
 
+    // Guard on non-terminal status: an admin bulk-refund can commit between the
+    // SELECT above and here, flipping the row to failed+refunded. The guard makes
+    // that refund authoritative so this webhook can't resurrect it to completed.
     if (status === "SUCCESSFUL") {
-      await db.update(ordersTable).set({ status: "completed" }).where(eq(ordersTable.id, row.id));
+      await db.update(ordersTable).set({ status: "completed" }).where(and(eq(ordersTable.id, row.id), inArray(ordersTable.status, ["pending", "processing"])));
     } else if (status === "FAILED" || status === "CANCELLED") {
-      await db.update(ordersTable).set({ status: "failed" }).where(eq(ordersTable.id, row.id));
+      await db.update(ordersTable).set({ status: "failed" }).where(and(eq(ordersTable.id, row.id), inArray(ordersTable.status, ["pending", "processing"])));
     }
     return;
   }
@@ -407,10 +410,13 @@ export function startCkgodswayPoller(): void {
         if (!o.ref || o.ref.startsWith("LOCK-")) continue;
         try {
           const s = await ckgodswayCheckStatus(apiKey, o.ref);
+          // Guard on status="processing": an admin bulk-refund can commit during the
+          // network call above (flipping this row to failed+refunded). Without the
+          // guard this write would resurrect it to completed → refund + delivery.
           if (s === "SUCCESSFUL") {
-            await db.update(ordersTable).set({ status: "completed" }).where(eq(ordersTable.id, o.id));
+            await db.update(ordersTable).set({ status: "completed" }).where(and(eq(ordersTable.id, o.id), eq(ordersTable.status, "processing")));
           } else if (s === "FAILED" || s === "CANCELLED") {
-            await db.update(ordersTable).set({ status: "failed" }).where(eq(ordersTable.id, o.id));
+            await db.update(ordersTable).set({ status: "failed" }).where(and(eq(ordersTable.id, o.id), eq(ordersTable.status, "processing")));
           }
         } catch { /* transient — retry next cycle */ }
         await sleep(STATUS_DELAY_MS);

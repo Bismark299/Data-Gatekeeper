@@ -368,9 +368,18 @@ async function refundOrderInTx(
     throw Object.assign(new Error(`Order is ${locked.status}; not eligible for bulk cancel`), { status: 400 });
   }
   // A "pending" order can already be provider-locked (LOCK-* reference set before
-  // its status flips to "processing"), so refuse to bulk-refund anything that has
-  // been handed to a provider — that would risk refund + delivery.
-  if (opts?.requireNoProviderRef && (locked.mcbisReference || locked.ckgodswayReference || locked.topupghBatchId != null)) {
+  // its status flips to "processing"), so refuse to bulk-refund a PENDING order that
+  // has been handed to a provider — that would risk refund + delivery. A "processing"
+  // order ALWAYS carries a provider ref (that's how it was dispatched); it is refunded
+  // here deliberately, the same way a pending cancel behaves. This is money-safe against
+  // a late delivery because settleBatchDeliveries only completes orders still in
+  // pending/processing, so once this order is refunded (→ failed) no webhook/poll can
+  // re-complete it.
+  if (
+    opts?.requireNoProviderRef &&
+    locked.status === "pending" &&
+    (locked.mcbisReference || locked.ckgodswayReference || locked.topupghBatchId != null)
+  ) {
     throw Object.assign(new Error("Order is already dispatched/in-flight; cancel individually after a delivery check"), { status: 400 });
   }
 
@@ -452,11 +461,15 @@ const BulkRefundResolveBody = z.object({
   dateTo: z.string().optional(),
 });
 
-// Bulk cancel is restricted to PENDING orders only. A "processing" order may be
-// mid-delivery at a provider (McBIS / CKG / TopUpGH), so cancelling it in bulk
-// risks refund + delivery. Processing orders show up as "skipped" and must be
-// cancelled individually after a delivery check.
-const REFUNDABLE_STATUSES = ["pending"];
+// Bulk cancel & refund covers PENDING and PROCESSING orders, matching how a pending
+// cancel behaves — admin-confirmed via the preview, no live delivery check. A pending
+// order that's already provider-locked is still skipped (refund + delivery risk). A
+// processing order carries a provider ref by definition and is refunded deliberately:
+// settleBatchDeliveries only completes orders still in pending/processing, so once one
+// is refunded (→ failed) a late webhook/poll can never re-complete it. Residual risk
+// (accepted, same as pending): an order TopUpGH physically delivered but hadn't reported
+// yet is refunded anyway — no code can retract an already-sent bundle.
+const REFUNDABLE_STATUSES = ["pending", "processing"];
 
 router.post("/admin/orders/bulk-refund-preview", requireAdmin, async (req, res): Promise<void> => {
   const parsed = BulkRefundResolveBody.safeParse(req.body);
@@ -512,11 +525,14 @@ router.post("/admin/orders/bulk-refund-preview", requireAdmin, async (req, res):
 
   const hasProviderRef = (r: (typeof rows)[number]) =>
     !!r.mcbisReference || !!r.ckgodswayReference || r.topupghBatchId != null;
-  // Refundable = pending AND not already handed to a provider. A pending order can
-  // still be provider-locked (LOCK-* ref set before status flips to processing),
-  // so status alone is not enough to rule out an in-flight delivery.
+  // Refundable:
+  //   • pending    → only if NOT already provider-locked (a LOCK-* ref can be set before
+  //     the status flips to processing, so status alone can't rule out an in-flight delivery).
+  //   • processing → always eligible (it has a provider ref by definition); refunded the
+  //     same way a pending cancel behaves.
   const isRefundable = (r: (typeof rows)[number]) =>
-    REFUNDABLE_STATUSES.includes(r.status) && !hasProviderRef(r);
+    REFUNDABLE_STATUSES.includes(r.status) &&
+    (r.status !== "pending" || !hasProviderRef(r));
 
   const refundable = rows.filter(isRefundable);
   const skipped = rows
@@ -526,7 +542,6 @@ router.post("/admin/orders/bulk-refund-preview", requireAdmin, async (req, res):
       price: r.price, status: r.status, createdAt: r.createdAt.toISOString(),
       reason:
         r.status === "pending" && hasProviderRef(r) ? "already dispatched/in-flight — cancel individually after a delivery check"
-        : r.status === "processing" ? "processing — being delivered; cancel individually after a delivery check"
         : r.status === "completed" ? "already completed"
         : "already failed/cancelled",
     }));
@@ -564,7 +579,7 @@ router.post("/admin/orders/bulk-refund", requireAdmin, async (req, res): Promise
   // failed/completed orders are skipped, never double-refunded.
   for (const id of ids) {
     try {
-      const amount = await db.transaction((tx) => refundOrderInTx(tx, id, adminId, { allowedStatuses: ["pending"], requireNoProviderRef: true }));
+      const amount = await db.transaction((tx) => refundOrderInTx(tx, id, adminId, { allowedStatuses: ["pending", "processing"], requireNoProviderRef: true }));
       refunded.push({ id, refunded: amount });
     } catch (err: unknown) {
       const e = err as { message?: string };
