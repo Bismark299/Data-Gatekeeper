@@ -79,6 +79,7 @@ function AdminOrdersContent() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [pageView, setPageView]       = useState<"platform" | "store">("platform");
   const [statusTab, setStatusTab]     = useState<typeof ORDER_STATUSES[number]>("all");
+  const [networkFilter, setNetworkFilter] = useState<string>("all");
   const [phoneSearch, setPhoneSearch] = useState("");
   const [orderIdSearch, setOrderIdSearch] = useState("");
   const [dateFrom, setDateFrom]       = useState(todayStr);
@@ -189,6 +190,7 @@ function AdminOrdersContent() {
 
   const filteredStoreOrders = useMemo(() => {
     let src = Array.isArray(storeOrders) ? storeOrders : [];
+    if (networkFilter !== "all") src = src.filter((o: any) => (o.bundleNetwork ?? "") === networkFilter);
     if (storeStatusFilter !== "all") src = src.filter((o: any) => o.status === storeStatusFilter);
     if (!storePhoneSearch.trim()) {
       if (storeDateFrom) src = src.filter((o: any) => new Date(o.createdAt) >= new Date(storeDateFrom));
@@ -196,7 +198,7 @@ function AdminOrdersContent() {
     }
     if (storePhoneSearch.trim()) src = src.filter((o: any) => String(o.customerPhone ?? "").includes(storePhoneSearch.trim()));
     return src;
-  }, [storeOrders, storeStatusFilter, storeDateFrom, storeDateTo, storePhoneSearch]);
+  }, [storeOrders, networkFilter, storeStatusFilter, storeDateFrom, storeDateTo, storePhoneSearch]);
 
   const handleStoreOrderComplete = async (id: number) => {
     setActioningId(id);
@@ -232,8 +234,8 @@ function AdminOrdersContent() {
     setPage(1);
   };
 
-  const clearFilters = () => { setPhoneSearch(""); setOrderIdSearch(""); setDateFrom(todayStr); setDateTo(todayStr); setStatusTab("all"); setPage(1); };
-  const hasFilters = phoneSearch || orderIdSearch || dateFrom !== todayStr || dateTo !== todayStr || statusTab !== "all";
+  const clearFilters = () => { setPhoneSearch(""); setOrderIdSearch(""); setDateFrom(todayStr); setDateTo(todayStr); setStatusTab("all"); setNetworkFilter("all"); setPage(1); };
+  const hasFilters = phoneSearch || orderIdSearch || dateFrom !== todayStr || dateTo !== todayStr || statusTab !== "all" || networkFilter !== "all";
 
   // ── network pending counts (platform + store orders combined) ──
   const networkPendingCounts = useMemo(() => {
@@ -299,10 +301,11 @@ function AdminOrdersContent() {
   // ── day-filtered orders for stat cards (date only, not status/phone) ──
   const dayOrders = useMemo(() => {
     let src = allOrders ?? [];
+    if (networkFilter !== "all") src = src.filter(o => (o.network ?? "") === networkFilter);
     if (dateFrom) src = src.filter(o => new Date(o.createdAt) >= new Date(dateFrom));
     if (dateTo) { const to = new Date(dateTo); to.setHours(23, 59, 59, 999); src = src.filter(o => new Date(o.createdAt) <= to); }
     return src;
-  }, [allOrders, dateFrom, dateTo]);
+  }, [allOrders, networkFilter, dateFrom, dateTo]);
 
   // ── combined platform + store day orders for unified stat cards ──
   const combinedDayStats = useMemo(() => {
@@ -310,6 +313,7 @@ function AdminOrdersContent() {
     const platform: NormOrder[] = dayOrders.map(o => ({ status: o.status, amount: Number(o.price) }));
     const storeDay: NormOrder[] = (Array.isArray(storeOrders) ? storeOrders : [])
       .filter((o: any) => {
+        if (networkFilter !== "all" && (o.bundleNetwork ?? "") !== networkFilter) return false;
         const d = new Date(o.createdAt);
         if (dateFrom && d < new Date(dateFrom)) return false;
         if (dateTo) { const to = new Date(dateTo); to.setHours(23, 59, 59, 999); if (d > to) return false; }
@@ -317,7 +321,7 @@ function AdminOrdersContent() {
       })
       .map((o: any) => ({ status: o.status, amount: Number(o.sellingPrice) }));
     return [...platform, ...storeDay];
-  }, [dayOrders, storeOrders, dateFrom, dateTo]);
+  }, [dayOrders, storeOrders, networkFilter, dateFrom, dateTo]);
 
   const combinedProcessingCount = combinedDayStats.filter(o => o.status === "processing").length;
 
@@ -333,11 +337,11 @@ function AdminOrdersContent() {
 
   // ── status counts ──
   const statusCounts = useMemo(() => {
-    const src = allOrders ?? [];
+    const src = (allOrders ?? []).filter(o => networkFilter === "all" || (o.network ?? "") === networkFilter);
     return Object.fromEntries(
       ORDER_STATUSES.map(s => [s, s === "all" ? src.length : src.filter(o => o.status === s).length])
     );
-  }, [allOrders]);
+  }, [allOrders, networkFilter]);
 
   const processingCount = statusCounts["processing"] ?? 0;
 
@@ -345,6 +349,7 @@ function AdminOrdersContent() {
   const processedOrders = useMemo(() => {
     let src = allOrders ?? [];
 
+    if (networkFilter !== "all") src = src.filter(o => (o.network ?? "") === networkFilter);
     if (statusTab !== "all") src = src.filter(o => o.status === statusTab);
     if (phoneSearch.trim()) {
       const q = phoneSearch.trim();
@@ -371,7 +376,7 @@ function AdminOrdersContent() {
     });
 
     return src;
-  }, [allOrders, statusTab, phoneSearch, orderIdSearch, dateFrom, dateTo, sortField, sortDir]);
+  }, [allOrders, networkFilter, statusTab, phoneSearch, orderIdSearch, dateFrom, dateTo, sortField, sortDir]);
 
   const totalPages  = Math.max(1, Math.ceil(processedOrders.length / pageSize));
   const pagedOrders = useMemo(() => processedOrders.slice((page - 1) * pageSize, page * pageSize), [processedOrders, page, pageSize]);
@@ -621,6 +626,19 @@ function AdminOrdersContent() {
                 onClick={() => { setDateFrom(""); setDateTo(""); setPage(1); }}
                 className="text-xs text-muted-foreground hover:text-foreground"
               >All time</button>
+              <Select value={networkFilter} onValueChange={v => { setNetworkFilter(v); setPage(1); }}>
+                <SelectTrigger className="h-8 text-xs w-36" data-testid="select-network-filter">
+                  <SelectValue placeholder="All networks" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All networks</SelectItem>
+                  {NETWORKS.map(n => (
+                    <SelectItem key={n.value} value={n.value}>
+                      <span className="flex items-center gap-2"><span className={`w-2 h-2 rounded-full ${n.dot}`} />{n.label}</span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             {/* Stat cards */}
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">

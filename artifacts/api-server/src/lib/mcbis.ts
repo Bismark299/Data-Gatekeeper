@@ -20,6 +20,7 @@ import { eq, and, isNotNull, isNull, inArray } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import axios from "axios";
 import { db, settingsTable, ordersTable, storeOrdersTable, bundlesTable, storesTable } from "@workspace/db";
+import { logger } from "./logger";
 
 const mcbisAxios = axios.create({
   timeout: 15_000, // 15-second hard limit per request
@@ -327,19 +328,33 @@ export function startMcbisPoller(): void {
         .orderBy(ordersTable.createdAt)
         .limit(STATUS_CHECK_CAP);
 
+      let checkErrors = 0;
+      let lastCheckError = "";
+      let rateLimited = false;
+
       for (const o of platformProcessing) {
         if (!o.ref) continue;
         try {
-          const s = await mcbisCheckStatus(apiKey, o.ref);
+          // Normalize: McBIS status words are compared case-insensitively so a
+          // "Success"/"COMPLETED"/"Delivered" response still settles the order.
+          const s = (await mcbisCheckStatus(apiKey, o.ref)).trim().toLowerCase();
           // Guard on status="processing": an admin bulk-refund can commit during the
           // network call above (flipping this row to failed+refunded). Without the
           // guard this write would resurrect it to completed → refund + delivery.
-          if (s === "success" || s === "completed") {
+          if (s === "success" || s === "completed" || s === "delivered") {
             await db.update(ordersTable).set({ status: "completed" }).where(and(eq(ordersTable.id, o.id), eq(ordersTable.status, "processing")));
-          } else if (s === "failed") {
+          } else if (s === "failed" || s === "cancelled" || s === "canceled") {
             await db.update(ordersTable).set({ status: "failed" }).where(and(eq(ordersTable.id, o.id), eq(ordersTable.status, "processing")));
+          } else if (s !== "pending" && s !== "processing") {
+            // Unknown status word (or empty/unexpected response shape) — the order
+            // would silently stay "processing" forever. Surface the raw value.
+            logger.warn({ orderId: o.id, ref: o.ref, mcbisStatus: s || "(empty)" }, "McBIS poller: unrecognized platform order status");
           }
-        } catch { /* transient error — retry next cycle */ }
+        } catch (err) {
+          checkErrors++;
+          lastCheckError = err instanceof Error ? err.message : String(err);
+          if (axios.isAxiosError(err) && err.response?.status === 429) { rateLimited = true; break; }
+        }
         await sleep(STATUS_DELAY_MS);
       }
 
@@ -355,28 +370,43 @@ export function startMcbisPoller(): void {
         .limit(STATUS_CHECK_CAP);
 
       for (const o of storeProcessing) {
+        if (rateLimited) break;
         if (!o.ref) continue;
         try {
-          const s = await mcbisCheckStatus(apiKey, o.ref);
-          if (s === "success" || s === "completed") {
+          const s = (await mcbisCheckStatus(apiKey, o.ref)).trim().toLowerCase();
+          if (s === "success" || s === "completed" || s === "delivered") {
             await db.transaction(async (tx) => {
               const [row] = await tx
                 .select({ profit: storeOrdersTable.profit, storeId: storeOrdersTable.storeId, status: storeOrdersTable.status })
                 .from(storeOrdersTable)
                 .where(eq(storeOrdersTable.id, o.id))
                 .for("update");
-              if (!row || row.status === "completed") return;
-              await tx.update(storeOrdersTable).set({ status: "completed" }).where(eq(storeOrdersTable.id, o.id));
+              // Only settle rows still "processing" — a concurrent admin refund/cancel
+              // must not be resurrected to completed (which would also credit profit).
+              if (!row || row.status !== "processing") return;
+              await tx.update(storeOrdersTable).set({ status: "completed" }).where(and(eq(storeOrdersTable.id, o.id), eq(storeOrdersTable.status, "processing")));
               const profit = parseFloat(row.profit);
               await tx.update(storesTable)
                 .set({ profitBalance: sql`profit_balance + ${profit.toFixed(2)}::numeric` })
                 .where(eq(storesTable.id, row.storeId));
             });
-          } else if (s === "failed") {
-            await db.update(storeOrdersTable).set({ status: "failed" }).where(eq(storeOrdersTable.id, o.id));
+          } else if (s === "failed" || s === "cancelled" || s === "canceled") {
+            await db.update(storeOrdersTable).set({ status: "failed" }).where(and(eq(storeOrdersTable.id, o.id), eq(storeOrdersTable.status, "processing")));
+          } else if (s !== "pending" && s !== "processing") {
+            logger.warn({ storeOrderId: o.id, ref: o.ref, mcbisStatus: s || "(empty)" }, "McBIS poller: unrecognized store order status");
           }
-        } catch { /* transient error — retry next cycle */ }
+        } catch (err) {
+          checkErrors++;
+          lastCheckError = err instanceof Error ? err.message : String(err);
+          if (axios.isAxiosError(err) && err.response?.status === 429) { rateLimited = true; break; }
+        }
         await sleep(STATUS_DELAY_MS);
+      }
+
+      // Surface check failures once per cycle (previously swallowed silently, which
+      // made "orders complete at McBIS but stay processing here" undiagnosable).
+      if (checkErrors > 0 || rateLimited) {
+        logger.warn({ checkErrors, rateLimited, lastCheckError }, "McBIS poller: order status checks failed this cycle");
       }
 
       // ── 3. Retry pending platform MTN orders (cap 5, 500 ms apart, 30 s grace) ──
@@ -386,7 +416,7 @@ export function startMcbisPoller(): void {
       // balance endpoint; on failure assume non-zero so we still attempt dispatch.
       try { mcbisBalance = (await mcbisGetBalanceCached(apiKey)).balance; } catch { mcbisBalance = 1; }
 
-      if (mcbisBalance > 0) { // only attempt dispatch when there's balance
+      if (mcbisBalance > 0 && !rateLimited) { // skip dispatch when out of balance or rate-limited this cycle
       const pendingPlatform = await db
         .select({
           id:         ordersTable.id,

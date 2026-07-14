@@ -182,6 +182,12 @@ export const ListMyOrdersResponseItem = zod.object({
   price: zod.number(),
   status: zod.string(),
   phoneNumber: zod.string(),
+  network: zod
+    .string()
+    .optional()
+    .describe(
+      "Bundle network (mtn, telecel, at-ishare, at-bigtime). Empty if the bundle was deleted.",
+    ),
   createdAt: zod.string(),
 });
 export const ListMyOrdersResponse = zod.array(ListMyOrdersResponseItem);
@@ -218,6 +224,12 @@ export const GetOrderResponse = zod.object({
   price: zod.number(),
   status: zod.string(),
   phoneNumber: zod.string(),
+  network: zod
+    .string()
+    .optional()
+    .describe(
+      "Bundle network (mtn, telecel, at-ishare, at-bigtime). Empty if the bundle was deleted.",
+    ),
   createdAt: zod.string(),
 });
 
@@ -353,6 +365,12 @@ export const CheckoutCartResponse = zod.object({
       price: zod.number(),
       status: zod.string(),
       phoneNumber: zod.string(),
+      network: zod
+        .string()
+        .optional()
+        .describe(
+          "Bundle network (mtn, telecel, at-ishare, at-bigtime). Empty if the bundle was deleted.",
+        ),
       createdAt: zod.string(),
     }),
   ),
@@ -432,6 +450,12 @@ export const AdminListOrdersResponseItem = zod.object({
   price: zod.number(),
   status: zod.string(),
   phoneNumber: zod.string(),
+  network: zod
+    .string()
+    .optional()
+    .describe(
+      "Bundle network (mtn, telecel, at-ishare, at-bigtime). Empty if the bundle was deleted.",
+    ),
   createdAt: zod.string(),
 });
 export const AdminListOrdersResponse = zod.array(AdminListOrdersResponseItem);
@@ -456,6 +480,12 @@ export const AdminUpdateOrderStatusResponse = zod.object({
   price: zod.number(),
   status: zod.string(),
   phoneNumber: zod.string(),
+  network: zod
+    .string()
+    .optional()
+    .describe(
+      "Bundle network (mtn, telecel, at-ishare, at-bigtime). Empty if the bundle was deleted.",
+    ),
   createdAt: zod.string(),
 });
 

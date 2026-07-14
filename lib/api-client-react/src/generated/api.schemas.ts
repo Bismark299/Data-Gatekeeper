@@ -104,6 +104,8 @@ export interface Order {
   price: number;
   status: string;
   phoneNumber: string;
+  /** Bundle network (mtn, telecel, at-ishare, at-bigtime). Empty if the bundle was deleted. */
+  network?: string;
   createdAt: string;
 }
 

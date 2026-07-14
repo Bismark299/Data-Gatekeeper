@@ -112,6 +112,7 @@ function AdminDashboardContent() {
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [statusTab, setStatusTab]     = useState<typeof ORDER_STATUSES[number]>("all");
+  const [networkFilter, setNetworkFilter] = useState<string>("all");
   const [phoneSearch, setPhoneSearch] = useState("");
   const [orderIdSearch, setOrderIdSearch] = useState("");
   const [dateFrom, setDateFrom]       = useState(todayStr);
@@ -275,10 +276,11 @@ function AdminDashboardContent() {
   // Orders filtered only by date (for stat cards — not affected by status/phone/ID search)
   const dayOrders = useMemo(() => {
     let src = allOrders ?? [];
+    if (networkFilter !== "all") src = src.filter(o => (o.network ?? "") === networkFilter);
     if (dateFrom) src = src.filter(o => new Date(o.createdAt) >= new Date(dateFrom));
     if (dateTo) { const to = new Date(dateTo); to.setHours(23, 59, 59, 999); src = src.filter(o => new Date(o.createdAt) <= to); }
     return src;
-  }, [allOrders, dateFrom, dateTo]);
+  }, [allOrders, networkFilter, dateFrom, dateTo]);
 
   const sumPrice = (orders: typeof dayOrders) =>
     `GH₵${orders.reduce((s, o) => s + Number(o.price), 0).toFixed(2)}`;
@@ -312,10 +314,11 @@ function AdminDashboardContent() {
 
   const dayStoreOrders = useMemo(() => {
     let src = Array.isArray(storeOrders) ? storeOrders : [];
+    if (networkFilter !== "all") src = src.filter((o: any) => (o.bundleNetwork ?? "") === networkFilter);
     if (dateFrom) src = src.filter((o: any) => new Date(o.createdAt) >= new Date(dateFrom));
     if (dateTo) { const to = new Date(dateTo); to.setHours(23, 59, 59, 999); src = src.filter((o: any) => new Date(o.createdAt) <= to); }
     return src;
-  }, [storeOrders, dateFrom, dateTo]);
+  }, [storeOrders, networkFilter, dateFrom, dateTo]);
 
   const totalOrderCount = dayOrders.length + dayStoreOrders.length;
   const totalCompleted  = dayCompleted.length + dayStoreOrders.filter((o: any) => o.status === "completed").length;
@@ -343,11 +346,12 @@ function AdminDashboardContent() {
       if (dateFrom) src = src.filter(o => new Date(o.createdAt) >= new Date(dateFrom));
       if (dateTo) { const to = new Date(dateTo); to.setHours(23, 59, 59, 999); src = src.filter(o => new Date(o.createdAt) <= to); }
     }
+    if (networkFilter !== "all") src = src.filter(o => (o.network ?? "") === networkFilter);
     if (statusTab !== "all") src = src.filter(o => o.status === statusTab);
     if (phoneSearch.trim()) src = src.filter(o => o.phoneNumber.includes(phoneSearch.trim()));
     if (orderIdSearch.trim()) src = src.filter(o => String(o.id).includes(orderIdSearch.trim()));
     return src;
-  }, [allOrders, searchResults, statusTab, phoneSearch, orderIdSearch, dateFrom, dateTo]);
+  }, [allOrders, searchResults, networkFilter, statusTab, phoneSearch, orderIdSearch, dateFrom, dateTo]);
 
   const statusCounts = useMemo(() => {
     // Status counts from date-filtered orders (dayOrders)
@@ -513,6 +517,19 @@ function AdminDashboardContent() {
                   className="text-xs text-primary hover:underline px-1">Today</button>
                 <button onClick={() => { setDateFrom(""); setDateTo(""); setPage(1); }}
                   className="text-xs text-muted-foreground hover:text-foreground px-1">All time</button>
+                <Select value={networkFilter} onValueChange={v => { setNetworkFilter(v); setPage(1); }}>
+                  <SelectTrigger className="h-8 text-xs w-36" data-testid="select-network-filter">
+                    <SelectValue placeholder="All networks" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All networks</SelectItem>
+                    {NETWORKS.map(n => (
+                      <SelectItem key={n.value} value={n.value}>
+                        <span className="flex items-center gap-2"><span className={`w-2 h-2 rounded-full ${n.dot}`} />{n.label}</span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
                 <div className="relative">
                   <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
                   <Input type="tel" inputMode="numeric" maxLength={10} placeholder="Phone…" value={phoneSearch}

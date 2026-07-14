@@ -1227,6 +1227,9 @@ components:
           type: string
         phoneNumber:
           type: string
+        network:
+          type: string
+          description: Bundle network (mtn, telecel, at-ishare, at-bigtime). Empty if the bundle was deleted.
         createdAt:
           type: string
       required:

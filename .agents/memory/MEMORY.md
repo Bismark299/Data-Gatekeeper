@@ -15,3 +15,4 @@
 - [TopUpGH batch finalize gate](topupgh-batch-finalize-gate.md) — settleBatchDeliveries only recomputes batch final status when batch.status==='processing'; every force-complete/reconcile entry point must gate to processing or the batch label goes stale.
 - [Admin list search server-side](admin-list-search.md) — admin phone/id search must hit a server `search` param (ilike phone OR id) & skip the today-default date filter; client-side search over a newest-N slice hides old rows.
 - [TopUpGH request signing](topupgh-request-signing.md) — sign HMAC over INTERNAL prefix `/topupgh-api/v1`+path (NO query string)+body; 401=bad sig, 404 on path-only GET=order-not-found not auth.
+- [McBIS poller status matching](mcbis-poller-status.md) — normalize provider status (trim/lowercase, accept delivered/cancelled variants); never bare-catch check errors — log unknowns + cycle summary; 429 → stop cycle.
