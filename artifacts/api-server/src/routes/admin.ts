@@ -1673,8 +1673,11 @@ router.get("/admin/reconcile", requireAdmin, async (req, res): Promise<void> => 
     .select({ order: ordersTable, network: bundlesTable.network })
     .from(ordersTable)
     .leftJoin(bundlesTable, eq(bundlesTable.id, ordersTable.bundleId))
-    .where(and(eq(ordersTable.status, "processing"), lt(ordersTable.updatedAt, threshold)))
-    .orderBy(ordersTable.updatedAt);
+    // Key off createdAt, NOT updatedAt: the McBIS poller round-robins by bumping
+    // updatedAt on every check, so updatedAt now means "last polled" — a processing
+    // order created >24h ago is stuck by definition regardless of polling activity.
+    .where(and(eq(ordersTable.status, "processing"), lt(ordersTable.createdAt, threshold)))
+    .orderBy(ordersTable.createdAt);
 
   const wallets = await db.select().from(walletsTable);
 

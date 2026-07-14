@@ -298,7 +298,8 @@ let _pollRunning   = false; // prevents overlapping cycles if a cycle takes long
  *  4. Retry dispatch: max 5 per cycle, 500 ms between each call, 5-min grace period
  *  5. 45-second request timeout + 2 retries with back-off (in apiRequest())
  *  6. Atomic lock in dispatchToMcbis() prevents concurrent double-send
- *  7. Orders stuck >24 h in "processing" are auto-failed to stop indefinite polling
+ *  7. Status checks round-robin by updatedAt so orders stuck "processing" at
+ *     McBIS indefinitely cannot starve newer orders out of the per-cycle cap
  */
 export function startMcbisPoller(): void {
   if (_pollerStarted) return;
@@ -325,7 +326,10 @@ export function startMcbisPoller(): void {
           eq(ordersTable.status, "processing"),
           isNotNull(ordersTable.mcbisReference),
         ))
-        .orderBy(ordersTable.createdAt)
+        // Round-robin by updatedAt (bumped on every check below): a batch of
+        // permanently-"processing" orders at McBIS would otherwise monopolize the
+        // per-cycle cap forever and starve newer orders (head-of-line blocking).
+        .orderBy(ordersTable.updatedAt)
         .limit(STATUS_CHECK_CAP);
 
       let checkErrors = 0;
@@ -334,6 +338,7 @@ export function startMcbisPoller(): void {
 
       for (const o of platformProcessing) {
         if (!o.ref) continue;
+        let settled = false;
         try {
           // Normalize: McBIS status words are compared case-insensitively so a
           // "Success"/"COMPLETED"/"Delivered" response still settles the order.
@@ -343,8 +348,10 @@ export function startMcbisPoller(): void {
           // guard this write would resurrect it to completed → refund + delivery.
           if (s === "success" || s === "completed" || s === "delivered") {
             await db.update(ordersTable).set({ status: "completed" }).where(and(eq(ordersTable.id, o.id), eq(ordersTable.status, "processing")));
+            settled = true;
           } else if (s === "failed" || s === "cancelled" || s === "canceled") {
             await db.update(ordersTable).set({ status: "failed" }).where(and(eq(ordersTable.id, o.id), eq(ordersTable.status, "processing")));
+            settled = true;
           } else if (s !== "pending" && s !== "processing") {
             // Unknown status word (or empty/unexpected response shape) — the order
             // would silently stay "processing" forever. Surface the raw value.
@@ -354,6 +361,12 @@ export function startMcbisPoller(): void {
           checkErrors++;
           lastCheckError = err instanceof Error ? err.message : String(err);
           if (axios.isAxiosError(err) && err.response?.status === 429) { rateLimited = true; break; }
+        }
+        // Push unsettled orders to the back of the round-robin queue so they
+        // can't monopolize the per-cycle cap (settling updates already bump
+        // updatedAt via $onUpdate).
+        if (!settled) {
+          await db.update(ordersTable).set({ updatedAt: new Date() }).where(eq(ordersTable.id, o.id));
         }
         await sleep(STATUS_DELAY_MS);
       }
@@ -366,12 +379,14 @@ export function startMcbisPoller(): void {
           eq(storeOrdersTable.status, "processing"),
           isNotNull(storeOrdersTable.mcbisReference),
         ))
-        .orderBy(storeOrdersTable.createdAt)
+        // Round-robin by updatedAt — see platform loop above.
+        .orderBy(storeOrdersTable.updatedAt)
         .limit(STATUS_CHECK_CAP);
 
       for (const o of storeProcessing) {
         if (rateLimited) break;
         if (!o.ref) continue;
+        let settled = false;
         try {
           const s = (await mcbisCheckStatus(apiKey, o.ref)).trim().toLowerCase();
           if (s === "success" || s === "completed" || s === "delivered") {
@@ -390,8 +405,10 @@ export function startMcbisPoller(): void {
                 .set({ profitBalance: sql`profit_balance + ${profit.toFixed(2)}::numeric` })
                 .where(eq(storesTable.id, row.storeId));
             });
+            settled = true; // only after the tx commits — a thrown tx must still rotate the row
           } else if (s === "failed" || s === "cancelled" || s === "canceled") {
             await db.update(storeOrdersTable).set({ status: "failed" }).where(and(eq(storeOrdersTable.id, o.id), eq(storeOrdersTable.status, "processing")));
+            settled = true;
           } else if (s !== "pending" && s !== "processing") {
             logger.warn({ storeOrderId: o.id, ref: o.ref, mcbisStatus: s || "(empty)" }, "McBIS poller: unrecognized store order status");
           }
@@ -399,6 +416,10 @@ export function startMcbisPoller(): void {
           checkErrors++;
           lastCheckError = err instanceof Error ? err.message : String(err);
           if (axios.isAxiosError(err) && err.response?.status === 429) { rateLimited = true; break; }
+        }
+        // Round-robin: push unsettled store orders to the back of the queue.
+        if (!settled) {
+          await db.update(storeOrdersTable).set({ updatedAt: new Date() }).where(eq(storeOrdersTable.id, o.id));
         }
         await sleep(STATUS_DELAY_MS);
       }
