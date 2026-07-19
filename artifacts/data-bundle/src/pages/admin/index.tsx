@@ -11,6 +11,7 @@ import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { AdminSidebar } from "@/components/AdminSidebar";
 import { AdminFinancialSummary } from "@/components/AdminFinancialSummary";
+import { BulkCompleteDialog } from "@/components/BulkCompleteDialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
@@ -459,19 +460,22 @@ function AdminDashboardContent() {
                 {n.count > 0 && <Copy className="w-3 h-3 ml-0.5 opacity-70" />}
               </button>
             ))}
-            {totalProcessing > 0 && (
-              <Button
-                size="sm"
-                variant="outline"
-                className="gap-1.5 ml-auto border-emerald-500 text-emerald-700 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-900/20"
-                onClick={handleCompleteAll}
-                disabled={completing}
-                data-testid="button-complete-all"
-              >
-                <CheckCircle2 className="w-3.5 h-3.5" />
-                Complete all processing ({totalProcessing})
-              </Button>
-            )}
+            <div className="ml-auto flex items-center gap-2">
+              <BulkCompleteDialog onDone={() => { invalidateOrders(); refetchOrders(); refetchStats(); refetchStoreOrders(); }} />
+              {totalProcessing > 0 && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5 border-emerald-500 text-emerald-700 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-900/20"
+                  onClick={handleCompleteAll}
+                  disabled={completing}
+                  data-testid="button-complete-all"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  Complete all processing ({totalProcessing})
+                </Button>
+              )}
+            </div>
           </div>
 
           {/* Orders Table */}

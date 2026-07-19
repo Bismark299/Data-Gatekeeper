@@ -595,6 +595,288 @@ router.post("/admin/orders/bulk-refund", requireAdmin, async (req, res): Promise
   res.json({ refundedCount: refunded.length, totalRefunded, skipped });
 });
 
+// ── Bulk complete (exact phone + data-size match) ───────────────────────────
+// The admin pastes "phone<TAB>size" lines (the exact format the dashboard's
+// network-copy button exports, e.g. "0551724560\t5GB"). The preview resolves
+// each line to PROCESSING orders — platform AND store — where BOTH the phone
+// (last 9 digits) and the data size (normalized to MB) match exactly. Nothing
+// is guessed: if more processing orders match a phone+size pair than the number
+// of pasted lines for that pair, the whole group is flagged ambiguous and
+// skipped — the admin resolves those individually. The confirm route then
+// completes only the previewed ids, each status-guarded to "processing".
+
+// Parse a bundle-size string ("5GB", "500MB", "1.5TB", "5") into integer MB.
+// Returns null for anything that isn't a clean "<number><unit>" string.
+function sizeToMB(raw: string): number | null {
+  const m = String(raw ?? "").trim().match(/^(\d+(?:\.\d+)?)\s*(TB|GB|MB)?$/i);
+  if (!m) return null;
+  const n = parseFloat(m[1]);
+  if (!Number.isFinite(n)) return null;
+  const unit = (m[2] ?? "GB").toUpperCase();
+  const mb = unit === "TB" ? n * 1024 * 1024 : unit === "MB" ? n : n * 1024;
+  return Math.round(mb);
+}
+
+const BulkCompleteResolveBody = z.object({
+  values: z.array(z.string()).min(1).max(2000),
+  dateFrom: z.string().optional(),
+  dateTo: z.string().optional(),
+});
+
+router.post("/admin/orders/bulk-complete-preview", requireAdmin, async (req, res): Promise<void> => {
+  const parsed = BulkCompleteResolveBody.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
+  const { values, dateFrom, dateTo } = parsed.data;
+
+  // Fail closed on malformed dates rather than silently widening the match set.
+  let from: Date | null = null;
+  let to: Date | null = null;
+  if (dateFrom) {
+    from = new Date(dateFrom);
+    if (isNaN(from.getTime())) { res.status(400).json({ error: "Invalid dateFrom" }); return; }
+  }
+  if (dateTo) {
+    to = new Date(dateTo);
+    if (isNaN(to.getTime())) { res.status(400).json({ error: "Invalid dateTo" }); return; }
+    to.setHours(23, 59, 59, 999);
+  }
+
+  // Parse pasted lines → { phone9, mb } entries. A line needs a phone with at
+  // least 9 digits AND a size token; anything else is reported back as invalid.
+  const invalid: string[] = [];
+  const pasted = new Map<string, { count: number; sample: string }>(); // key = phone9|mb
+  for (const rawLine of values) {
+    const line = String(rawLine).trim();
+    if (!line) continue;
+    const tokens = line.split(/[\s,;]+/).filter(Boolean);
+    const phoneDigits = (tokens[0] ?? "").replace(/[^0-9]/g, "");
+    let mb: number | null = null;
+    for (let i = 1; i < tokens.length; i++) {
+      mb = sizeToMB(tokens[i]);
+      if (mb != null) break;
+    }
+    if (phoneDigits.length < 9 || mb == null) { invalid.push(line); continue; }
+    const key = `${phoneDigits.slice(-9)}|${mb}`;
+    const prev = pasted.get(key);
+    if (prev) prev.count += 1;
+    else pasted.set(key, { count: 1, sample: line });
+  }
+  if (pasted.size === 0) {
+    res.status(400).json({ error: "No valid lines. Each line needs a phone number and a size, e.g. \"0551724560 5GB\"" });
+    return;
+  }
+
+  const phones9 = [...new Set([...pasted.keys()].map(k => k.split("|")[0]))];
+
+  // Fetch ALL orders (any status) for the pasted phones so the preview can
+  // explain why a line didn't complete (already completed vs still pending).
+  const platformConds: SQL[] = [
+    inArray(sql`right(regexp_replace(${ordersTable.phoneNumber}, '[^0-9]', '', 'g'), 9)`, phones9),
+  ];
+  if (from) platformConds.push(gte(ordersTable.createdAt, from));
+  if (to) platformConds.push(lte(ordersTable.createdAt, to));
+
+  const storeConds: SQL[] = [
+    inArray(sql`right(regexp_replace(${storeOrdersTable.customerPhone}, '[^0-9]', '', 'g'), 9)`, phones9),
+  ];
+  if (from) storeConds.push(gte(storeOrdersTable.createdAt, from));
+  if (to) storeConds.push(lte(storeOrdersTable.createdAt, to));
+
+  const [platformRows, storeRows] = await Promise.all([
+    db.select({
+      id: ordersTable.id,
+      phoneNumber: ordersTable.phoneNumber,
+      bundleName: ordersTable.bundleName,
+      bundleData: ordersTable.bundleData,
+      price: ordersTable.price,
+      status: ordersTable.status,
+      createdAt: ordersTable.createdAt,
+    }).from(ordersTable).where(and(...platformConds)).orderBy(desc(ordersTable.createdAt)).limit(5000),
+    db.select({
+      id: storeOrdersTable.id,
+      phoneNumber: storeOrdersTable.customerPhone,
+      bundleName: storeOrdersTable.bundleName,
+      bundleData: storeOrdersTable.bundleData,
+      price: storeOrdersTable.sellingPrice,
+      status: storeOrdersTable.status,
+      createdAt: storeOrdersTable.createdAt,
+      storeName: storesTable.name,
+    }).from(storeOrdersTable)
+      .innerJoin(storesTable, eq(storeOrdersTable.storeId, storesTable.id))
+      .where(and(...storeConds)).orderBy(desc(storeOrdersTable.createdAt)).limit(5000),
+  ]);
+
+  type MatchRow = {
+    type: "platform" | "store";
+    id: number;
+    phoneNumber: string;
+    bundleName: string | null;
+    bundleData: string | null;
+    price: string;
+    status: string;
+    createdAt: Date;
+    storeName?: string;
+  };
+  const allRows: MatchRow[] = [
+    ...platformRows.map(r => ({ ...r, type: "platform" as const })),
+    ...storeRows.map(r => ({ ...r, type: "store" as const })),
+  ];
+
+  // Keep only orders whose phone+size EXACTLY matches a pasted line.
+  const byKey = new Map<string, MatchRow[]>();
+  for (const r of allRows) {
+    const mb = sizeToMB(r.bundleData ?? "");
+    if (mb == null) continue;
+    const key = `${r.phoneNumber.replace(/[^0-9]/g, "").slice(-9)}|${mb}`;
+    if (!pasted.has(key)) continue; // same phone, different size → not a match
+    const arr = byKey.get(key);
+    if (arr) arr.push(r);
+    else byKey.set(key, [r]);
+  }
+
+  const fmt = (r: MatchRow) => ({
+    type: r.type, id: r.id, phoneNumber: r.phoneNumber, bundleName: r.bundleName,
+    bundleData: r.bundleData, price: r.price, status: r.status,
+    createdAt: r.createdAt.toISOString(), storeName: r.storeName ?? null,
+  });
+
+  const completable: ReturnType<typeof fmt>[] = [];
+  const skipped: (ReturnType<typeof fmt> & { reason: string })[] = [];
+  const notFound: string[] = [];
+
+  for (const [key, { count: pastedCount, sample }] of pasted) {
+    const matches = byKey.get(key) ?? [];
+    if (matches.length === 0) { notFound.push(sample); continue; }
+
+    const processing = matches.filter(m => m.status === "processing");
+    const others = matches.filter(m => m.status !== "processing");
+
+    if (processing.length === 0) {
+      // Nothing to complete — explain what we found instead.
+      for (const m of others) {
+        skipped.push({
+          ...fmt(m),
+          reason: m.status === "completed" ? "already completed"
+            : m.status === "failed" || m.status === "cancelled" ? "already failed/cancelled"
+            : `still ${m.status} — not marked processing`,
+        });
+      }
+      continue;
+    }
+
+    if (processing.length > pastedCount) {
+      // More processing orders match this phone+size than pasted confirmations —
+      // completing any subset would be a guess. Flag the whole group.
+      for (const m of processing) {
+        skipped.push({ ...fmt(m), reason: `${processing.length} processing orders match this phone+size but only ${pastedCount} pasted — complete individually` });
+      }
+      continue;
+    }
+
+    for (const m of processing) completable.push(fmt(m));
+  }
+
+  res.json({
+    completable,
+    skipped,
+    notFound,
+    invalid,
+    counts: {
+      completable: completable.length,
+      skipped: skipped.length,
+      notFound: notFound.length,
+      invalid: invalid.length,
+    },
+  });
+});
+
+const BulkCompleteConfirmBody = z.object({
+  orderIds: z.array(z.number().int().positive()).max(2000).default([]),
+  storeOrderIds: z.array(z.number().int().positive()).max(2000).default([]),
+}).refine(b => b.orderIds.length > 0 || b.storeOrderIds.length > 0, {
+  message: "At least one order id is required",
+});
+
+router.post("/admin/orders/bulk-complete", requireAdmin, async (req, res): Promise<void> => {
+  const parsed = BulkCompleteConfirmBody.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
+  const orderIds = [...new Set(parsed.data.orderIds)];
+  const storeOrderIds = [...new Set(parsed.data.storeOrderIds)];
+
+  // Platform orders: status-guarded bulk update — only rows still in
+  // "processing" flip to completed; anything a poller/webhook already settled
+  // (or an admin refunded) is left untouched and reported as skipped.
+  let completedPlatform: number[] = [];
+  if (orderIds.length > 0) {
+    const updated = await db
+      .update(ordersTable)
+      .set({ status: "completed" })
+      .where(and(inArray(ordersTable.id, orderIds), eq(ordersTable.status, "processing")))
+      .returning({ id: ordersTable.id });
+    completedPlatform = updated.map(r => r.id);
+  }
+
+  // Store orders: each in its own tx with a row lock + strict "processing"
+  // guard, crediting the store owner's profit exactly once. A row that is no
+  // longer processing (settled by poller, cancelled, refunded) is skipped —
+  // never re-credited.
+  const completedStore: number[] = [];
+  const skippedStore: { id: number; reason: string }[] = [];
+  for (const id of storeOrderIds) {
+    try {
+      const done = await db.transaction(async (tx) => {
+        const [locked] = await tx
+          .select()
+          .from(storeOrdersTable)
+          .where(eq(storeOrdersTable.id, id))
+          .for("update");
+        if (!locked) throw Object.assign(new Error("not found"), { status: 404 });
+        if (locked.status !== "processing") {
+          throw Object.assign(new Error(`is ${locked.status} — only processing orders can be bulk-completed`), { status: 400 });
+        }
+        await tx
+          .update(storeOrdersTable)
+          .set({ status: "completed" })
+          .where(and(eq(storeOrdersTable.id, id), eq(storeOrdersTable.status, "processing")));
+        const profit = parseFloat(locked.profit);
+        await tx
+          .update(storesTable)
+          .set({ profitBalance: sql`profit_balance + ${profit.toFixed(2)}::numeric` })
+          .where(eq(storesTable.id, locked.storeId));
+        return true;
+      });
+      if (done) completedStore.push(id);
+    } catch (err: unknown) {
+      const e = err as { message?: string };
+      skippedStore.push({ id, reason: e.message ?? "completion failed" });
+    }
+  }
+
+  const skippedPlatform = orderIds
+    .filter(id => !completedPlatform.includes(id))
+    .map(id => ({ id, reason: "not processing (already settled, refunded, or missing)" }));
+
+  req.log?.info(
+    {
+      adminId: req.session.userId,
+      completedPlatform: completedPlatform.length,
+      completedStore: completedStore.length,
+      skippedPlatform: skippedPlatform.length,
+      skippedStore: skippedStore.length,
+    },
+    "admin bulk complete (phone+size matched)",
+  );
+
+  res.json({
+    completedPlatform: completedPlatform.length,
+    completedStore: completedStore.length,
+    skipped: [
+      ...skippedPlatform.map(s => ({ type: "platform" as const, ...s })),
+      ...skippedStore.map(s => ({ type: "store" as const, ...s })),
+    ],
+  });
+});
+
 router.post("/admin/orders/complete-processing", requireAdmin, async (req, res): Promise<void> => {
   // Only complete processing orders inside the requested date window so the
   // action matches the date filter the admin currently has applied. When no
