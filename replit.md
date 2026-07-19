@@ -72,7 +72,7 @@ A full-stack data bundle sales platform with a modern client interface and admin
 - **Wallet ledger** (`wallet_ledger` table) — immutable append-only record of every balance change; balance on `wallets` is a cached total
 - **Soft-delete** for users (`deleted_at` column) — financial records preserved; hard delete removed
 - `deposits.reference` has a DB-level UNIQUE constraint
-- `orders.status` has a DB-level CHECK constraint (pending/processing/completed/failed only)
+- **Order status split**: `status` = payment only (pending/paid/failed/refunded; +cancelled for store orders), `delivered` = fulfillment (NULL/processing/delivered/failed). Both enforced by DB-level CHECK constraints (`*_payment_status_check`, `*_delivered_check`). Migration auto-runs at boot (`migrateStatusSplit` in ensureSchema); Render deploy runbook: `docs/render-status-split-runbook.md`
 - All financial mutations wrapped in `db.transaction()` with `SELECT FOR UPDATE`
 - **Reconciliation endpoint** (`GET /admin/reconcile`) — surfaces stuck processing orders and wallet/ledger discrepancies
 - **Pagination** on all admin list endpoints (page/pageSize params)

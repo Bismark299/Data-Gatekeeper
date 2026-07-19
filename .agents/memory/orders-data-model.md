@@ -7,7 +7,8 @@ description: Non-obvious facts about how order data is stored, for anyone aggreg
 
 - `orders.bundleData` (and `store_orders.bundle_data`) is a **text label** like `"1GB"`, `"500MB"`, `"50GB"` — NOT a numeric quantity. Any "total data" aggregation must parse it: strip the unit, treat MB as value/1000, TB as value*1000. Parse strictly (anchored, require a recognized unit) and return 0 on unrecognized labels, or junk like `"500KB"` / `"2 x 500MB"` silently overstates totals.
 - `orders.buyingCost` is **nullable** (many legacy/dev rows are null). Coalesce to 0 before summing cost; profit = price - coalesce(buyingCost,0).
-- The admin Report page (`/admin/report`) aggregates **completed platform orders only** (profit realized on completion). It deliberately excludes store_orders (agent sales have different profit semantics: sellingPrice/basePrice/agentCost/profit).
+- The admin Report page (`/admin/report`) aggregates **delivered platform orders only** (profit realized on delivery — since the status split this means `status='paid' AND delivered='delivered'`, not a legacy `status='completed'`). It deliberately excludes store_orders (agent sales have different profit semantics: sellingPrice/basePrice/agentCost/profit).
+- **Status split (July 2026):** `status` = payment only (pending/paid/failed/refunded, +cancelled on store_orders); `delivered` = fulfillment (NULL/processing/delivered/failed). Legacy `completed`/`processing` status values no longer exist. UI "phase" is derived via `orderPhase.ts` (platformPhase/storePhase). Old failed-and-refunded rows were backfilled as (refunded, failed) so they intentionally appear under both Failed and Refunded filters.
 - Day-bucketing uses UTC `createdAt` date; safe because server + operator are both UTC/GMT (Ghana).
 
 # Bundle pricing tiers (cost vs selling price)

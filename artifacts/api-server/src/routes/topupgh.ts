@@ -42,7 +42,8 @@ router.get("/admin/topupgh/queue", requireAdmin, async (_req, res): Promise<void
     .from(ordersTable)
     .leftJoin(bundlesTable, eq(bundlesTable.id, ordersTable.bundleId))
     .where(and(
-      eq(ordersTable.status, "pending"),
+      eq(ordersTable.status, "paid"),
+      isNull(ordersTable.delivered),
       isNull(ordersTable.topupghBatchId),
       isNull(ordersTable.mcbisReference),
       eq(bundlesTable.network, "mtn"),
@@ -194,6 +195,7 @@ router.get("/admin/topupgh/batches/:id", requireAdmin, async (req, res): Promise
       bundleData: ordersTable.bundleData,
       price:      ordersTable.price,
       status:     ordersTable.status,
+      delivered:  ordersTable.delivered,
       createdAt:  ordersTable.createdAt,
     })
     .from(ordersTable)
@@ -516,6 +518,7 @@ router.post("/admin/topupgh/search", requireAdmin, async (req, res): Promise<voi
         ? await db.select({
             id: ordersTable.id, phone: ordersTable.phoneNumber,
             bundleName: ordersTable.bundleName, status: ordersTable.status,
+            delivered: ordersTable.delivered,
             createdAt: ordersTable.createdAt,
           }).from(ordersTable).where(eq(ordersTable.topupghBatchId, batch.id))
         : [];
@@ -575,6 +578,7 @@ router.post("/admin/topupgh/search", requireAdmin, async (req, res): Promise<voi
         bundleData:     ordersTable.bundleData,
         price:          ordersTable.price,
         status:         ordersTable.status,
+        delivered:      ordersTable.delivered,
         createdAt:      ordersTable.createdAt,
         batchId:        topupghBatchesTable.id,
         topupghOrderId: topupghBatchesTable.topupghOrderId,

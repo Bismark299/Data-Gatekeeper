@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db, cartItemsTable, bundlesTable, ordersTable, walletsTable, usersTable } from "@workspace/db";
 import { requireAuth } from "../middlewares/auth";
-import { eq, and } from "drizzle-orm";
+import { eq, and, isNull } from "drizzle-orm";
 import { AddToCartBody } from "@workspace/api-zod";
 import { getOrCreateWallet, insertLedgerEntry } from "./wallet";
 import { dispatchOrder } from "../lib/dispatch";
@@ -202,7 +202,7 @@ router.post("/checkout", requireAuth, async (req, res) => {
             bundleData: item.bundleData,
             price: item.price!.toFixed(2),
             buyingCost: item.basePrice,
-            status: "pending",
+            status: "paid",
             phoneNumber: item.phoneNumber,
           }).returning()
         )
@@ -265,8 +265,8 @@ router.post("/checkout", requireAuth, async (req, res) => {
             ? { mcbisReference: outcome.reference }
             : { ckgodswayReference: outcome.reference };
           await db.update(ordersTable)
-            .set({ status: "processing", ...refCol })
-            .where(eq(ordersTable.id, orderId));
+            .set({ delivered: "processing", ...refCol })
+            .where(and(eq(ordersTable.id, orderId), eq(ordersTable.status, "paid"), isNull(ordersTable.delivered)));
         }
       })
       .catch(() => {});

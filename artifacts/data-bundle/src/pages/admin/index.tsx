@@ -24,6 +24,7 @@ import {
   Search, X, RefreshCw, ArrowUpRight, BarChart3, Wallet,
   XCircle, Copy, Zap, AlertCircle, Trash2, Store, TrendingUp,
 } from "lucide-react";
+import { platformPhase, storePhase, awaitingDispatch } from "@/lib/orderPhase";
 
 const PAGE_SIZE = 10;
 
@@ -33,14 +34,17 @@ const STATUS_COLORS: Record<string, string> = {
   processing: "bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400",
   completed:  "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-400",
   failed:     "bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400",
+  cancelled:  "bg-gray-100 text-gray-600 dark:bg-gray-800/40 dark:text-gray-400",
+  refunded:   "bg-rose-100 text-rose-700 dark:bg-rose-900/20 dark:text-rose-400",
 };
 
 const STATUS_DOT: Record<string, string> = {
   pending: "bg-amber-400", paid: "bg-violet-400", processing: "bg-blue-400",
-  completed: "bg-emerald-400", failed: "bg-red-400",
+  completed: "bg-emerald-400", failed: "bg-red-400", cancelled: "bg-gray-400",
+  refunded: "bg-rose-400",
 };
 
-const ORDER_STATUSES = ["all", "pending", "processing", "completed", "failed"] as const;
+const ORDER_STATUSES = ["all", "pending", "processing", "completed", "failed", "refunded"] as const;
 
 const NETWORKS = [
   { value: "mtn",         label: "MTN",         dot: "bg-yellow-400", badge: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400" },
@@ -204,7 +208,7 @@ function AdminDashboardContent() {
         if (dateTo) { const to = new Date(dateTo); to.setHours(23, 59, 59, 999); if (d > to) return false; }
         return true;
       };
-      const processingStoreOrders = (Array.isArray(storeOrders) ? storeOrders : []).filter((o: any) => o.status === "processing" && inRange(o));
+      const processingStoreOrders = (Array.isArray(storeOrders) ? storeOrders : []).filter((o: any) => o.delivered === "processing" && inRange(o));
       const [platformRes] = await Promise.all([
         fetch("/api/admin/orders/complete-processing", {
           method: "POST", credentials: "include",
@@ -227,20 +231,20 @@ function AdminDashboardContent() {
   };
 
   const networkPendingCounts = useMemo(() => {
-    type NormOrder = { id: number; phoneNumber: string; bundleData: string; status: string; network: string; isStore: boolean };
+    type NormOrder = { id: number; phoneNumber: string; bundleData: string; status: string; delivered: string | null; network: string; isStore: boolean };
     const platform: NormOrder[] = (allOrders ?? []).map(o => ({
       id: o.id, phoneNumber: o.phoneNumber, bundleData: o.bundleData ?? "",
-      status: o.status, network: (o as any).network ?? "", isStore: false,
+      status: o.status, delivered: (o as any).delivered ?? null, network: (o as any).network ?? "", isStore: false,
     }));
     const store: NormOrder[] = (Array.isArray(storeOrders) ? storeOrders : []).map((o: any) => ({
       id: o.id, phoneNumber: o.customerPhone, bundleData: o.bundleData ?? "",
-      status: o.status, network: o.bundleNetwork ?? "", isStore: true,
+      status: o.status, delivered: o.delivered ?? null, network: o.bundleNetwork ?? "", isStore: true,
     }));
     const all = [...platform, ...store];
     return NETWORKS.map(n => ({
       ...n,
-      count: all.filter(o => o.status === "pending" && o.network === n.value).length,
-      orders: all.filter(o => o.status === "pending" && o.network === n.value),
+      count: all.filter(o => awaitingDispatch(o) && o.network === n.value).length,
+      orders: all.filter(o => awaitingDispatch(o) && o.network === n.value),
     }));
   }, [allOrders, storeOrders]);
 
@@ -308,10 +312,10 @@ function AdminDashboardContent() {
     return `${Number.isInteger(totalGB) ? totalGB : totalGB.toFixed(1)}GB`;
   };
 
-  const dayPending    = dayOrders.filter(o => o.status === "pending");
-  const dayCompleted  = dayOrders.filter(o => o.status === "completed");
-  const dayProcessing = dayOrders.filter(o => o.status === "processing");
-  const dayFailed     = dayOrders.filter(o => o.status === "failed" || o.status === "cancelled");
+  const dayPending    = dayOrders.filter(o => platformPhase(o as any) === "pending");
+  const dayCompleted  = dayOrders.filter(o => platformPhase(o as any) === "completed");
+  const dayProcessing = dayOrders.filter(o => platformPhase(o as any) === "processing");
+  const dayFailed     = dayOrders.filter(o => { const p = platformPhase(o as any); return p === "failed" || p === "refunded"; });
 
   const dayStoreOrders = useMemo(() => {
     let src = Array.isArray(storeOrders) ? storeOrders : [];
@@ -322,20 +326,20 @@ function AdminDashboardContent() {
   }, [storeOrders, networkFilter, dateFrom, dateTo]);
 
   const totalOrderCount = dayOrders.length + dayStoreOrders.length;
-  const totalCompleted  = dayCompleted.length + dayStoreOrders.filter((o: any) => o.status === "completed").length;
+  const totalCompleted  = dayCompleted.length + dayStoreOrders.filter((o: any) => storePhase(o) === "completed").length;
   // "paid" = payment confirmed, awaiting dispatch — counts alongside pending for admin attention
-  const storePendingCount = dayStoreOrders.filter((o: any) => o.status === "pending" || o.status === "paid").length;
+  const storePendingCount = dayStoreOrders.filter((o: any) => { const p = storePhase(o); return p === "pending" || p === "paid"; }).length;
   const totalPending    = dayPending.length + storePendingCount;
-  const totalProcessing = dayProcessing.length + dayStoreOrders.filter((o: any) => o.status === "processing").length;
-  const totalFailed     = dayFailed.length    + dayStoreOrders.filter((o: any) => o.status === "failed" || o.status === "cancelled").length;
+  const totalProcessing = dayProcessing.length + dayStoreOrders.filter((o: any) => storePhase(o) === "processing").length;
+  const totalFailed     = dayFailed.length    + dayStoreOrders.filter((o: any) => { const p = storePhase(o); return p === "failed" || p === "cancelled" || p === "refunded"; }).length;
 
   const statCards = useMemo(() => stats ? [
     { icon: Wallet,       label: "Wallet Balance",  value: `GH₵${((stats as { totalWalletBalance?: number }).totalWalletBalance ?? 0).toFixed(2)}`, sub: "Total user wallet funds",              colorClass: "text-emerald-600", bgClass: "bg-emerald-100 dark:bg-emerald-900/20", accent: true },
     { icon: ShoppingCart, label: "Total Orders",    value: totalOrderCount, moneyValue: sumPrice(dayOrders), dataValue: sumData([...dayOrders, ...dayStoreOrders]), sub: `${dayOrders.length} direct · ${dayStoreOrders.length} store`, colorClass: "text-violet-600",  bgClass: "bg-violet-100 dark:bg-violet-900/20" },
     { icon: Clock,        label: "Pending",         value: totalPending,    sub: `${dayPending.length} direct · ${storePendingCount} store`,   colorClass: "text-amber-600",   bgClass: "bg-amber-100 dark:bg-amber-900/20",   pulse: totalPending > 0 },
-    { icon: CheckCircle2, label: "Completed",       value: totalCompleted,  moneyValue: sumPrice(dayCompleted), dataValue: sumData([...dayCompleted, ...dayStoreOrders.filter((o: any) => o.status === "completed")]), sub: `${dayCompleted.length} direct · ${dayStoreOrders.filter((o: any) => o.status === "completed").length} store`, colorClass: "text-teal-600",    bgClass: "bg-teal-100 dark:bg-teal-900/20" },
-    { icon: Zap,          label: "Processing",      value: totalProcessing, sub: `${dayProcessing.length} direct · ${dayStoreOrders.filter((o: any) => o.status === "processing").length} store`, colorClass: "text-sky-600", bgClass: "bg-sky-100 dark:bg-sky-900/20", pulse: totalProcessing > 0 },
-    { icon: AlertCircle,  label: "Failed",          value: totalFailed,     sub: `${dayFailed.length} direct · ${dayStoreOrders.filter((o: any) => o.status === "failed" || o.status === "cancelled").length} store`, colorClass: "text-red-600",     bgClass: "bg-red-100 dark:bg-red-900/20" },
+    { icon: CheckCircle2, label: "Completed",       value: totalCompleted,  moneyValue: sumPrice(dayCompleted), dataValue: sumData([...dayCompleted, ...dayStoreOrders.filter((o: any) => storePhase(o) === "completed")]), sub: `${dayCompleted.length} direct · ${dayStoreOrders.filter((o: any) => storePhase(o) === "completed").length} store`, colorClass: "text-teal-600",    bgClass: "bg-teal-100 dark:bg-teal-900/20" },
+    { icon: Zap,          label: "Processing",      value: totalProcessing, sub: `${dayProcessing.length} direct · ${dayStoreOrders.filter((o: any) => storePhase(o) === "processing").length} store`, colorClass: "text-sky-600", bgClass: "bg-sky-100 dark:bg-sky-900/20", pulse: totalProcessing > 0 },
+    { icon: AlertCircle,  label: "Failed",          value: totalFailed,     sub: `${dayFailed.length} direct · ${dayStoreOrders.filter((o: any) => { const p = storePhase(o); return p === "failed" || p === "cancelled" || p === "refunded"; }).length} store`, colorClass: "text-red-600",     bgClass: "bg-red-100 dark:bg-red-900/20" },
   ] : [], [stats, dayOrders, dayStoreOrders, dayPending, dayCompleted, dayProcessing, dayFailed, totalOrderCount, totalCompleted, totalPending, storePendingCount, totalProcessing, totalFailed, dateFrom, dateTo]);
 
   const pendingDeposits = useMemo(() => (deposits ?? []).filter(d => d.status === "pending"), [deposits]);
@@ -348,7 +352,7 @@ function AdminDashboardContent() {
       if (dateTo) { const to = new Date(dateTo); to.setHours(23, 59, 59, 999); src = src.filter(o => new Date(o.createdAt) <= to); }
     }
     if (networkFilter !== "all") src = src.filter(o => (o.network ?? "") === networkFilter);
-    if (statusTab !== "all") src = src.filter(o => o.status === statusTab);
+    if (statusTab !== "all") src = src.filter(o => platformPhase(o as any) === statusTab);
     if (phoneSearch.trim()) src = src.filter(o => o.phoneNumber.includes(phoneSearch.trim()));
     if (orderIdSearch.trim()) src = src.filter(o => String(o.id).includes(orderIdSearch.trim()));
     return src;
@@ -357,7 +361,7 @@ function AdminDashboardContent() {
   const statusCounts = useMemo(() => {
     // Status counts from date-filtered orders (dayOrders)
     return Object.fromEntries(
-      ORDER_STATUSES.map(s => [s, s === "all" ? dayOrders.length : dayOrders.filter(o => o.status === s).length])
+      ORDER_STATUSES.map(s => [s, s === "all" ? dayOrders.length : dayOrders.filter(o => platformPhase(o as any) === s).length])
     );
   }, [dayOrders]);
 
@@ -497,9 +501,9 @@ function AdminDashboardContent() {
                   <button onClick={() => setPageView("store")}
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${pageView === "store" ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
                     Store
-                    {(dayStoreOrders ?? []).filter((o: any) => o.status === "processing").length > 0 && (
+                    {(dayStoreOrders ?? []).filter((o: any) => o.delivered === "processing").length > 0 && (
                       <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-blue-500 text-white text-[10px] font-bold">
-                        {dayStoreOrders.filter((o: any) => o.status === "processing").length}
+                        {dayStoreOrders.filter((o: any) => o.delivered === "processing").length}
                       </span>
                     )}
                   </button>
@@ -589,9 +593,10 @@ function AdminDashboardContent() {
                     </thead>
                     <tbody className="divide-y divide-border">
                       {dayStoreOrders.map((o: any) => {
-                        const statusColor = STATUS_COLORS[o.status] ?? "bg-gray-100 text-gray-700";
+                        const phase = storePhase(o);
+                        const statusColor = STATUS_COLORS[phase] ?? "bg-gray-100 text-gray-700";
                         const isActioning = storeActionId === o.id;
-                        const canAct = o.status !== "completed" && o.status !== "cancelled";
+                        const canAct = phase !== "completed" && phase !== "cancelled" && phase !== "refunded";
                         const nConf = NETWORKS.find(n => n.value === o.bundleNetwork);
                         return (
                           <tr key={o.id} className="hover:bg-muted/20 transition-colors">
@@ -613,7 +618,7 @@ function AdminDashboardContent() {
                                 ? <span className="text-emerald-600">+GH₵{o.systemProfit.toFixed(2)}</span>
                                 : <span className="text-muted-foreground italic text-[10px]">—</span>}
                             </td>
-                            <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${statusColor}`}>{o.status}</span></td>
+                            <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${statusColor}`}>{phase}</span></td>
                             <td className="hidden sm:table-cell px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(o.createdAt)}</td>
                             <td className="px-4 py-3">
                               {canAct ? (
@@ -685,12 +690,13 @@ function AdminDashboardContent() {
                         </span>
                       </td>
                       <td className="hidden md:table-cell px-5 py-3.5">
-                        <Select defaultValue={order.status} onValueChange={v => handleStatusChange(order.id, v)}>
+                        <Select defaultValue={platformPhase(order as any)} onValueChange={v => handleStatusChange(order.id, v)}>
                           <SelectTrigger className="w-32 h-7 text-xs" data-testid={`select-status-${order.id}`}>
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="pending">Pending</SelectItem>
+                            <SelectItem value="paid">Paid</SelectItem>
                             <SelectItem value="processing">Processing</SelectItem>
                             <SelectItem value="completed">Completed</SelectItem>
                             <SelectItem value="failed">Failed</SelectItem>
@@ -698,7 +704,7 @@ function AdminDashboardContent() {
                         </Select>
                       </td>
                       <td className="px-5 py-3.5">
-                        {order.status !== "failed" && (
+                        {order.status === "paid" && (!(order as any).delivered || (order as any).delivered === "processing") && (
                           <button
                             onClick={() => handleRefundOrder(order.id, Number(order.price))}
                             disabled={refunding === order.id}

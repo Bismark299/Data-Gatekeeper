@@ -180,7 +180,15 @@ export const ListMyOrdersResponseItem = zod.object({
   bundleName: zod.string(),
   bundleData: zod.string(),
   price: zod.number(),
-  status: zod.string(),
+  status: zod
+    .string()
+    .describe("Payment state (pending, paid, failed, refunded)"),
+  delivered: zod
+    .string()
+    .nullish()
+    .describe(
+      "Fulfillment state (null = not dispatched, processing, delivered, failed)",
+    ),
   phoneNumber: zod.string(),
   network: zod
     .string()
@@ -222,7 +230,15 @@ export const GetOrderResponse = zod.object({
   bundleName: zod.string(),
   bundleData: zod.string(),
   price: zod.number(),
-  status: zod.string(),
+  status: zod
+    .string()
+    .describe("Payment state (pending, paid, failed, refunded)"),
+  delivered: zod
+    .string()
+    .nullish()
+    .describe(
+      "Fulfillment state (null = not dispatched, processing, delivered, failed)",
+    ),
   phoneNumber: zod.string(),
   network: zod
     .string()
@@ -363,7 +379,15 @@ export const CheckoutCartResponse = zod.object({
       bundleName: zod.string(),
       bundleData: zod.string(),
       price: zod.number(),
-      status: zod.string(),
+      status: zod
+        .string()
+        .describe("Payment state (pending, paid, failed, refunded)"),
+      delivered: zod
+        .string()
+        .nullish()
+        .describe(
+          "Fulfillment state (null = not dispatched, processing, delivered, failed)",
+        ),
       phoneNumber: zod.string(),
       network: zod
         .string()
@@ -448,7 +472,15 @@ export const AdminListOrdersResponseItem = zod.object({
   bundleName: zod.string(),
   bundleData: zod.string(),
   price: zod.number(),
-  status: zod.string(),
+  status: zod
+    .string()
+    .describe("Payment state (pending, paid, failed, refunded)"),
+  delivered: zod
+    .string()
+    .nullish()
+    .describe(
+      "Fulfillment state (null = not dispatched, processing, delivered, failed)",
+    ),
   phoneNumber: zod.string(),
   network: zod
     .string()
@@ -478,7 +510,15 @@ export const AdminUpdateOrderStatusResponse = zod.object({
   bundleName: zod.string(),
   bundleData: zod.string(),
   price: zod.number(),
-  status: zod.string(),
+  status: zod
+    .string()
+    .describe("Payment state (pending, paid, failed, refunded)"),
+  delivered: zod
+    .string()
+    .nullish()
+    .describe(
+      "Fulfillment state (null = not dispatched, processing, delivered, failed)",
+    ),
   phoneNumber: zod.string(),
   network: zod
     .string()

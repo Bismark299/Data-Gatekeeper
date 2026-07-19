@@ -192,7 +192,7 @@ export function BulkCancelRefundDialog({ onDone }: { onDone: () => void }) {
                             <td className="px-2 py-1">{o.bundleData || o.bundleName}</td>
                             <td className="px-2 py-1 font-semibold">{Number(o.price).toFixed(2)}</td>
                             <td className="px-2 py-1">
-                              <span className={`px-1.5 py-0.5 rounded ${o.status === "processing" ? "bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400" : "bg-amber-100 text-amber-800 dark:bg-amber-900/20 dark:text-amber-400"}`}>{o.status}</span>
+                              <span className={`px-1.5 py-0.5 rounded ${(o as any).delivered === "processing" ? "bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400" : "bg-amber-100 text-amber-800 dark:bg-amber-900/20 dark:text-amber-400"}`}>{(o as any).delivered === "processing" ? "processing" : o.status}</span>
                             </td>
                           </tr>
                         ))}

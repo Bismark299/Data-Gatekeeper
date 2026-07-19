@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Link } from "wouter";
 import { NETWORK_STYLES, NETWORK_LABELS as BUNDLE_NETWORK_LABELS } from "@/components/BundleCard";
+import { storePhase } from "@/lib/orderPhase";
 import {
   Store as StoreIcon, TrendingUp, ShoppingBag, Wallet, Copy, Check,
   Plus, Trash2, Edit2, ExternalLink, Loader2, X, Package, Settings,
@@ -47,9 +48,10 @@ const NETWORK_COLORS: Record<string, string> = {
 };
 
 const STATUS_COLORS: Record<string, string> = {
-  pending: "bg-amber-100 text-amber-800", processing: "bg-blue-100 text-blue-800",
+  pending: "bg-amber-100 text-amber-800", paid: "bg-violet-100 text-violet-800",
+  processing: "bg-blue-100 text-blue-800",
   completed: "bg-emerald-100 text-emerald-800", failed: "bg-red-100 text-red-800",
-  cancelled: "bg-gray-100 text-gray-600",
+  cancelled: "bg-gray-100 text-gray-600", refunded: "bg-rose-100 text-rose-700",
 };
 
 function StatCard({ label, value, sub, icon: Icon, color }: {
@@ -286,7 +288,7 @@ function OverviewTab({ stats, orders, storeBundles }: { stats?: StoreStats; orde
                   <div className="text-sm font-bold text-foreground">GH₵{o.sellingPrice.toFixed(2)}</div>
                   <div className="text-xs text-emerald-600">+GH₵{o.profit.toFixed(2)}</div>
                 </div>
-                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${STATUS_COLORS[o.status] ?? "bg-gray-100 text-gray-700"}`}>{o.status}</span>
+                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${STATUS_COLORS[storePhase(o)] ?? "bg-gray-100 text-gray-700"}`}>{storePhase(o)}</span>
               </div>
             ))}
           </div>
@@ -695,7 +697,7 @@ function OrdersTab({ orders }: { orders: any[] }) {
 
   const filtered = orders.filter(o => {
     if (phoneFilter && !o.customerPhone.includes(phoneFilter.trim())) return false;
-    if (statusFilter !== "all" && o.status !== statusFilter) return false;
+    if (statusFilter !== "all" && storePhase(o) !== statusFilter) return false;
     if (dateFrom && new Date(o.createdAt) < new Date(dateFrom)) return false;
     if (dateTo && new Date(o.createdAt) > new Date(dateTo + "T23:59:59")) return false;
     return true;
@@ -721,10 +723,12 @@ function OrdersTab({ orders }: { orders: any[] }) {
           className="h-8 rounded-lg border border-border bg-background px-2 text-xs">
           <option value="all">All status</option>
           <option value="pending">Pending</option>
+          <option value="paid">Paid</option>
           <option value="processing">Processing</option>
           <option value="completed">Completed</option>
           <option value="cancelled">Cancelled</option>
           <option value="failed">Failed</option>
+          <option value="refunded">Refunded</option>
         </select>
         <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
           className="h-8 w-full sm:w-auto rounded-lg border border-border bg-background px-2 text-xs" title="From date" />
@@ -766,7 +770,7 @@ function OrdersTab({ orders }: { orders: any[] }) {
                   <td className="px-4 py-3 font-semibold">GH₵{o.sellingPrice.toFixed(2)}</td>
                   <td className="px-4 py-3 text-emerald-600 font-semibold">+GH₵{o.profit.toFixed(2)}</td>
                   <td className="px-4 py-3"><span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700">Paid</span></td>
-                  <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${STATUS_COLORS[o.status] ?? "bg-gray-100"}`}>{o.status}</span></td>
+                  <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${STATUS_COLORS[storePhase(o)] ?? "bg-gray-100"}`}>{storePhase(o)}</span></td>
                   <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(o.createdAt).toLocaleString("en-GH", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true })}</td>
                 </tr>
               ))}

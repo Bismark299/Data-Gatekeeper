@@ -13,7 +13,7 @@
  *   CKGODSWAY_API_URL — Base URL (default: https://console.ckgodsway.com/api)
  */
 
-import { eq, and, isNotNull, isNull, inArray } from "drizzle-orm";
+import { eq, and, or, isNotNull, isNull, inArray } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import axios from "axios";
 import crypto from "crypto";
@@ -224,7 +224,8 @@ export async function dispatchToCkgodsway(opts: {
       .where(and(
         eq(storeOrdersTable.id, opts.orderId),
         isNull(storeOrdersTable.ckgodswayReference),
-        inArray(storeOrdersTable.status, ["pending", "paid"]),
+        eq(storeOrdersTable.status, "paid"),
+        isNull(storeOrdersTable.delivered),
       ))
       .returning({ id: storeOrdersTable.id });
     locked = rows.length > 0;
@@ -234,7 +235,8 @@ export async function dispatchToCkgodsway(opts: {
       .where(and(
         eq(ordersTable.id, opts.orderId),
         isNull(ordersTable.ckgodswayReference),
-        eq(ordersTable.status, "pending"),
+        eq(ordersTable.status, "paid"),
+        isNull(ordersTable.delivered),
       ))
       .returning({ id: ordersTable.id });
     locked = rows.length > 0;
@@ -327,19 +329,24 @@ export async function handleCkgodswayWebhook(payload: CkgodswayWebhookPayload): 
 
   if (isPlatform) {
     const [row] = await db
-      .select({ id: ordersTable.id, status: ordersTable.status })
+      .select({ id: ordersTable.id, status: ordersTable.status, delivered: ordersTable.delivered })
       .from(ordersTable)
       .where(eq(ordersTable.ckgodswayReference, reference));
     if (!row) { logger.warn({ reference }, "CK Godsway webhook: platform order not found"); return; }
-    if (row.status === "completed" || row.status === "failed") return; // idempotent
+    if (row.delivered === "delivered" || row.delivered === "failed") return; // idempotent
 
-    // Guard on non-terminal status: an admin bulk-refund can commit between the
-    // SELECT above and here, flipping the row to failed+refunded. The guard makes
-    // that refund authoritative so this webhook can't resurrect it to completed.
+    // Guard on status='paid' + non-terminal delivered: an admin bulk-refund can
+    // commit between the SELECT above and here, flipping status to refunded. The
+    // guard makes that refund authoritative so this webhook can't mark a refunded
+    // order as delivered.
+    const openDelivery = and(
+      eq(ordersTable.status, "paid"),
+      or(isNull(ordersTable.delivered), eq(ordersTable.delivered, "processing")),
+    );
     if (status === "SUCCESSFUL") {
-      await db.update(ordersTable).set({ status: "completed" }).where(and(eq(ordersTable.id, row.id), inArray(ordersTable.status, ["pending", "processing"])));
+      await db.update(ordersTable).set({ delivered: "delivered" }).where(and(eq(ordersTable.id, row.id), openDelivery));
     } else if (status === "FAILED" || status === "CANCELLED") {
-      await db.update(ordersTable).set({ status: "failed" }).where(and(eq(ordersTable.id, row.id), inArray(ordersTable.status, ["pending", "processing"])));
+      await db.update(ordersTable).set({ delivered: "failed" }).where(and(eq(ordersTable.id, row.id), openDelivery));
     }
     return;
   }
@@ -348,13 +355,14 @@ export async function handleCkgodswayWebhook(payload: CkgodswayWebhookPayload): 
   if (status === "SUCCESSFUL") {
     await db.transaction(async (tx) => {
       const [row] = await tx
-        .select({ id: storeOrdersTable.id, profit: storeOrdersTable.profit, storeId: storeOrdersTable.storeId, status: storeOrdersTable.status })
+        .select({ id: storeOrdersTable.id, profit: storeOrdersTable.profit, storeId: storeOrdersTable.storeId, status: storeOrdersTable.status, delivered: storeOrdersTable.delivered })
         .from(storeOrdersTable)
         .where(eq(storeOrdersTable.ckgodswayReference, reference))
         .for("update");
       if (!row) { logger.warn({ reference }, "CK Godsway webhook: store order not found"); return; }
-      if (row.status === "completed" || row.status === "failed") return; // idempotent
-      await tx.update(storeOrdersTable).set({ status: "completed" }).where(eq(storeOrdersTable.id, row.id));
+      if (row.delivered === "delivered" || row.delivered === "failed") return; // idempotent
+      if (row.status !== "paid") return; // refunded/cancelled — never credit profit
+      await tx.update(storeOrdersTable).set({ delivered: "delivered" }).where(eq(storeOrdersTable.id, row.id));
       const profit = parseFloat(row.profit);
       await tx.update(storesTable)
         .set({ profitBalance: sql`profit_balance + ${profit.toFixed(2)}::numeric` })
@@ -362,12 +370,16 @@ export async function handleCkgodswayWebhook(payload: CkgodswayWebhookPayload): 
     });
   } else if (status === "FAILED" || status === "CANCELLED") {
     const [row] = await db
-      .select({ id: storeOrdersTable.id, status: storeOrdersTable.status })
+      .select({ id: storeOrdersTable.id, status: storeOrdersTable.status, delivered: storeOrdersTable.delivered })
       .from(storeOrdersTable)
       .where(eq(storeOrdersTable.ckgodswayReference, reference));
     if (!row) { logger.warn({ reference }, "CK Godsway webhook: store order not found"); return; }
-    if (row.status === "completed" || row.status === "failed") return; // idempotent
-    await db.update(storeOrdersTable).set({ status: "failed" }).where(eq(storeOrdersTable.id, row.id));
+    if (row.delivered === "delivered" || row.delivered === "failed") return; // idempotent
+    await db.update(storeOrdersTable).set({ delivered: "failed" }).where(and(
+      eq(storeOrdersTable.id, row.id),
+      eq(storeOrdersTable.status, "paid"),
+      or(isNull(storeOrdersTable.delivered), eq(storeOrdersTable.delivered, "processing")),
+    ));
   }
 }
 
@@ -395,12 +407,13 @@ export function startCkgodswayPoller(): void {
       const { enabled, autoSync, apiKey } = await getCkgodswaySettings();
       if (!enabled || !autoSync || !apiKey) return;
 
-      // ── 1. Check status of processing platform orders ──
+      // ── 1. Check delivery of processing platform orders ──
       const platformProcessing = await db
         .select({ id: ordersTable.id, ref: ordersTable.ckgodswayReference })
         .from(ordersTable)
         .where(and(
-          eq(ordersTable.status, "processing"),
+          eq(ordersTable.status, "paid"),
+          eq(ordersTable.delivered, "processing"),
           isNotNull(ordersTable.ckgodswayReference),
         ))
         .orderBy(ordersTable.createdAt)
@@ -410,24 +423,26 @@ export function startCkgodswayPoller(): void {
         if (!o.ref || o.ref.startsWith("LOCK-")) continue;
         try {
           const s = await ckgodswayCheckStatus(apiKey, o.ref);
-          // Guard on status="processing": an admin bulk-refund can commit during the
-          // network call above (flipping this row to failed+refunded). Without the
-          // guard this write would resurrect it to completed → refund + delivery.
+          // Guard on status='paid' AND delivered='processing': an admin bulk-refund
+          // can commit during the network call above (flipping status to refunded).
+          // Without the dual-column guard this write would mark a refunded order
+          // delivered → refund + delivery.
           if (s === "SUCCESSFUL") {
-            await db.update(ordersTable).set({ status: "completed" }).where(and(eq(ordersTable.id, o.id), eq(ordersTable.status, "processing")));
+            await db.update(ordersTable).set({ delivered: "delivered" }).where(and(eq(ordersTable.id, o.id), eq(ordersTable.status, "paid"), eq(ordersTable.delivered, "processing")));
           } else if (s === "FAILED" || s === "CANCELLED") {
-            await db.update(ordersTable).set({ status: "failed" }).where(and(eq(ordersTable.id, o.id), eq(ordersTable.status, "processing")));
+            await db.update(ordersTable).set({ delivered: "failed" }).where(and(eq(ordersTable.id, o.id), eq(ordersTable.status, "paid"), eq(ordersTable.delivered, "processing")));
           }
         } catch { /* transient — retry next cycle */ }
         await sleep(STATUS_DELAY_MS);
       }
 
-      // ── 2. Check status of processing store orders ──
+      // ── 2. Check delivery of processing store orders ──
       const storeProcessing = await db
         .select({ id: storeOrdersTable.id, ref: storeOrdersTable.ckgodswayReference })
         .from(storeOrdersTable)
         .where(and(
-          eq(storeOrdersTable.status, "processing"),
+          eq(storeOrdersTable.status, "paid"),
+          eq(storeOrdersTable.delivered, "processing"),
           isNotNull(storeOrdersTable.ckgodswayReference),
         ))
         .orderBy(storeOrdersTable.createdAt)
@@ -440,25 +455,27 @@ export function startCkgodswayPoller(): void {
           if (s === "SUCCESSFUL") {
             await db.transaction(async (tx) => {
               const [row] = await tx
-                .select({ profit: storeOrdersTable.profit, storeId: storeOrdersTable.storeId, status: storeOrdersTable.status })
+                .select({ profit: storeOrdersTable.profit, storeId: storeOrdersTable.storeId, status: storeOrdersTable.status, delivered: storeOrdersTable.delivered })
                 .from(storeOrdersTable)
                 .where(eq(storeOrdersTable.id, o.id))
                 .for("update");
-              if (!row || row.status === "completed") return;
-              await tx.update(storeOrdersTable).set({ status: "completed" }).where(eq(storeOrdersTable.id, o.id));
+              // Only settle rows still paid + delivering — a concurrent admin
+              // refund/cancel must never be credited profit or marked delivered.
+              if (!row || row.status !== "paid" || row.delivered !== "processing") return;
+              await tx.update(storeOrdersTable).set({ delivered: "delivered" }).where(and(eq(storeOrdersTable.id, o.id), eq(storeOrdersTable.status, "paid"), eq(storeOrdersTable.delivered, "processing")));
               const profit = parseFloat(row.profit);
               await tx.update(storesTable)
                 .set({ profitBalance: sql`profit_balance + ${profit.toFixed(2)}::numeric` })
                 .where(eq(storesTable.id, row.storeId));
             });
           } else if (s === "FAILED" || s === "CANCELLED") {
-            await db.update(storeOrdersTable).set({ status: "failed" }).where(eq(storeOrdersTable.id, o.id));
+            await db.update(storeOrdersTable).set({ delivered: "failed" }).where(and(eq(storeOrdersTable.id, o.id), eq(storeOrdersTable.status, "paid"), eq(storeOrdersTable.delivered, "processing")));
           }
         } catch { /* transient — retry next cycle */ }
         await sleep(STATUS_DELAY_MS);
       }
 
-      // ── 3. Retry pending platform CKG-network orders ──
+      // ── 3. Retry undispatched platform CKG-network orders ──
       const pendingPlatform = await db
         .select({
           id:         ordersTable.id,
@@ -469,7 +486,8 @@ export function startCkgodswayPoller(): void {
         .from(ordersTable)
         .leftJoin(bundlesTable, eq(bundlesTable.id, ordersTable.bundleId))
         .where(and(
-          eq(ordersTable.status, "pending"),
+          eq(ordersTable.status, "paid"),
+          isNull(ordersTable.delivered),
           isNull(ordersTable.ckgodswayReference),
           inArray(bundlesTable.network, CKG_NETWORKS),
         ))
@@ -487,7 +505,7 @@ export function startCkgodswayPoller(): void {
           });
           if (outcome.dispatched) {
             await db.update(ordersTable)
-              .set({ status: "processing", ckgodswayReference: outcome.reference })
+              .set({ delivered: "processing", ckgodswayReference: outcome.reference })
               .where(eq(ordersTable.id, o.id));
           } else if (outcome.reason === "insufficient_funds") {
             break;
@@ -496,7 +514,7 @@ export function startCkgodswayPoller(): void {
         await sleep(DISPATCH_DELAY_MS);
       }
 
-      // ── 4. Retry paid store CKG-network orders ──
+      // ── 4. Retry undispatched paid store CKG-network orders ──
       const paidStore = await db
         .select({
           id:         storeOrdersTable.id,
@@ -507,6 +525,7 @@ export function startCkgodswayPoller(): void {
         .from(storeOrdersTable)
         .where(and(
           eq(storeOrdersTable.status, "paid"),
+          isNull(storeOrdersTable.delivered),
           isNull(storeOrdersTable.ckgodswayReference),
           inArray(storeOrdersTable.bundleNetwork, CKG_NETWORKS),
         ))
@@ -524,7 +543,7 @@ export function startCkgodswayPoller(): void {
           });
           if (outcome.dispatched) {
             await db.update(storeOrdersTable)
-              .set({ status: "processing", ckgodswayReference: outcome.reference })
+              .set({ delivered: "processing", ckgodswayReference: outcome.reference })
               .where(eq(storeOrdersTable.id, o.id));
           } else if (outcome.reason === "insufficient_funds") {
             break;

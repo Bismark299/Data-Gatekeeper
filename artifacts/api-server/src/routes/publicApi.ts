@@ -465,7 +465,9 @@ router.post("/orders", requireApiKey, async (req, res) => {
           bundleData:  bundle.dataAmount,
           price:       rawPrice,
           buyingCost:  bundle.price,
-          status:      "pending",
+          // Wallet was debited in this transaction — the order is paid from creation.
+          // Fulfillment is tracked separately in the `delivered` column.
+          status:      "paid",
           phoneNumber: phoneNumber.trim(),
         })
         .returning();
@@ -495,8 +497,8 @@ router.post("/orders", requireApiKey, async (req, res) => {
           ? { mcbisReference: outcome.reference }
           : { ckgodswayReference: outcome.reference };
         await db.update(ordersTable)
-          .set({ status: "processing", ...refCol })
-          .where(eq(ordersTable.id, order.id));
+          .set({ delivered: "processing", ...refCol })
+          .where(and(eq(ordersTable.id, order.id), eq(ordersTable.status, "paid"), isNull(ordersTable.delivered)));
       }
     }).catch(() => {});
 
@@ -544,6 +546,13 @@ router.get("/orders/:id", requireApiKey, async (req, res) => {
     }
 
     const o = row.order;
+    // Public API keeps the legacy single-status contract: derive it from the
+    // split payment (status) + fulfillment (delivered) columns.
+    const legacyStatus =
+      o.status === "refunded" || o.status === "failed" || o.delivered === "failed" ? "failed" :
+      o.delivered === "delivered"  ? "completed"  :
+      o.delivered === "processing" ? "processing" :
+      "pending";
     res.json({
       id:          o.id,
       bundleName:  o.bundleName,
@@ -551,7 +560,7 @@ router.get("/orders/:id", requireApiKey, async (req, res) => {
       network:     row.network ?? null,
       phoneNumber: o.phoneNumber,
       price:       o.price,
-      status:      o.status,
+      status:      legacyStatus,
       createdAt:   o.createdAt.toISOString(),
     });
   } catch (err) {

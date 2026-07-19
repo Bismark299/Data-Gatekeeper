@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { platformPhase } from "@/lib/orderPhase";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { AdminSidebar } from "@/components/AdminSidebar";
 import { AdminFinancialSummary } from "@/components/AdminFinancialSummary";
@@ -53,7 +54,7 @@ interface DeliveryInfo { status: string; date: string; time: string }
 
 interface BatchOrder {
   id: number; phone: string; bundleName: string; bundleData: string;
-  price: number; status: string; createdAt: string;
+  price: number; status: string; delivered?: string | null; createdAt: string;
   delivery?: DeliveryInfo | null;
 }
 
@@ -65,10 +66,12 @@ interface BalanceData { success: boolean; balance: number; currency: string; tod
 
 const STATUS_COLORS: Record<string, string> = {
   pending:    "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-400",
+  paid:       "bg-violet-100 text-violet-700 dark:bg-violet-900/20 dark:text-violet-400",
   processing: "bg-blue-100 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400",
   completed:  "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400",
   partial:    "bg-orange-100 text-orange-700 dark:bg-orange-900/20 dark:text-orange-400",
   failed:     "bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400",
+  refunded:   "bg-rose-100 text-rose-700 dark:bg-rose-900/20 dark:text-rose-400",
 };
 
 function StatusBadge({ status }: { status: string }) {
@@ -444,7 +447,7 @@ function ExpandedBatch({ batchId }: { batchId: number }) {
                   <div className="text-muted-foreground">{o.bundleData}</div>
                 </td>
                 <td className="px-3 py-2 text-right font-semibold">GH₵{o.price.toFixed(2)}</td>
-                <td className="px-3 py-2 text-right"><StatusBadge status={o.status} /></td>
+                <td className="px-3 py-2 text-right"><StatusBadge status={platformPhase(o as any)} /></td>
                 <td className="px-3 py-2 text-right">
                   {o.delivery && (o.delivery.date || o.delivery.time || o.delivery.status) ? (
                     <div className="flex flex-col items-end gap-0.5">
@@ -945,7 +948,7 @@ interface PhoneResult {
 interface OrderSearchResult {
   mode: "order"; topupghOrderId: number; batch: Batch | null;
   delivery: { success: boolean; order_id: number; delivery_status: Record<string, { delivery_status?: string; delivery_date?: string; delivery_time?: string }> };
-  localOrders: { id: number; phone: string; bundleName: string; status: string; createdAt: string }[];
+  localOrders: { id: number; phone: string; bundleName: string; status: string; delivered?: string | null; createdAt: string }[];
   liveSkipped?: boolean; liveNotFound?: boolean; message?: string | null;
 }
 
@@ -1150,7 +1153,7 @@ function SearchTab() {
                       return (
                         <tr key={phone} className={`border-b border-border/50 hover:bg-muted/20 ${i % 2 === 0 ? "" : "bg-muted/10"}`}>
                           <td className="px-4 py-2.5 font-mono font-medium text-foreground text-xs">{phone}</td>
-                          <td className="px-4 py-2.5"><StatusBadge status={localOrder?.status ?? "—"} /></td>
+                          <td className="px-4 py-2.5"><StatusBadge status={localOrder ? platformPhase(localOrder as any) : "—"} /></td>
                           <td className="px-4 py-2.5"><LiveStatusBadge status={info.delivery_status ?? "unknown"} /></td>
                           <td className="px-4 py-2.5 text-xs text-muted-foreground">{localOrder?.bundleName ?? "—"}</td>
                           <td className="px-4 py-2.5 text-xs text-muted-foreground">

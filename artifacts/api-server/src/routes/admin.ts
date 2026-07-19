@@ -65,6 +65,7 @@ function formatOrder(o: typeof ordersTable.$inferSelect, network?: string | null
     network: network ?? null,
     price: Number(o.price),
     status: o.status,
+    delivered: o.delivered ?? null,
     phoneNumber: o.phoneNumber,
     createdAt: o.createdAt.toISOString(),
     updatedAt: o.updatedAt.toISOString(),
@@ -245,7 +246,25 @@ router.get("/admin/orders", requireAdmin, async (req, res): Promise<void> => {
 
   const { status, userId, search } = params.data;
   const conditions: SQL[] = [];
-  if (status)               conditions.push(eq(ordersTable.status, status));
+  // Filter values map onto the split model: payment values filter `status`,
+  // fulfillment values filter `delivered`. "pending" = paid but not dispatched.
+  if (status) {
+    const filterMap: Record<string, SQL | undefined> = {
+      pending: and(eq(ordersTable.status, "paid"), isNull(ordersTable.delivered)),
+      paid: eq(ordersTable.status, "paid"),
+      refunded: eq(ordersTable.status, "refunded"),
+      failed: or(eq(ordersTable.status, "failed"), eq(ordersTable.delivered, "failed")),
+      // Refunded orders keep their last fulfillment value (e.g. refunded while
+      // delivery was in flight), so fulfillment tabs must also require status='paid'
+      // or those rows would show under both Processing and Refunded.
+      processing: and(eq(ordersTable.status, "paid"), eq(ordersTable.delivered, "processing")),
+      completed: and(eq(ordersTable.status, "paid"), eq(ordersTable.delivered, "delivered")),
+      delivered: and(eq(ordersTable.status, "paid"), eq(ordersTable.delivered, "delivered")),
+    };
+    const cond = filterMap[status];
+    if (cond) conditions.push(cond);
+    else conditions.push(eq(ordersTable.status, status));
+  }
   if (userId !== undefined) conditions.push(eq(ordersTable.userId, userId));
   if (search && search.trim()) {
     const s = search.trim();
@@ -290,6 +309,7 @@ router.post("/admin/orders/:id/check-delivery", requireAdmin, async (req, res): 
       id: ordersTable.id,
       phoneNumber: ordersTable.phoneNumber,
       status: ordersTable.status,
+      delivered: ordersTable.delivered,
       topupghBatchId: ordersTable.topupghBatchId,
     })
     .from(ordersTable)
@@ -320,15 +340,29 @@ router.patch("/admin/orders/:id/status", requireAdmin, async (req, res): Promise
     return;
   }
 
-  const validStatuses = ["pending", "paid", "processing", "completed", "failed"];
-  if (!validStatuses.includes(parsed.data.status)) {
+  // status = payment state; fulfillment values map onto the `delivered` column.
+  // "refunded" is deliberately NOT settable here — money moves only via the refund routes.
+  const PAYMENT_SET = ["pending", "paid"];
+  const FULFILLMENT_SET: Record<string, string> = {
+    processing: "processing",
+    completed: "delivered",
+    delivered: "delivered",
+    failed: "failed",
+  };
+  const value = parsed.data.status;
+  let patch: Partial<{ status: string; delivered: string }>;
+  if (PAYMENT_SET.includes(value)) {
+    patch = { status: value };
+  } else if (FULFILLMENT_SET[value]) {
+    patch = { delivered: FULFILLMENT_SET[value] };
+  } else {
     res.status(400).json({ error: "Invalid status value" });
     return;
   }
 
   const [order] = await db
     .update(ordersTable)
-    .set({ status: parsed.data.status })
+    .set(patch)
     .where(eq(ordersTable.id, paramsParsed.data.id))
     .returning();
 
@@ -350,7 +384,7 @@ async function refundOrderInTx(
   tx: OrderRefundTx,
   id: number,
   adminId: number,
-  opts?: { allowedStatuses?: string[]; requireNoProviderRef?: boolean },
+  opts?: { allowedDelivered?: (string | null)[]; requireNoProviderRef?: boolean },
 ): Promise<number> {
   const [locked] = await tx
     .select()
@@ -359,25 +393,25 @@ async function refundOrderInTx(
     .for("update");
 
   if (!locked) throw Object.assign(new Error("Order not found"), { status: 404 });
-  if (locked.status === "completed") throw Object.assign(new Error("Cannot refund a completed order"), { status: 400 });
-  if (locked.status === "failed" || locked.status === "cancelled") {
-    throw Object.assign(new Error("Order is already failed/refunded"), { status: 400 });
+  if (locked.delivered === "delivered") throw Object.assign(new Error("Cannot refund a delivered order"), { status: 400 });
+  if (locked.status === "refunded") throw Object.assign(new Error("Order is already refunded"), { status: 400 });
+  if (locked.status !== "paid") {
+    throw Object.assign(new Error(`Order payment status is ${locked.status}; only paid orders can be refunded`), { status: 400 });
   }
-  // Callers (e.g. bulk cancel) may restrict which statuses are eligible.
-  if (opts?.allowedStatuses && !opts.allowedStatuses.includes(locked.status)) {
-    throw Object.assign(new Error(`Order is ${locked.status}; not eligible for bulk cancel`), { status: 400 });
+  // Callers (e.g. bulk cancel) may restrict which fulfillment states are eligible.
+  if (opts?.allowedDelivered && !opts.allowedDelivered.includes(locked.delivered)) {
+    throw Object.assign(new Error(`Order delivery state is ${locked.delivered ?? "not dispatched"}; not eligible for bulk cancel`), { status: 400 });
   }
-  // A "pending" order can already be provider-locked (LOCK-* reference set before
-  // its status flips to "processing"), so refuse to bulk-refund a PENDING order that
-  // has been handed to a provider — that would risk refund + delivery. A "processing"
-  // order ALWAYS carries a provider ref (that's how it was dispatched); it is refunded
-  // here deliberately, the same way a pending cancel behaves. This is money-safe against
-  // a late delivery because settleBatchDeliveries only completes orders still in
-  // pending/processing, so once this order is refunded (→ failed) no webhook/poll can
-  // re-complete it.
+  // An undispatched order (delivered IS NULL) can already be provider-locked (LOCK-*
+  // reference set before `delivered` flips to "processing"), so refuse to bulk-refund
+  // an undispatched order that has been handed to a provider — that would risk
+  // refund + delivery. A delivered='processing' order ALWAYS carries a provider ref
+  // (that's how it was dispatched); it is refunded here deliberately. This is
+  // money-safe against a late delivery because every settle path requires
+  // status='paid', so once this order is refunded no webhook/poll can complete it.
   if (
     opts?.requireNoProviderRef &&
-    locked.status === "pending" &&
+    locked.delivered == null &&
     (locked.mcbisReference || locked.ckgodswayReference || locked.topupghBatchId != null)
   ) {
     throw Object.assign(new Error("Order is already dispatched/in-flight; cancel individually after a delivery check"), { status: 400 });
@@ -397,7 +431,7 @@ async function refundOrderInTx(
     .limit(1);
   if (existingRefund) throw Object.assign(new Error("Order is already failed/refunded"), { status: 400 });
 
-  await tx.update(ordersTable).set({ status: "failed" }).where(eq(ordersTable.id, id));
+  await tx.update(ordersTable).set({ status: "refunded" }).where(eq(ordersTable.id, id));
 
   // Credit the refund amount back to wallet and record in the ledger
   await creditWallet(locked.userId, parseFloat(locked.price), tx, {
@@ -435,16 +469,29 @@ router.post("/admin/orders/bulk-status", requireAdmin, async (req, res): Promise
     res.status(400).json({ error: "ids (array) and status (string) are required" });
     return;
   }
-  const VALID_STATUSES = ["pending", "paid", "processing", "completed", "failed"] as const;
-  if (!VALID_STATUSES.includes(status as typeof VALID_STATUSES[number])) {
-    res.status(400).json({ error: `Invalid status. Must be one of: ${VALID_STATUSES.join(", ")}` });
+  // Payment statuses write `status`; fulfillment values write `delivered` (guarded to
+  // paid orders so a refunded order can never be flipped back into the delivery flow).
+  // "refunded" is NOT settable here — money moves only via the refund routes.
+  const PAYMENT_SET = ["pending", "paid"];
+  const FULFILLMENT_SET: Record<string, string> = {
+    processing: "processing",
+    completed: "delivered",
+    delivered: "delivered",
+    failed: "failed",
+  };
+  if (!PAYMENT_SET.includes(status) && !FULFILLMENT_SET[status]) {
+    res.status(400).json({ error: `Invalid status. Must be one of: ${[...PAYMENT_SET, ...Object.keys(FULFILLMENT_SET)].join(", ")}` });
     return;
   }
   const numIds = ids.map(Number).filter(n => !isNaN(n));
   if (numIds.length === 0) { res.status(400).json({ error: "No valid IDs" }); return; }
 
-  await db.update(ordersTable).set({ status }).where(inArray(ordersTable.id, numIds));
-  res.json({ updated: numIds.length });
+  const updated = PAYMENT_SET.includes(status)
+    ? await db.update(ordersTable).set({ status })
+        .where(inArray(ordersTable.id, numIds)).returning({ id: ordersTable.id })
+    : await db.update(ordersTable).set({ delivered: FULFILLMENT_SET[status] })
+        .where(and(inArray(ordersTable.id, numIds), eq(ordersTable.status, "paid"))).returning({ id: ordersTable.id });
+  res.json({ updated: updated.length });
 });
 
 // ── Bulk cancel & refund ────────────────────────────────────────────────────
@@ -461,15 +508,15 @@ const BulkRefundResolveBody = z.object({
   dateTo: z.string().optional(),
 });
 
-// Bulk cancel & refund covers PENDING and PROCESSING orders, matching how a pending
-// cancel behaves — admin-confirmed via the preview, no live delivery check. A pending
-// order that's already provider-locked is still skipped (refund + delivery risk). A
-// processing order carries a provider ref by definition and is refunded deliberately:
-// settleBatchDeliveries only completes orders still in pending/processing, so once one
-// is refunded (→ failed) a late webhook/poll can never re-complete it. Residual risk
-// (accepted, same as pending): an order TopUpGH physically delivered but hadn't reported
-// yet is refunded anyway — no code can retract an already-sent bundle.
-const REFUNDABLE_STATUSES = ["pending", "processing"];
+// Bulk cancel & refund covers paid orders that are NOT yet delivered (delivered IS NULL
+// or 'processing') — admin-confirmed via the preview, no live delivery check. An
+// undispatched order that's already provider-locked is still skipped (refund + delivery
+// risk). A delivered='processing' order carries a provider ref by definition and is
+// refunded deliberately: every settle path requires status='paid', so once one is
+// refunded a late webhook/poll can never complete it. Residual risk (accepted): an
+// order TopUpGH physically delivered but hadn't reported yet is refunded anyway — no
+// code can retract an already-sent bundle.
+const BULK_REFUNDABLE_DELIVERED: (string | null)[] = [null, "processing"];
 
 router.post("/admin/orders/bulk-refund-preview", requireAdmin, async (req, res): Promise<void> => {
   const parsed = BulkRefundResolveBody.safeParse(req.body);
@@ -513,6 +560,7 @@ router.post("/admin/orders/bulk-refund-preview", requireAdmin, async (req, res):
       bundleData: ordersTable.bundleData,
       price: ordersTable.price,
       status: ordersTable.status,
+      delivered: ordersTable.delivered,
       createdAt: ordersTable.createdAt,
       mcbisReference: ordersTable.mcbisReference,
       ckgodswayReference: ordersTable.ckgodswayReference,
@@ -525,14 +573,15 @@ router.post("/admin/orders/bulk-refund-preview", requireAdmin, async (req, res):
 
   const hasProviderRef = (r: (typeof rows)[number]) =>
     !!r.mcbisReference || !!r.ckgodswayReference || r.topupghBatchId != null;
-  // Refundable:
-  //   • pending    → only if NOT already provider-locked (a LOCK-* ref can be set before
-  //     the status flips to processing, so status alone can't rule out an in-flight delivery).
-  //   • processing → always eligible (it has a provider ref by definition); refunded the
-  //     same way a pending cancel behaves.
+  // Refundable: paid orders not yet delivered.
+  //   • delivered IS NULL → only if NOT already provider-locked (a LOCK-* ref can be set
+  //     before `delivered` flips to processing, so the column alone can't rule out an
+  //     in-flight delivery).
+  //   • delivered='processing' → always eligible (it has a provider ref by definition).
   const isRefundable = (r: (typeof rows)[number]) =>
-    REFUNDABLE_STATUSES.includes(r.status) &&
-    (r.status !== "pending" || !hasProviderRef(r));
+    r.status === "paid" &&
+    BULK_REFUNDABLE_DELIVERED.includes(r.delivered) &&
+    (r.delivered != null || !hasProviderRef(r));
 
   const refundable = rows.filter(isRefundable);
   const skipped = rows
@@ -541,9 +590,11 @@ router.post("/admin/orders/bulk-refund-preview", requireAdmin, async (req, res):
       id: r.id, phoneNumber: r.phoneNumber, bundleName: r.bundleName, bundleData: r.bundleData,
       price: r.price, status: r.status, createdAt: r.createdAt.toISOString(),
       reason:
-        r.status === "pending" && hasProviderRef(r) ? "already dispatched/in-flight — cancel individually after a delivery check"
-        : r.status === "completed" ? "already completed"
-        : "already failed/cancelled",
+        r.status === "paid" && r.delivered == null && hasProviderRef(r) ? "already dispatched/in-flight — cancel individually after a delivery check"
+        : r.delivered === "delivered" ? "already delivered"
+        : r.status === "refunded" ? "already refunded"
+        : r.delivered === "failed" ? "delivery failed — refund individually"
+        : `payment status is ${r.status}`,
     }));
 
   const matchedKeys = new Set(
@@ -579,7 +630,7 @@ router.post("/admin/orders/bulk-refund", requireAdmin, async (req, res): Promise
   // failed/completed orders are skipped, never double-refunded.
   for (const id of ids) {
     try {
-      const amount = await db.transaction((tx) => refundOrderInTx(tx, id, adminId, { allowedStatuses: ["pending", "processing"], requireNoProviderRef: true }));
+      const amount = await db.transaction((tx) => refundOrderInTx(tx, id, adminId, { allowedDelivered: BULK_REFUNDABLE_DELIVERED, requireNoProviderRef: true }));
       refunded.push({ id, refunded: amount });
     } catch (err: unknown) {
       const e = err as { message?: string };
@@ -690,6 +741,7 @@ router.post("/admin/orders/bulk-complete-preview", requireAdmin, async (req, res
       bundleData: ordersTable.bundleData,
       price: ordersTable.price,
       status: ordersTable.status,
+      delivered: ordersTable.delivered,
       createdAt: ordersTable.createdAt,
     }).from(ordersTable).where(and(...platformConds)).orderBy(desc(ordersTable.createdAt)).limit(5000),
     db.select({
@@ -699,6 +751,7 @@ router.post("/admin/orders/bulk-complete-preview", requireAdmin, async (req, res
       bundleData: storeOrdersTable.bundleData,
       price: storeOrdersTable.sellingPrice,
       status: storeOrdersTable.status,
+      delivered: storeOrdersTable.delivered,
       createdAt: storeOrdersTable.createdAt,
       storeName: storesTable.name,
     }).from(storeOrdersTable)
@@ -714,6 +767,7 @@ router.post("/admin/orders/bulk-complete-preview", requireAdmin, async (req, res
     bundleData: string | null;
     price: string;
     status: string;
+    delivered: string | null;
     createdAt: Date;
     storeName?: string;
   };
@@ -736,7 +790,7 @@ router.post("/admin/orders/bulk-complete-preview", requireAdmin, async (req, res
 
   const fmt = (r: MatchRow) => ({
     type: r.type, id: r.id, phoneNumber: r.phoneNumber, bundleName: r.bundleName,
-    bundleData: r.bundleData, price: r.price, status: r.status,
+    bundleData: r.bundleData, price: r.price, status: r.status, delivered: r.delivered,
     createdAt: r.createdAt.toISOString(), storeName: r.storeName ?? null,
   });
 
@@ -748,17 +802,19 @@ router.post("/admin/orders/bulk-complete-preview", requireAdmin, async (req, res
     const matches = byKey.get(key) ?? [];
     if (matches.length === 0) { notFound.push(sample); continue; }
 
-    const processing = matches.filter(m => m.status === "processing");
-    const others = matches.filter(m => m.status !== "processing");
+    const processing = matches.filter(m => m.status === "paid" && m.delivered === "processing");
+    const others = matches.filter(m => !(m.status === "paid" && m.delivered === "processing"));
 
     if (processing.length === 0) {
       // Nothing to complete — explain what we found instead.
       for (const m of others) {
         skipped.push({
           ...fmt(m),
-          reason: m.status === "completed" ? "already completed"
+          reason: m.delivered === "delivered" ? "already completed"
+            : m.status === "refunded" ? "already refunded"
             : m.status === "failed" || m.status === "cancelled" ? "already failed/cancelled"
-            : `still ${m.status} — not marked processing`,
+            : m.delivered === "failed" ? "delivery failed"
+            : "not marked processing",
         });
       }
       continue;
@@ -803,15 +859,15 @@ router.post("/admin/orders/bulk-complete", requireAdmin, async (req, res): Promi
   const orderIds = [...new Set(parsed.data.orderIds)];
   const storeOrderIds = [...new Set(parsed.data.storeOrderIds)];
 
-  // Platform orders: status-guarded bulk update — only rows still in
-  // "processing" flip to completed; anything a poller/webhook already settled
-  // (or an admin refunded) is left untouched and reported as skipped.
+  // Platform orders: guarded bulk update — only paid rows still in
+  // delivered='processing' flip to delivered; anything a poller/webhook already
+  // settled (or an admin refunded) is left untouched and reported as skipped.
   let completedPlatform: number[] = [];
   if (orderIds.length > 0) {
     const updated = await db
       .update(ordersTable)
-      .set({ status: "completed" })
-      .where(and(inArray(ordersTable.id, orderIds), eq(ordersTable.status, "processing")))
+      .set({ delivered: "delivered" })
+      .where(and(inArray(ordersTable.id, orderIds), eq(ordersTable.status, "paid"), eq(ordersTable.delivered, "processing")))
       .returning({ id: ordersTable.id });
     completedPlatform = updated.map(r => r.id);
   }
@@ -831,13 +887,13 @@ router.post("/admin/orders/bulk-complete", requireAdmin, async (req, res): Promi
           .where(eq(storeOrdersTable.id, id))
           .for("update");
         if (!locked) throw Object.assign(new Error("not found"), { status: 404 });
-        if (locked.status !== "processing") {
-          throw Object.assign(new Error(`is ${locked.status} — only processing orders can be bulk-completed`), { status: 400 });
+        if (locked.status !== "paid" || locked.delivered !== "processing") {
+          throw Object.assign(new Error(`is ${locked.status}/${locked.delivered ?? "not dispatched"} — only paid+processing orders can be bulk-completed`), { status: 400 });
         }
         await tx
           .update(storeOrdersTable)
-          .set({ status: "completed" })
-          .where(and(eq(storeOrdersTable.id, id), eq(storeOrdersTable.status, "processing")));
+          .set({ delivered: "delivered" })
+          .where(and(eq(storeOrdersTable.id, id), eq(storeOrdersTable.status, "paid"), eq(storeOrdersTable.delivered, "processing")));
         const profit = parseFloat(locked.profit);
         await tx
           .update(storesTable)
@@ -882,7 +938,7 @@ router.post("/admin/orders/complete-processing", requireAdmin, async (req, res):
   // action matches the date filter the admin currently has applied. When no
   // dates are supplied it falls back to completing every processing order.
   const { dateFrom, dateTo } = (req.body ?? {}) as { dateFrom?: string; dateTo?: string };
-  const conditions = [eq(ordersTable.status, "processing")];
+  const conditions = [eq(ordersTable.status, "paid"), eq(ordersTable.delivered, "processing")];
 
   if (dateFrom) {
     const from = new Date(dateFrom);
@@ -895,7 +951,7 @@ router.post("/admin/orders/complete-processing", requireAdmin, async (req, res):
 
   const updated = await db
     .update(ordersTable)
-    .set({ status: "completed" })
+    .set({ delivered: "delivered" })
     .where(and(...conditions))
     .returning({ id: ordersTable.id });
 
@@ -1388,19 +1444,19 @@ router.get("/admin/stats", requireAdmin, async (req, res): Promise<void> => {
   ] = await Promise.all([
     db.select({ count: count() }).from(usersTable).where(isNull(usersTable.deletedAt)).then(r => r[0]),
     db.select({ count: count() }).from(ordersTable).then(r => r[0]),
-    db.select({ total: sum(ordersTable.price) }).from(ordersTable).where(eq(ordersTable.status, "completed")).then(r => r[0]),
+    db.select({ total: sum(ordersTable.price) }).from(ordersTable).where(eq(ordersTable.delivered, "delivered")).then(r => r[0]),
     db.select({ count: count() }).from(bundlesTable).where(eq(bundlesTable.isActive, true)).then(r => r[0]),
-    db.select({ count: count() }).from(ordersTable).where(eq(ordersTable.status, "pending")).then(r => r[0]),
-    db.select({ count: count() }).from(ordersTable).where(eq(ordersTable.status, "completed")).then(r => r[0]),
-    db.select({ count: count() }).from(ordersTable).where(eq(ordersTable.status, "processing")).then(r => r[0]),
-    db.select({ count: count() }).from(ordersTable).where(eq(ordersTable.status, "failed")).then(r => r[0]),
+    db.select({ count: count() }).from(ordersTable).where(and(eq(ordersTable.status, "paid"), isNull(ordersTable.delivered))).then(r => r[0]),
+    db.select({ count: count() }).from(ordersTable).where(eq(ordersTable.delivered, "delivered")).then(r => r[0]),
+    db.select({ count: count() }).from(ordersTable).where(eq(ordersTable.delivered, "processing")).then(r => r[0]),
+    db.select({ count: count() }).from(ordersTable).where(or(eq(ordersTable.status, "refunded"), eq(ordersTable.delivered, "failed"))).then(r => r[0]),
     db.select({ count: count() }).from(usersTable).where(and(gte(usersTable.createdAt, thirtyDaysAgo), isNull(usersTable.deletedAt))).then(r => r[0]),
     db.select({ count: count() }).from(ordersTable).where(gte(ordersTable.createdAt, thirtyDaysAgo)).then(r => r[0]),
     db.select({ total: sum(walletsTable.balance) }).from(walletsTable).then(r => r[0]),
     db.select({ count: count() }).from(storeOrdersTable).where(eq(storeOrdersTable.status, "pending")).then(r => r[0]),
-    db.select({ count: count() }).from(storeOrdersTable).where(eq(storeOrdersTable.status, "completed")).then(r => r[0]),
-    db.select({ count: count() }).from(storeOrdersTable).where(eq(storeOrdersTable.status, "processing")).then(r => r[0]),
-    db.select({ count: count() }).from(storeOrdersTable).where(eq(storeOrdersTable.status, "failed")).then(r => r[0]),
+    db.select({ count: count() }).from(storeOrdersTable).where(eq(storeOrdersTable.delivered, "delivered")).then(r => r[0]),
+    db.select({ count: count() }).from(storeOrdersTable).where(eq(storeOrdersTable.delivered, "processing")).then(r => r[0]),
+    db.select({ count: count() }).from(storeOrdersTable).where(or(inArray(storeOrdersTable.status, ["failed", "cancelled", "refunded"]), eq(storeOrdersTable.delivered, "failed"))).then(r => r[0]),
     db.select({ count: count() }).from(storeOrdersTable).then(r => r[0]),
   ]);
 
@@ -1433,11 +1489,11 @@ router.get("/admin/financial-summary", requireAdmin, async (req, res): Promise<v
     db.select({ price: ordersTable.price, buyingCost: bundlesTable.price })
       .from(ordersTable)
       .leftJoin(bundlesTable, eq(ordersTable.bundleId, bundlesTable.id))
-      .where(and(eq(ordersTable.status, "completed"), gte(ordersTable.createdAt, todayStart))),
+      .where(and(eq(ordersTable.delivered, "delivered"), gte(ordersTable.createdAt, todayStart))),
     db.select({ price: ordersTable.price, buyingCost: bundlesTable.price })
       .from(ordersTable)
       .leftJoin(bundlesTable, eq(ordersTable.bundleId, bundlesTable.id))
-      .where(eq(ordersTable.status, "completed")),
+      .where(eq(ordersTable.delivered, "delivered")),
     // Store orders — join bundle + store owner role so we can compute system profit
     // even for legacy rows where agentCost was not yet captured
     db.select({
@@ -1452,7 +1508,7 @@ router.get("/admin/financial-summary", requireAdmin, async (req, res): Promise<v
       .leftJoin(storesTable,  eq(storeOrdersTable.storeId,  storesTable.id))
       .leftJoin(usersTable,   eq(storesTable.userId,        usersTable.id))
       .leftJoin(bundlesTable, eq(storeOrdersTable.bundleId, bundlesTable.id))
-      .where(and(eq(storeOrdersTable.status, "completed"), gte(storeOrdersTable.createdAt, todayStart))),
+      .where(and(eq(storeOrdersTable.delivered, "delivered"), gte(storeOrdersTable.createdAt, todayStart))),
     db.select({
         sellingPrice: storeOrdersTable.sellingPrice,
         agentCost:    storeOrdersTable.agentCost,
@@ -1465,7 +1521,7 @@ router.get("/admin/financial-summary", requireAdmin, async (req, res): Promise<v
       .leftJoin(storesTable,  eq(storeOrdersTable.storeId,  storesTable.id))
       .leftJoin(usersTable,   eq(storesTable.userId,        usersTable.id))
       .leftJoin(bundlesTable, eq(storeOrdersTable.bundleId, bundlesTable.id))
-      .where(eq(storeOrdersTable.status, "completed")),
+      .where(eq(storeOrdersTable.delivered, "delivered")),
   ]);
 
   // Platform (direct) financials: profit = order.price - buyingCost
@@ -1538,7 +1594,7 @@ router.get("/admin/revenue", requireAdmin, async (req, res): Promise<void> => {
     .select({
       createdAt: ordersTable.createdAt,
       price: ordersTable.price,
-      status: ordersTable.status,
+      delivered: ordersTable.delivered,
     })
     .from(ordersTable)
     .where(gte(ordersTable.createdAt, thirtyDaysAgo));
@@ -1549,7 +1605,7 @@ router.get("/admin/revenue", requireAdmin, async (req, res): Promise<void> => {
     const date = order.createdAt.toISOString().split("T")[0];
     if (!byDate[date]) byDate[date] = { revenue: 0, orders: 0 };
     byDate[date].orders += 1;
-    if (order.status === "completed") byDate[date].revenue += Number(order.price);
+    if (order.delivered === "delivered") byDate[date].revenue += Number(order.price);
   }
 
   const result = Object.entries(byDate)
@@ -1565,7 +1621,7 @@ router.get("/admin/top-bundles", requireAdmin, async (req, res): Promise<void> =
       bundleId: ordersTable.bundleId,
       bundleName: ordersTable.bundleName,
       price: ordersTable.price,
-      status: ordersTable.status,
+      delivered: ordersTable.delivered,
     })
     .from(ordersTable);
 
@@ -1574,7 +1630,7 @@ router.get("/admin/top-bundles", requireAdmin, async (req, res): Promise<void> =
   for (const o of orders) {
     if (!bundleMap[o.bundleId]) bundleMap[o.bundleId] = { name: o.bundleName, orders: 0, revenue: 0 };
     bundleMap[o.bundleId].orders += 1;
-    if (o.status === "completed") bundleMap[o.bundleId].revenue += Number(o.price);
+    if (o.delivered === "delivered") bundleMap[o.bundleId].revenue += Number(o.price);
   }
 
   const bundles = await db.select().from(bundlesTable);
@@ -1626,7 +1682,7 @@ router.get("/admin/report", requireAdmin, async (req, res): Promise<void> => {
       })
       .from(ordersTable)
       .leftJoin(bundlesTable, eq(ordersTable.bundleId, bundlesTable.id))
-      .where(eq(ordersTable.status, "completed")),
+      .where(eq(ordersTable.delivered, "delivered")),
     db
       .select({
         createdAt: storeOrdersTable.createdAt,
@@ -1635,7 +1691,7 @@ router.get("/admin/report", requireAdmin, async (req, res): Promise<void> => {
         bundleData: storeOrdersTable.bundleData,
       })
       .from(storeOrdersTable)
-      .where(eq(storeOrdersTable.status, "completed")),
+      .where(eq(storeOrdersTable.delivered, "delivered")),
   ]);
 
   const byDate: Record<
@@ -1710,12 +1766,16 @@ router.get("/admin/agents/:userId", requireAdmin, async (req, res): Promise<void
   const [completedOrd] = await db
     .select({ cnt: count() })
     .from(ordersTable)
-    .where(and(eq(ordersTable.userId, userId), eq(ordersTable.status, "completed")));
+    .where(and(eq(ordersTable.userId, userId), eq(ordersTable.delivered, "delivered")));
 
   const [pendingOrd] = await db
     .select({ cnt: count() })
     .from(ordersTable)
-    .where(and(eq(ordersTable.userId, userId), inArray(ordersTable.status, ["pending", "processing"])));
+    .where(and(
+      eq(ordersTable.userId, userId),
+      eq(ordersTable.status, "paid"),
+      or(isNull(ordersTable.delivered), eq(ordersTable.delivered, "processing")),
+    ));
 
   const [recentOrders, recentDeposits, [store]] = await Promise.all([
     db.select().from(ordersTable)
@@ -1958,7 +2018,7 @@ router.get("/admin/reconcile", requireAdmin, async (req, res): Promise<void> => 
     // Key off createdAt, NOT updatedAt: the McBIS poller round-robins by bumping
     // updatedAt on every check, so updatedAt now means "last polled" — a processing
     // order created >24h ago is stuck by definition regardless of polling activity.
-    .where(and(eq(ordersTable.status, "processing"), lt(ordersTable.createdAt, threshold)))
+    .where(and(eq(ordersTable.status, "paid"), eq(ordersTable.delivered, "processing"), lt(ordersTable.createdAt, threshold)))
     .orderBy(ordersTable.createdAt);
 
   const wallets = await db.select().from(walletsTable);
@@ -2087,9 +2147,9 @@ router.post("/admin/mcbis/dispatch/:orderId", requireAdmin, async (req, res): Pr
     res.status(409).json({ error: "Order already dispatched to McbisSolution", reference: row.order.mcbisReference, status: row.order.status });
     return;
   }
-  // Guard: only dispatch pending orders (not completed/failed/cancelled)
-  if (row.order.status !== "pending") {
-    res.status(409).json({ error: `Cannot dispatch order with status "${row.order.status}"` });
+  // Guard: only dispatch paid orders not yet handed to a provider
+  if (row.order.status !== "paid" || row.order.delivered != null) {
+    res.status(409).json({ error: `Cannot dispatch order with status "${row.order.status}" / delivery "${row.order.delivered ?? "not dispatched"}"` });
     return;
   }
 
@@ -2102,8 +2162,8 @@ router.post("/admin/mcbis/dispatch/:orderId", requireAdmin, async (req, res): Pr
 
   if (outcome.dispatched) {
     await db.update(ordersTable)
-      .set({ status: "processing", mcbisReference: outcome.reference })
-      .where(eq(ordersTable.id, orderId));
+      .set({ delivered: "processing", mcbisReference: outcome.reference })
+      .where(and(eq(ordersTable.id, orderId), eq(ordersTable.status, "paid"), isNull(ordersTable.delivered)));
   }
 
   res.json({ dispatched: outcome.dispatched, reason: outcome.dispatched ? undefined : (outcome as { reason: string }).reason, orderId });
@@ -2126,9 +2186,9 @@ router.post("/admin/mcbis/dispatch-store/:orderId", requireAdmin, async (req, re
     res.status(409).json({ error: "Order already dispatched to McbisSolution", reference: storeOrder.mcbisReference, status: storeOrder.status });
     return;
   }
-  // Guard: only dispatch orders awaiting fulfillment (pending = unpaid/non-MTN, paid = payment confirmed)
-  if (storeOrder.status !== "pending" && storeOrder.status !== "paid") {
-    res.status(409).json({ error: `Cannot dispatch order with status "${storeOrder.status}"` });
+  // Guard: only dispatch paid store orders not yet handed to a provider
+  if (storeOrder.status !== "paid" || storeOrder.delivered != null) {
+    res.status(409).json({ error: `Cannot dispatch order with status "${storeOrder.status}" / delivery "${storeOrder.delivered ?? "not dispatched"}"` });
     return;
   }
 
@@ -2142,8 +2202,8 @@ router.post("/admin/mcbis/dispatch-store/:orderId", requireAdmin, async (req, re
 
   if (outcome.dispatched) {
     await db.update(storeOrdersTable)
-      .set({ status: "processing", mcbisReference: outcome.reference })
-      .where(eq(storeOrdersTable.id, orderId));
+      .set({ delivered: "processing", mcbisReference: outcome.reference })
+      .where(and(eq(storeOrdersTable.id, orderId), eq(storeOrdersTable.status, "paid"), isNull(storeOrdersTable.delivered)));
   }
 
   res.json({ dispatched: outcome.dispatched, reason: outcome.dispatched ? undefined : (outcome as { reason: string }).reason, orderId });

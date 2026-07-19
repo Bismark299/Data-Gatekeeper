@@ -3,9 +3,10 @@
  * Docs: https://documenter.getpostman.com/view/11929812/2sB34kDynu
  *
  * Flow:
- *  - McbisSolution ON + MTN network → dispatch → status "processing", reference stored
- *  - McbisSolution OFF or non-MTN   → order stays "pending" (untouched)
- *  - Background poller runs every 30 s, checks "processing" orders, marks "completed" when McbisSolution confirms
+ *  - McbisSolution ON + MTN network → dispatch → delivered "processing", reference stored
+ *  - McbisSolution OFF or non-MTN   → order stays undispatched (delivered NULL, untouched)
+ *  - Background poller runs every 30 s, checks delivered="processing" orders, marks
+ *    delivered="delivered" when McbisSolution confirms (status stays payment-only)
  *
  * Settings keys in DB:
  *   mcbis_enabled   — "true" | "false"
@@ -16,7 +17,7 @@
  *   DATAHUB_API_URL   — Base URL for McbisSolution API (default: https://datahub.mcbissolution.com/api/v1)
  */
 
-import { eq, and, isNotNull, isNull, inArray } from "drizzle-orm";
+import { eq, and, isNotNull, isNull } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import axios from "axios";
 import { db, settingsTable, ordersTable, storeOrdersTable, bundlesTable, storesTable } from "@workspace/db";
@@ -191,12 +192,12 @@ export type DispatchOutcome =
  * Attempt to dispatch one order to McbisSolution.
  *
  * Guards (checked against DB before calling the API):
- *  - Order must be status "pending"
+ *  - Order must be paid and not yet dispatched (status "paid", delivered NULL)
  *  - Order must not already have a mcbisReference (not yet sent)
  *
  * Returns `{ dispatched: true, reference }` if McbisSolution accepted the order.
  * Returns `{ dispatched: false, reason: "insufficient_funds" }` when McbisSolution
- *   wallet is empty — order stays "pending" so it can be retried later.
+ *   wallet is empty — order stays undispatched so it can be retried later.
  * Returns `{ dispatched: false }` for all other non-dispatch cases.
  */
 export async function dispatchToMcbis(opts: {
@@ -231,7 +232,8 @@ export async function dispatchToMcbis(opts: {
         eq(storeOrdersTable.id, opts.orderId),
         isNull(storeOrdersTable.mcbisReference),
         isNull(storeOrdersTable.topupghBatchId),
-        inArray(storeOrdersTable.status, ["pending", "paid"]),
+        eq(storeOrdersTable.status, "paid"),
+        isNull(storeOrdersTable.delivered),
       ))
       .returning({ id: storeOrdersTable.id });
     locked = rows.length > 0;
@@ -242,7 +244,8 @@ export async function dispatchToMcbis(opts: {
         eq(ordersTable.id, opts.orderId),
         isNull(ordersTable.mcbisReference),
         isNull(ordersTable.topupghBatchId),
-        eq(ordersTable.status, "pending"),
+        eq(ordersTable.status, "paid"),
+        isNull(ordersTable.delivered),
       ))
       .returning({ id: ordersTable.id });
     locked = rows.length > 0;
@@ -318,12 +321,13 @@ export function startMcbisPoller(): void {
       const { enabled, autoSync, apiKey } = await getMcbisSettings();
       if (!enabled || !autoSync || !apiKey) return; // toggle-gated
 
-      // ── 1. Check status of processing platform orders (cap 30, 100 ms apart) ──
+      // ── 1. Check delivery of processing platform orders (cap 30, 100 ms apart) ──
       const platformProcessing = await db
         .select({ id: ordersTable.id, ref: ordersTable.mcbisReference })
         .from(ordersTable)
         .where(and(
-          eq(ordersTable.status, "processing"),
+          eq(ordersTable.status, "paid"),
+          eq(ordersTable.delivered, "processing"),
           isNotNull(ordersTable.mcbisReference),
         ))
         // Round-robin by updatedAt (bumped on every check below): a batch of
@@ -343,14 +347,15 @@ export function startMcbisPoller(): void {
           // Normalize: McBIS status words are compared case-insensitively so a
           // "Success"/"COMPLETED"/"Delivered" response still settles the order.
           const s = (await mcbisCheckStatus(apiKey, o.ref)).trim().toLowerCase();
-          // Guard on status="processing": an admin bulk-refund can commit during the
-          // network call above (flipping this row to failed+refunded). Without the
-          // guard this write would resurrect it to completed → refund + delivery.
+          // Guard on status='paid' AND delivered='processing': an admin bulk-refund
+          // can commit during the network call above (flipping status to refunded).
+          // Without the dual-column guard this write would mark a refunded order
+          // delivered → refund + delivery.
           if (s === "success" || s === "completed" || s === "delivered") {
-            await db.update(ordersTable).set({ status: "completed" }).where(and(eq(ordersTable.id, o.id), eq(ordersTable.status, "processing")));
+            await db.update(ordersTable).set({ delivered: "delivered" }).where(and(eq(ordersTable.id, o.id), eq(ordersTable.status, "paid"), eq(ordersTable.delivered, "processing")));
             settled = true;
           } else if (s === "failed" || s === "cancelled" || s === "canceled") {
-            await db.update(ordersTable).set({ status: "failed" }).where(and(eq(ordersTable.id, o.id), eq(ordersTable.status, "processing")));
+            await db.update(ordersTable).set({ delivered: "failed" }).where(and(eq(ordersTable.id, o.id), eq(ordersTable.status, "paid"), eq(ordersTable.delivered, "processing")));
             settled = true;
           } else if (s !== "pending" && s !== "processing") {
             // Unknown status word (or empty/unexpected response shape) — the order
@@ -371,12 +376,13 @@ export function startMcbisPoller(): void {
         await sleep(STATUS_DELAY_MS);
       }
 
-      // ── 2. Check status of processing store orders (cap 30, 100 ms apart) ──
+      // ── 2. Check delivery of processing store orders (cap 30, 100 ms apart) ──
       const storeProcessing = await db
         .select({ id: storeOrdersTable.id, ref: storeOrdersTable.mcbisReference })
         .from(storeOrdersTable)
         .where(and(
-          eq(storeOrdersTable.status, "processing"),
+          eq(storeOrdersTable.status, "paid"),
+          eq(storeOrdersTable.delivered, "processing"),
           isNotNull(storeOrdersTable.mcbisReference),
         ))
         // Round-robin by updatedAt — see platform loop above.
@@ -392,14 +398,15 @@ export function startMcbisPoller(): void {
           if (s === "success" || s === "completed" || s === "delivered") {
             await db.transaction(async (tx) => {
               const [row] = await tx
-                .select({ profit: storeOrdersTable.profit, storeId: storeOrdersTable.storeId, status: storeOrdersTable.status })
+                .select({ profit: storeOrdersTable.profit, storeId: storeOrdersTable.storeId, status: storeOrdersTable.status, delivered: storeOrdersTable.delivered })
                 .from(storeOrdersTable)
                 .where(eq(storeOrdersTable.id, o.id))
                 .for("update");
-              // Only settle rows still "processing" — a concurrent admin refund/cancel
-              // must not be resurrected to completed (which would also credit profit).
-              if (!row || row.status !== "processing") return;
-              await tx.update(storeOrdersTable).set({ status: "completed" }).where(and(eq(storeOrdersTable.id, o.id), eq(storeOrdersTable.status, "processing")));
+              // Only settle rows still paid + delivering — a concurrent admin
+              // refund/cancel must not be resurrected to delivered (which would
+              // also credit profit).
+              if (!row || row.status !== "paid" || row.delivered !== "processing") return;
+              await tx.update(storeOrdersTable).set({ delivered: "delivered" }).where(and(eq(storeOrdersTable.id, o.id), eq(storeOrdersTable.status, "paid"), eq(storeOrdersTable.delivered, "processing")));
               const profit = parseFloat(row.profit);
               await tx.update(storesTable)
                 .set({ profitBalance: sql`profit_balance + ${profit.toFixed(2)}::numeric` })
@@ -407,7 +414,7 @@ export function startMcbisPoller(): void {
             });
             settled = true; // only after the tx commits — a thrown tx must still rotate the row
           } else if (s === "failed" || s === "cancelled" || s === "canceled") {
-            await db.update(storeOrdersTable).set({ status: "failed" }).where(and(eq(storeOrdersTable.id, o.id), eq(storeOrdersTable.status, "processing")));
+            await db.update(storeOrdersTable).set({ delivered: "failed" }).where(and(eq(storeOrdersTable.id, o.id), eq(storeOrdersTable.status, "paid"), eq(storeOrdersTable.delivered, "processing")));
             settled = true;
           } else if (s !== "pending" && s !== "processing") {
             logger.warn({ storeOrderId: o.id, ref: o.ref, mcbisStatus: s || "(empty)" }, "McBIS poller: unrecognized store order status");
@@ -430,7 +437,7 @@ export function startMcbisPoller(): void {
         logger.warn({ checkErrors, rateLimited, lastCheckError }, "McBIS poller: order status checks failed this cycle");
       }
 
-      // ── 3. Retry pending platform MTN orders (cap 5, 500 ms apart, 30 s grace) ──
+      // ── 3. Retry undispatched platform MTN orders (cap 5, 500 ms apart, 30 s grace) ──
       // Pre-check balance once — skip all dispatches if wallet is empty
       let mcbisBalance = 0;
       // Use the shared cache so the poller doesn't add load to the rate-limited
@@ -449,7 +456,8 @@ export function startMcbisPoller(): void {
         .from(ordersTable)
         .leftJoin(bundlesTable, eq(bundlesTable.id, ordersTable.bundleId))
         .where(and(
-          eq(ordersTable.status, "pending"),
+          eq(ordersTable.status, "paid"),
+          isNull(ordersTable.delivered),
           isNull(ordersTable.mcbisReference),
           isNull(ordersTable.topupghBatchId),
           eq(bundlesTable.network, "mtn"),
@@ -468,7 +476,7 @@ export function startMcbisPoller(): void {
           });
           if (outcome.dispatched) {
             await db.update(ordersTable)
-              .set({ status: "processing", mcbisReference: outcome.reference })
+              .set({ delivered: "processing", mcbisReference: outcome.reference })
               .where(eq(ordersTable.id, o.id));
           } else if (outcome.reason === "insufficient_funds") {
             break; // wallet empty — no point trying more this cycle
@@ -477,7 +485,7 @@ export function startMcbisPoller(): void {
         await sleep(DISPATCH_DELAY_MS);
       }
 
-      // ── 4. Retry paid store MTN orders (cap 5, 500 ms apart, 30 s grace) ──
+      // ── 4. Retry undispatched paid store MTN orders (cap 5, 500 ms apart, 30 s grace) ──
       const paidStore = await db
         .select({
           id:         storeOrdersTable.id,
@@ -489,6 +497,7 @@ export function startMcbisPoller(): void {
         .from(storeOrdersTable)
         .where(and(
           eq(storeOrdersTable.status, "paid"),
+          isNull(storeOrdersTable.delivered),
           isNull(storeOrdersTable.mcbisReference),
           isNull(storeOrdersTable.topupghBatchId),
           eq(storeOrdersTable.bundleNetwork, "mtn"),
@@ -507,7 +516,7 @@ export function startMcbisPoller(): void {
           });
           if (outcome.dispatched) {
             await db.update(storeOrdersTable)
-              .set({ status: "processing", mcbisReference: outcome.reference })
+              .set({ delivered: "processing", mcbisReference: outcome.reference })
               .where(eq(storeOrdersTable.id, o.id));
           } else if (outcome.reason === "insufficient_funds") {
             break;

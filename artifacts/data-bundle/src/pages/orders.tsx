@@ -10,6 +10,7 @@ import {
   ShoppingCart, Search, CheckCircle2, Clock, AlertCircle, Wifi,
 } from "lucide-react";
 import React from "react";
+import { platformPhase } from "@/lib/orderPhase";
 
 const STATUS_TABS = [
   { key: "all",        label: "All" },
@@ -17,6 +18,7 @@ const STATUS_TABS = [
   { key: "processing", label: "Processing" },
   { key: "completed",  label: "Completed" },
   { key: "failed",     label: "Failed" },
+  { key: "refunded",   label: "Refunded" },
 ] as const;
 
 type StatusKey = (typeof STATUS_TABS)[number]["key"];
@@ -26,6 +28,7 @@ const STATUS_COLORS: Record<string, string> = {
   processing: "bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400",
   completed:  "bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400",
   failed:     "bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400",
+  refunded:   "bg-rose-100 text-rose-700 dark:bg-rose-900/20 dark:text-rose-400",
 };
 
 const STATUS_ICONS: Record<string, React.ReactNode> = {
@@ -33,6 +36,7 @@ const STATUS_ICONS: Record<string, React.ReactNode> = {
   processing: <Wifi className="w-3 h-3" />,
   completed:  <CheckCircle2 className="w-3 h-3" />,
   failed:     <AlertCircle className="w-3 h-3" />,
+  refunded:   <AlertCircle className="w-3 h-3" />,
 };
 
 const NETWORK_LABELS: Record<string, string> = {
@@ -80,10 +84,11 @@ function OrdersContent() {
     }
     return {
       all:        list.length,
-      pending:    list.filter(o => o.status === "pending").length,
-      processing: list.filter(o => o.status === "processing").length,
-      completed:  list.filter(o => o.status === "completed").length,
-      failed:     list.filter(o => o.status === "failed").length,
+      pending:    list.filter(o => platformPhase(o as any) === "pending").length,
+      processing: list.filter(o => platformPhase(o as any) === "processing").length,
+      completed:  list.filter(o => platformPhase(o as any) === "completed").length,
+      failed:     list.filter(o => platformPhase(o as any) === "failed").length,
+      refunded:   list.filter(o => platformPhase(o as any) === "refunded").length,
     };
   }, [orders, dateFrom, dateTo]);
 
@@ -91,7 +96,7 @@ function OrdersContent() {
     let list = orders ?? [];
 
     if (activeStatus !== "all") {
-      list = list.filter(o => o.status === activeStatus);
+      list = list.filter(o => platformPhase(o as any) === activeStatus);
     }
 
     if (phoneSearch.trim()) {
@@ -115,7 +120,7 @@ function OrdersContent() {
   }, [orders, activeStatus, phoneSearch, dateFrom, dateTo]);
 
   const totalSpent = useMemo(
-    () => filtered.filter(o => o.status === "completed").reduce((s, o) => s + o.price, 0),
+    () => filtered.filter(o => platformPhase(o as any) === "completed").reduce((s, o) => s + o.price, 0),
     [filtered]
   );
 
@@ -317,11 +322,11 @@ function OrdersContent() {
                         <td className="px-5 py-3.5 font-bold text-foreground">GH₵{order.price}</td>
                         <td className="px-5 py-3.5">
                           <span
-                            className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold capitalize ${STATUS_COLORS[order.status]}`}
+                            className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold capitalize ${STATUS_COLORS[platformPhase(order as any)]}`}
                             data-testid={`status-order-${order.id}`}
                           >
-                            {STATUS_ICONS[order.status]}
-                            {order.status}
+                            {STATUS_ICONS[platformPhase(order as any)]}
+                            {platformPhase(order as any)}
                           </span>
                         </td>
                         <td className="px-5 py-3.5">

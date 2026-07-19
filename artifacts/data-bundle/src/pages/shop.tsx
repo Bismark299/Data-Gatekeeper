@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/context/AuthContext";
+import { platformPhase } from "@/lib/orderPhase";
 import { useLocation, Link } from "wouter";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
@@ -58,6 +59,11 @@ const STATUS_CONFIG = {
     color: "text-red-600", bg: "bg-red-50 dark:bg-red-900/10",
     border: "border-red-200 dark:border-red-800", dot: "bg-red-400", animate: false,
   },
+  refunded: {
+    icon: XCircle, label: "Order Refunded", sub: "The amount was returned to your wallet",
+    color: "text-rose-600", bg: "bg-rose-50 dark:bg-rose-900/10",
+    border: "border-rose-200 dark:border-rose-800", dot: "bg-rose-400", animate: false,
+  },
 };
 
 // ─── Order Status Card ────────────────────────────────────────────────────────
@@ -72,20 +78,24 @@ function OrderStatusCard({
     query: {
       enabled,
       refetchInterval: (q) => {
-        const s = q.state.data?.status;
-        return s === "pending" || s === "processing" ? 3000 : false;
+        const d = q.state.data;
+        if (!d) return 3000;
+        const p = platformPhase(d);
+        return p === "pending" || p === "processing" ? 3000 : false;
       },
     },
   });
 
+  const phase = order ? platformPhase(order) : "pending";
+
   useEffect(() => {
-    if (order?.status === "completed" || order?.status === "failed") {
+    if (phase === "completed" || phase === "failed" || phase === "refunded") {
       setEnabled(false);
       qc.invalidateQueries({ queryKey: ["getWalletBalance"] });
     }
-  }, [order?.status, qc]);
+  }, [phase, qc]);
 
-  const status = (order?.status ?? "pending") as keyof typeof STATUS_CONFIG;
+  const status = phase as keyof typeof STATUS_CONFIG;
   const cfg = STATUS_CONFIG[status] ?? STATUS_CONFIG.pending;
   const Icon = cfg.icon;
 
@@ -125,16 +135,17 @@ function OrderStatusCard({
         {/* Progress steps */}
         <div className="flex items-center gap-2 mt-4">
           {(["pending", "processing", "completed"] as const).map((s, i, arr) => {
-            const isDone = i < arr.indexOf(status === "failed" ? "completed" : status as any) || status === "completed";
-            const isCur = s === status && status !== "failed";
+            const isEnded = status === "failed" || status === "refunded";
+            const isDone = (!isEnded && i < arr.indexOf(status as (typeof arr)[number])) || status === "completed";
+            const isCur = s === status && !isEnded;
             return (
               <div key={s} className="flex items-center gap-2 flex-1">
                 <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center text-[10px] font-bold ${
-                  status === "failed" && i === 0 ? "border-red-400 bg-red-100 text-red-600"
+                  isEnded && i === 0 ? "border-red-400 bg-red-100 text-red-600"
                   : isDone ? "border-emerald-400 bg-emerald-400 text-white"
                   : isCur ? `border-current ${cfg.color}` : "border-muted bg-muted"
                 }`}>
-                  {status === "failed" && i === 0 ? "!" : isDone ? "✓" : i + 1}
+                  {isEnded && i === 0 ? "!" : isDone ? "✓" : i + 1}
                 </div>
                 <span className={`text-[10px] font-semibold capitalize ${isCur ? cfg.color : isDone ? "text-emerald-600" : "text-muted-foreground"}`}>{s}</span>
                 {i < arr.length - 1 && <div className={`flex-1 h-0.5 rounded ${isDone ? "bg-emerald-400" : "bg-muted"}`} />}

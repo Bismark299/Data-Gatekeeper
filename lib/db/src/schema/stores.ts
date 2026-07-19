@@ -1,4 +1,5 @@
-import { pgTable, text, serial, timestamp, integer, numeric, boolean } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, timestamp, integer, numeric, boolean, check } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { usersTable } from "./users";
 import { bundlesTable } from "./bundles";
 
@@ -48,10 +49,16 @@ export const storeOrdersTable = pgTable("store_orders", {
   mcbisReference: text("mcbis_reference"),
   ckgodswayReference: text("ckgodsway_reference"),
   topupghBatchId: integer("topupgh_batch_id"),
+  // Payment status only: pending | paid | failed | cancelled | refunded
   status: text("status").notNull().default("pending"),
+  // Fulfillment status: NULL (not dispatched) | processing | delivered | failed
+  delivered: text("delivered"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
-});
+}, (t) => [
+  check("store_orders_payment_status_check", sql`${t.status} IN ('pending', 'paid', 'failed', 'cancelled', 'refunded')`),
+  check("store_orders_delivered_check", sql`${t.delivered} IS NULL OR ${t.delivered} IN ('processing', 'delivered', 'failed')`),
+]);
 
 export const storeWithdrawalsTable = pgTable("store_withdrawals", {
   id: serial("id").primaryKey(),

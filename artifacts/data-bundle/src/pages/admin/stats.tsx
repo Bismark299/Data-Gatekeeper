@@ -10,6 +10,7 @@ import { AdminSidebar } from "@/components/AdminSidebar";
 import { AdminFinancialSummary } from "@/components/AdminFinancialSummary";
 import { Button } from "@/components/ui/button";
 import { Menu, RefreshCw, TrendingUp, BarChart3, PieChart, Wifi } from "lucide-react";
+import { platformPhase } from "@/lib/orderPhase";
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, BarChart, Bar, Cell, PieChart as RechartsPie, Pie, Legend,
@@ -35,11 +36,16 @@ function AdminStatsContent() {
 
   const handleRefresh = () => { refetchStats(); refetchRevenue(); };
 
+  const failedOrRefundedCount = orders?.filter(o => {
+    const p = platformPhase(o as any);
+    return p === "failed" || p === "refunded";
+  }).length ?? 0;
+
   const orderStatusData = stats ? [
     { name: "Pending",    value: stats.pendingOrders },
     { name: "Completed",  value: stats.completedOrders },
-    { name: "Processing", value: stats.totalOrders - stats.pendingOrders - stats.completedOrders - (orders?.filter(o => o.status === "failed").length ?? 0) },
-    { name: "Failed",     value: orders?.filter(o => o.status === "failed").length ?? 0 },
+    { name: "Processing", value: Math.max(0, stats.totalOrders - stats.pendingOrders - stats.completedOrders - failedOrRefundedCount) },
+    { name: "Failed",     value: failedOrRefundedCount },
   ].filter(d => d.value > 0) : [];
 
   const networkData = (() => {

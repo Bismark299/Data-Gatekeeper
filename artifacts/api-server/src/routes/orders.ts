@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, isNull } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, ordersTable, bundlesTable, walletsTable, walletLedgerTable, usersTable, topupghBatchesTable } from "@workspace/db";
@@ -24,6 +24,7 @@ function formatOrder(o: typeof ordersTable.$inferSelect, network?: string | null
     network: network ?? null,
     price: Number(o.price),
     status: o.status,
+    delivered: o.delivered ?? null,
     phoneNumber: o.phoneNumber,
     createdAt: o.createdAt.toISOString(),
   };
@@ -91,7 +92,7 @@ router.post("/orders", requireAdmin, async (req, res): Promise<void> => {
       bundleData: bundle.dataAmount,
       price: effectivePrice,
       buyingCost: bundle.price,
-      status: "pending",
+      status: "paid",
       phoneNumber: phoneNumber.trim(),
     })
     .returning();
@@ -108,8 +109,8 @@ router.post("/orders", requireAdmin, async (req, res): Promise<void> => {
         ? { mcbisReference: outcome.reference }
         : { ckgodswayReference: outcome.reference };
       await db.update(ordersTable)
-        .set({ status: "processing", ...refCol })
-        .where(eq(ordersTable.id, order.id));
+        .set({ delivered: "processing", ...refCol })
+        .where(and(eq(ordersTable.id, order.id), eq(ordersTable.status, "paid"), isNull(ordersTable.delivered)));
     }
   }).catch(() => {});
 
@@ -194,7 +195,7 @@ router.post("/orders/purchase", requireAuth, async (req, res): Promise<void> => 
           bundleData: bundle.dataAmount,
           price: rawPrice,
           buyingCost: bundle.price,
-          status: "pending",
+          status: "paid",
           phoneNumber: phoneNumber.trim(),
         })
         .returning();
@@ -230,8 +231,8 @@ router.post("/orders/purchase", requireAuth, async (req, res): Promise<void> => 
         ? { mcbisReference: outcome.reference }
         : { ckgodswayReference: outcome.reference };
       await db.update(ordersTable)
-        .set({ status: "processing", ...refCol })
-        .where(eq(ordersTable.id, order.id));
+        .set({ delivered: "processing", ...refCol })
+        .where(and(eq(ordersTable.id, order.id), eq(ordersTable.status, "paid"), isNull(ordersTable.delivered)));
     }
   }).catch(() => {});
 
@@ -335,7 +336,7 @@ router.post("/orders/bulk", requireAuth, async (req, res): Promise<void> => {
           bundleData: item.bundle.dataAmount,
           price: item.price.toFixed(2),
           buyingCost: item.bundle.price,
-          status: "pending" as const,
+          status: "paid" as const,
           phoneNumber: item.phone,
         }))
       ).returning();
@@ -369,8 +370,8 @@ router.post("/orders/bulk", requireAuth, async (req, res): Promise<void> => {
           ? { mcbisReference: outcome.reference }
           : { ckgodswayReference: outcome.reference };
         await db.update(ordersTable)
-          .set({ status: "processing", ...refCol })
-          .where(eq(ordersTable.id, order.id));
+          .set({ delivered: "processing", ...refCol })
+          .where(and(eq(ordersTable.id, order.id), eq(ordersTable.status, "paid"), isNull(ordersTable.delivered)));
       }
     }).catch(() => {/* non-fatal */});
   }

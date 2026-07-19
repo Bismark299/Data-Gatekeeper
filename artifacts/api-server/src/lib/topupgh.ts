@@ -20,7 +20,7 @@
  */
 
 import crypto from "crypto";
-import { eq, and, isNull, isNotNull, lt, inArray, sql } from "drizzle-orm";
+import { eq, and, or, isNull, isNotNull, lt, inArray, sql } from "drizzle-orm";
 import { db, pool, settingsTable, ordersTable, bundlesTable, topupghBatchesTable, storeOrdersTable, storesTable } from "@workspace/db";
 import { logger } from "./logger";
 import { recoverStuckTopupghBatches } from "./ensureSchema";
@@ -352,8 +352,9 @@ async function dispatchPendingQueueLocked(forceDispatch = false): Promise<Dispat
 
   // No grace delay — dispatch is instant. McBIS is mutually exclusive with
   // TopUpGH (no McBIS-claim race to wait out) and orders are already confirmed
-  // paid by status (platform "pending" = wallet charged, store "paid"), so an
-  // eligible order can go out the moment the batch quantity is reached.
+  // paid (status "paid" = wallet/Paystack charged; delivered IS NULL = not yet
+  // dispatched), so an eligible order can go out the moment the batch quantity
+  // is reached.
   const GRACE_MS       = 0;
   const graceThreshold = new Date(Date.now() - GRACE_MS);
 
@@ -369,7 +370,8 @@ async function dispatchPendingQueueLocked(forceDispatch = false): Promise<Dispat
     .from(ordersTable)
     .leftJoin(bundlesTable, eq(bundlesTable.id, ordersTable.bundleId))
     .where(and(
-      eq(ordersTable.status, "pending"),
+      eq(ordersTable.status, "paid"),
+      isNull(ordersTable.delivered),
       isNull(ordersTable.topupghBatchId),
       isNull(ordersTable.mcbisReference),
       eq(bundlesTable.network, "mtn"),
@@ -392,6 +394,7 @@ async function dispatchPendingQueueLocked(forceDispatch = false): Promise<Dispat
     .from(storeOrdersTable)
     .where(and(
       eq(storeOrdersTable.status, "paid"),
+      isNull(storeOrdersTable.delivered),
       eq(storeOrdersTable.bundleNetwork, "mtn"),
       isNull(storeOrdersTable.topupghBatchId),
       isNull(storeOrdersTable.mcbisReference),
@@ -426,13 +429,17 @@ async function dispatchPendingQueueLocked(forceDispatch = false): Promise<Dispat
   // Park orders whose delivery outcome is UNCONFIRMED (create-order timed out,
   // network error, or a 5xx/408 — TopUpGH may have created + charged the order but
   // we never got a clean response). NEVER unlink these: returning them to the
-  // pending pool would re-dispatch and double-charge. Advancing them to
-  // "processing" excludes them from re-dispatch (dispatchPendingQueue picks only
-  // pending/paid) AND from the failed-batch safety-net in recoverStuckTopupghBatches
-  // (which frees only pending/paid). The batch is marked failed for manual review.
+  // undispatched pool would re-dispatch and double-charge. Advancing them to
+  // delivered='processing' excludes them from re-dispatch (dispatchPendingQueue
+  // picks only delivered IS NULL) AND from the failed-batch safety-net in
+  // recoverStuckTopupghBatches (which frees only delivered IS NULL). The batch is
+  // marked failed for manual review. Status-guarded so a concurrent refund
+  // (status flipped off 'paid') is never overwritten.
   const parkAmbiguous = async (errorMessage: string) => {
-    await db.update(ordersTable).set({ status: "processing" }).where(eq(ordersTable.topupghBatchId, batch.id));
-    await db.update(storeOrdersTable).set({ status: "processing" }).where(eq(storeOrdersTable.topupghBatchId, batch.id));
+    await db.update(ordersTable).set({ delivered: "processing" })
+      .where(and(eq(ordersTable.topupghBatchId, batch.id), eq(ordersTable.status, "paid"), isNull(ordersTable.delivered)));
+    await db.update(storeOrdersTable).set({ delivered: "processing" })
+      .where(and(eq(storeOrdersTable.topupghBatchId, batch.id), eq(storeOrdersTable.status, "paid"), isNull(storeOrdersTable.delivered)));
     await db.update(topupghBatchesTable).set({ status: "failed", errorMessage }).where(eq(topupghBatchesTable.id, batch.id));
   };
 
@@ -444,7 +451,8 @@ async function dispatchPendingQueueLocked(forceDispatch = false): Promise<Dispat
         inArray(ordersTable.id, valid.map(o => o.id)),
         isNull(ordersTable.topupghBatchId),
         isNull(ordersTable.mcbisReference),
-        eq(ordersTable.status, "pending"),
+        eq(ordersTable.status, "paid"),
+        isNull(ordersTable.delivered),
       ));
   }
   if (validStore.length > 0) {
@@ -456,6 +464,7 @@ async function dispatchPendingQueueLocked(forceDispatch = false): Promise<Dispat
         isNull(storeOrdersTable.mcbisReference),
         isNull(storeOrdersTable.ckgodswayReference),
         eq(storeOrdersTable.status, "paid"),
+        isNull(storeOrdersTable.delivered),
       ));
   }
 
@@ -599,13 +608,14 @@ async function dispatchPendingQueueLocked(forceDispatch = false): Promise<Dispat
       dispatchedAt:    new Date(),
     }).where(eq(topupghBatchesTable.id, batch.id));
 
-    // Mark orders as processing (both tables)
+    // Mark orders as delivering (both tables). Status-guarded: a refund that
+    // committed during the create-order call must stay authoritative.
     await db.update(ordersTable)
-      .set({ status: "processing" })
-      .where(eq(ordersTable.topupghBatchId, batch.id));
+      .set({ delivered: "processing" })
+      .where(and(eq(ordersTable.topupghBatchId, batch.id), eq(ordersTable.status, "paid"), isNull(ordersTable.delivered)));
     await db.update(storeOrdersTable)
-      .set({ status: "processing" })
-      .where(eq(storeOrdersTable.topupghBatchId, batch.id));
+      .set({ delivered: "processing" })
+      .where(and(eq(storeOrdersTable.topupghBatchId, batch.id), eq(storeOrdersTable.status, "paid"), isNull(storeOrdersTable.delivered)));
 
     return { batchId: batch.id, dispatched: true, ordersCount: linkedCount, topupghOrderId: result.order_id };
 
@@ -969,12 +979,14 @@ export async function reconcileBatchOrderLevel(
       db.select({ phone: ordersTable.phoneNumber }).from(ordersTable)
         .where(and(
           eq(ordersTable.topupghBatchId, batch.id),
-          inArray(ordersTable.status, ["pending", "processing"]),
+          eq(ordersTable.status, "paid"),
+          or(isNull(ordersTable.delivered), eq(ordersTable.delivered, "processing")),
         )),
       db.select({ phone: storeOrdersTable.customerPhone }).from(storeOrdersTable)
         .where(and(
           eq(storeOrdersTable.topupghBatchId, batch.id),
-          inArray(storeOrdersTable.status, ["paid", "processing"]),
+          eq(storeOrdersTable.status, "paid"),
+          or(isNull(storeOrdersTable.delivered), eq(storeOrdersTable.delivered, "processing")),
         )),
     ]);
 
@@ -1077,6 +1089,8 @@ export interface OrderDeliveryCheckResult {
   summary: BatchDeliveryCheckResult | null;
   delivery: OrderDeliveryInfo | null;
   orderStatus: string;
+  /** Fulfillment state of the order (NULL = not dispatched yet). */
+  orderDelivered: string | null;
 }
 
 /**
@@ -1091,19 +1105,19 @@ export interface OrderDeliveryCheckResult {
  * (which the background poller also depends on). Pass cooldownMs:0 for trusted admins.
  */
 export async function checkOrderDeliveryLive(
-  order: { id: number; phoneNumber: string; status: string; topupghBatchId: number | null },
+  order: { id: number; phoneNumber: string; status: string; delivered?: string | null; topupghBatchId: number | null },
   opts: { cooldownMs?: number } = {},
 ): Promise<OrderDeliveryCheckResult> {
   const cooldownMs = opts.cooldownMs ?? 0;
 
   if (!order.topupghBatchId) {
-    return { state: "not_dispatched", summary: null, delivery: null, orderStatus: order.status };
+    return { state: "not_dispatched", summary: null, delivery: null, orderStatus: order.status, orderDelivered: order.delivered ?? null };
   }
 
   const [batch] = await db.select().from(topupghBatchesTable)
     .where(eq(topupghBatchesTable.id, order.topupghBatchId));
   if (!batch || !batch.topupghOrderId) {
-    return { state: "not_dispatched", summary: null, delivery: null, orderStatus: order.status };
+    return { state: "not_dispatched", summary: null, delivery: null, orderStatus: order.status, orderDelivered: order.delivered ?? null };
   }
 
   let summary: BatchDeliveryCheckResult | null = null;
@@ -1124,11 +1138,15 @@ export async function checkOrderDeliveryLive(
   // Re-read the freshest persisted delivery payload + order status after any settle.
   const [freshBatch] = await db.select({ deliveryData: topupghBatchesTable.deliveryData })
     .from(topupghBatchesTable).where(eq(topupghBatchesTable.id, batch.id));
-  const [freshOrder] = await db.select({ status: ordersTable.status })
+  const [freshOrder] = await db.select({ status: ordersTable.status, delivered: ordersTable.delivered })
     .from(ordersTable).where(eq(ordersTable.id, order.id));
 
   const delivery = extractDeliveryInfo(freshBatch?.deliveryData).get(order.phoneNumber) ?? null;
-  return { state, summary, delivery, orderStatus: freshOrder?.status ?? order.status };
+  return {
+    state, summary, delivery,
+    orderStatus: freshOrder?.status ?? order.status,
+    orderDelivered: freshOrder ? freshOrder.delivered : (order.delivered ?? null),
+  };
 }
 
 /**
@@ -1276,22 +1294,24 @@ async function settleBatchDeliveries(
       .where(and(
         eq(ordersTable.topupghBatchId, batch.id),
         eq(ordersTable.phoneNumber, item.phone),
-        inArray(ordersTable.status, ["pending", "processing"]),
+        eq(ordersTable.status, "paid"),
+        or(isNull(ordersTable.delivered), eq(ordersTable.delivered, "processing")),
       ))
       .limit(1);
 
     if (!orderRow) continue;
 
-    // Mark the order completed or failed. No wallet refund on failure — a failed
-    // delivery is left for an admin to handle manually. The status guard makes the
+    // Mark the delivery outcome. No wallet refund on failure — a failed delivery
+    // is left for an admin to handle manually. The dual-column guard makes the
     // write authoritative for terminal states: if an admin bulk-refund committed
-    // between the SELECT above and here (flipping the row to failed+refunded), this
-    // UPDATE matches nothing and cannot resurrect it to completed — no refund+delivery.
+    // between the SELECT above and here (flipping status to refunded), this UPDATE
+    // matches nothing and cannot mark a refunded order delivered — no refund+delivery.
     await db.update(ordersTable)
-      .set({ status: delivered ? "completed" : "failed" })
+      .set({ delivered: delivered ? "delivered" : "failed" })
       .where(and(
         eq(ordersTable.id, orderRow.id),
-        inArray(ordersTable.status, ["pending", "processing"]),
+        eq(ordersTable.status, "paid"),
+        or(isNull(ordersTable.delivered), eq(ordersTable.delivered, "processing")),
       ));
 
     if (failed) {
@@ -1316,7 +1336,8 @@ async function settleBatchDeliveries(
         .where(and(
           eq(storeOrdersTable.topupghBatchId, batch.id),
           eq(storeOrdersTable.customerPhone, item.phone),
-          inArray(storeOrdersTable.status, ["paid", "processing"]),
+          eq(storeOrdersTable.status, "paid"),
+          or(isNull(storeOrdersTable.delivered), eq(storeOrdersTable.delivered, "processing")),
         ))
         .for("update");
 
@@ -1324,7 +1345,7 @@ async function settleBatchDeliveries(
 
       if (delivered) {
         await tx.update(storeOrdersTable)
-          .set({ status: "completed" })
+          .set({ delivered: "delivered" })
           .where(eq(storeOrdersTable.id, storeOrder.id));
         const profit = parseFloat(storeOrder.profit);
         await tx.update(storesTable)
@@ -1332,27 +1353,31 @@ async function settleBatchDeliveries(
           .where(eq(storesTable.id, storeOrder.storeId));
       } else {
         await tx.update(storeOrdersTable)
-          .set({ status: "failed" })
+          .set({ delivered: "failed" })
           .where(eq(storeOrdersTable.id, storeOrder.id));
         logger.info({ storeOrderId: storeOrder.id, phone: item.phone }, "TopUpGH delivery failed — store order marked failed (no auto-refund)");
       }
     });
   }
 
-  // Auto-close batch when all orders (platform + store) are settled
-  const batchOrders = await db.select({ status: ordersTable.status })
+  // Auto-close batch when all orders (platform + store) are settled. A row is
+  // settled when its delivery reached a terminal state OR its payment left
+  // 'paid' (refunded/cancelled/failed) — those rows will never be delivered.
+  const batchOrders = await db.select({ status: ordersTable.status, delivered: ordersTable.delivered })
     .from(ordersTable)
     .where(eq(ordersTable.topupghBatchId, batch.id));
-  const batchStoreOrders = await db.select({ status: storeOrdersTable.status })
+  const batchStoreOrders = await db.select({ status: storeOrdersTable.status, delivered: storeOrdersTable.delivered })
     .from(storeOrdersTable)
     .where(eq(storeOrdersTable.topupghBatchId, batch.id));
-  const allStatuses = [...batchOrders.map(o => o.status), ...batchStoreOrders.map(o => o.status)];
+  const allRows = [...batchOrders, ...batchStoreOrders];
 
-  const isSettled  = (s: string) => s === "completed" || s === "failed" || s === "cancelled";
-  const allSettled = allStatuses.every(isSettled);
+  const isDeliveredOk = (r: { status: string; delivered: string | null }) => r.delivered === "delivered";
+  const isFailedish   = (r: { status: string; delivered: string | null }) =>
+    r.delivered === "failed" || r.status === "refunded" || r.status === "cancelled" || r.status === "failed";
+  const allSettled = allRows.every(r => isDeliveredOk(r) || isFailedish(r));
   if (allSettled && batch.status === "processing") {
-    const allFailed = allStatuses.every(s => s === "failed");
-    const anyFailed = allStatuses.some(s => s === "failed");
+    const allFailed = allRows.every(isFailedish);
+    const anyFailed = allRows.some(isFailedish);
     const finalStatus = allFailed ? "failed" : anyFailed ? "partial" : "completed";
     await db.update(topupghBatchesTable)
       .set({ status: finalStatus })

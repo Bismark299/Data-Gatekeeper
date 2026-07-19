@@ -102,7 +102,10 @@ export interface Order {
   bundleName: string;
   bundleData: string;
   price: number;
+  /** Payment state (pending, paid, failed, refunded) */
   status: string;
+  /** Fulfillment state (null = not dispatched, processing, delivered, failed) */
+  delivered?: string | null;
   phoneNumber: string;
   /** Bundle network (mtn, telecel, at-ishare, at-bigtime). Empty if the bundle was deleted. */
   network?: string;

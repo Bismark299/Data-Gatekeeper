@@ -4,7 +4,7 @@ import {
   bundlesTable, usersTable,
 } from "@workspace/db";
 import { requireAuth } from "../middlewares/auth";
-import { eq, desc, and, ne, sql, inArray } from "drizzle-orm";
+import { eq, desc, and, ne, or, isNull, sql, inArray } from "drizzle-orm";
 import { z } from "zod";
 import crypto from "crypto";
 import { dispatchOrder } from "../lib/dispatch";
@@ -238,12 +238,12 @@ router.get("/stores/my/stats", requireAuth, async (req, res) => {
   if (!store) { res.status(404).json({ error: "No store found" }); return; }
 
   const orders = await db.select().from(storeOrdersTable).where(eq(storeOrdersTable.storeId, store.id));
-  const completed = orders.filter(o => o.status === "completed");
+  const completed = orders.filter(o => o.delivered === "delivered");
   const totalSales = completed.length;
   const totalRevenue = completed.reduce((s, o) => s + parseFloat(o.sellingPrice), 0);
   const totalProfit = completed.reduce((s, o) => s + parseFloat(o.profit), 0);
-  // "pending" = not yet paid (abandoned checkout) — don't count those as pending sales
-  const totalPending = orders.filter(o => o.status === "processing" || o.status === "paid").length;
+  // "pending" = paid but not yet delivered (status "pending" = abandoned checkout — not counted)
+  const totalPending = orders.filter(o => o.status === "paid" && (o.delivered == null || o.delivered === "processing")).length;
 
   res.json({
     totalSales,
@@ -559,6 +559,7 @@ router.get("/s/:slug/orders", async (req, res) => {
       customerPhone: storeOrdersTable.customerPhone,
       sellingPrice: storeOrdersTable.sellingPrice,
       status: storeOrdersTable.status,
+      delivered: storeOrdersTable.delivered,
       paystackReference: storeOrdersTable.paystackReference,
       createdAt: storeOrdersTable.createdAt,
     })
@@ -580,11 +581,11 @@ router.post("/s/:slug/verify", async (req, res) => {
   if (!ref) { res.status(400).json({ error: "Reference required" }); return; }
 
   // Quick existence check — may be null if this is the first call after payment
-  const [preCheck] = await db.select({ id: storeOrdersTable.id, status: storeOrdersTable.status })
+  const [preCheck] = await db.select({ id: storeOrdersTable.id, status: storeOrdersTable.status, delivered: storeOrdersTable.delivered })
     .from(storeOrdersTable).where(eq(storeOrdersTable.paystackReference, ref));
 
   // Already fully processed — return immediately
-  if (preCheck?.status === "completed") {
+  if (preCheck?.delivered === "delivered") {
     const [order] = await db.select().from(storeOrdersTable).where(eq(storeOrdersTable.id, preCheck.id));
     res.json(formatStoreOrder(order));
     return;
@@ -666,8 +667,8 @@ router.post("/s/:slug/verify", async (req, res) => {
   if (!updated) { res.status(500).json({ error: "Order could not be created" }); return; }
   res.json(formatStoreOrder(updated));
 
-  // Dispatch only for freshly-paid orders (status just became "paid")
-  if (updated.status === "paid" && !updated.mcbisReference && !updated.ckgodswayReference) {
+  // Dispatch only for paid orders not yet handed to a provider
+  if (updated.status === "paid" && updated.delivered == null && !updated.mcbisReference && !updated.ckgodswayReference) {
     dispatchOrder({
       orderId:      updated.id,
       network:      updated.bundleNetwork,
@@ -680,8 +681,8 @@ router.post("/s/:slug/verify", async (req, res) => {
           ? { mcbisReference: outcome.reference }
           : { ckgodswayReference: outcome.reference };
         await db.update(storeOrdersTable)
-          .set({ status: "processing", ...refCol })
-          .where(eq(storeOrdersTable.id, updated.id));
+          .set({ delivered: "processing", ...refCol })
+          .where(and(eq(storeOrdersTable.id, updated.id), eq(storeOrdersTable.status, "paid"), isNull(storeOrdersTable.delivered)));
       }
     }).catch(() => {/* non-fatal */});
   }
@@ -756,8 +757,8 @@ export async function handleStorePaystackWebhook(body: {
         ? { mcbisReference: outcome.reference }
         : { ckgodswayReference: outcome.reference };
       await db.update(storeOrdersTable)
-        .set({ status: "processing", ...refCol })
-        .where(eq(storeOrdersTable.id, order!.id));
+        .set({ delivered: "processing", ...refCol })
+        .where(and(eq(storeOrdersTable.id, order!.id), eq(storeOrdersTable.status, "paid"), isNull(storeOrdersTable.delivered)));
     }
   }).catch(() => {/* non-fatal */});
 }
@@ -782,12 +783,13 @@ router.get("/admin/stores", requireAuth, async (req, res) => {
     const orders = await db.select({
       profit: storeOrdersTable.profit,
       status: storeOrdersTable.status,
+      delivered: storeOrdersTable.delivered,
     }).from(storeOrdersTable).where(eq(storeOrdersTable.storeId, store.id));
 
     const totalOrders = orders.length;
-    const completedOrders = orders.filter(o => o.status === "completed").length;
-    const processingOrders = orders.filter(o => o.status === "processing").length;
-    const totalEarned = orders.filter(o => o.status === "completed").reduce((s, o) => s + parseFloat(o.profit as any), 0);
+    const completedOrders = orders.filter(o => o.delivered === "delivered").length;
+    const processingOrders = orders.filter(o => o.delivered === "processing").length;
+    const totalEarned = orders.filter(o => o.delivered === "delivered").reduce((s, o) => s + parseFloat(o.profit as any), 0);
 
     const withdrawals = await db.select({ amount: storeWithdrawalsTable.amount, status: storeWithdrawalsTable.status })
       .from(storeWithdrawalsTable).where(eq(storeWithdrawalsTable.storeId, store.id));
@@ -916,6 +918,7 @@ router.get("/admin/stores/:storeId/orders", requireAuth, async (req, res) => {
     basePrice: storeOrdersTable.basePrice,
     profit: storeOrdersTable.profit,
     status: storeOrdersTable.status,
+    delivered: storeOrdersTable.delivered,
     paystackReference: storeOrdersTable.paystackReference,
     createdAt: storeOrdersTable.createdAt,
   }).from(storeOrdersTable)
@@ -953,6 +956,7 @@ router.get("/admin/store-orders", requireAuth, async (req, res) => {
       agentCost: storeOrdersTable.agentCost,
       profit: storeOrdersTable.profit,
       status: storeOrdersTable.status,
+      delivered: storeOrdersTable.delivered,
       paystackReference: storeOrdersTable.paystackReference,
       createdAt: storeOrdersTable.createdAt,
       updatedAt: storeOrdersTable.updatedAt,
@@ -996,12 +1000,18 @@ router.patch("/admin/store-orders/:id/complete", requireAuth, async (req, res) =
         .for("update");
 
       if (!locked) throw Object.assign(new Error("Order not found"), { status: 404 });
-      if (locked.status === "completed") return locked;
+      if (locked.delivered === "delivered") return locked;
+      if (locked.status !== "paid" || locked.delivered !== "processing") {
+        throw Object.assign(
+          new Error(`Order is ${locked.status}/${locked.delivered ?? "not dispatched"} — only paid orders in processing can be completed`),
+          { status: 400 },
+        );
+      }
 
       const [completed] = await tx
         .update(storeOrdersTable)
-        .set({ status: "completed" })
-        .where(eq(storeOrdersTable.id, id))
+        .set({ delivered: "delivered" })
+        .where(and(eq(storeOrdersTable.id, id), eq(storeOrdersTable.status, "paid"), eq(storeOrdersTable.delivered, "processing")))
         .returning();
 
       // Atomically credit profit to store owner
@@ -1026,34 +1036,46 @@ router.patch("/admin/store-orders/:id/cancel", requireAuth, async (req, res) => 
   const id = parseInt(String(req.params.id));
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
 
-  const [order] = await db.select().from(storeOrdersTable).where(eq(storeOrdersTable.id, id));
-  if (!order) { res.status(404).json({ error: "Order not found" }); return; }
+  try {
+    const updated = await db.transaction(async (tx) => {
+      // Row lock + delivery guard: a delivered order (profit already credited) can
+      // never be flipped to cancelled, and concurrent settle/cancel calls serialize here.
+      const [locked] = await tx.select().from(storeOrdersTable)
+        .where(eq(storeOrdersTable.id, id)).for("update");
+      if (!locked) throw Object.assign(new Error("Order not found"), { status: 404 });
+      if (locked.status === "cancelled") return locked; // idempotent
+      if (locked.delivered === "delivered") {
+        throw Object.assign(new Error("Order is already delivered — cannot cancel"), { status: 400 });
+      }
 
-  // Get store to find the agent (store owner)
-  const [store] = await db.select({ userId: storesTable.userId }).from(storesTable).where(eq(storesTable.id, order.storeId));
+      // Get store to find the agent (store owner)
+      const [store] = await tx.select({ userId: storesTable.userId }).from(storesTable).where(eq(storesTable.id, locked.storeId));
 
-  const updated = await db.transaction(async (tx) => {
-    await tx.update(storeOrdersTable).set({ status: "cancelled" }).where(eq(storeOrdersTable.id, id));
+      await tx.update(storeOrdersTable).set({ status: "cancelled" }).where(eq(storeOrdersTable.id, id));
 
-    const profit = parseFloat(order.profit as string);
-    const ref = `cancel-store-order-${id}`;
-    const agentNote = `Store order #${id} (${order.bundleData}) cancelled — GH₵${profit.toFixed(2)} profit voided`;
-    const adminNote = `Cancelled store order #${id} for store #${order.storeId} — GH₵${profit.toFixed(2)} profit voided`;
+      const profit = parseFloat(locked.profit);
+      const ref = `cancel-store-order-${id}`;
+      const agentNote = `Store order #${id} (${locked.bundleData}) cancelled — GH₵${profit.toFixed(2)} profit voided`;
+      const adminNote = `Cancelled store order #${id} for store #${locked.storeId} — GH₵${profit.toFixed(2)} profit voided`;
 
-    // Log for the agent (store owner)
-    if (store?.userId) {
-      await insertLedgerEntry(tx, store.userId, profit, "debit", "order_cancelled", ref, agentNote);
-    }
+      // Log for the agent (store owner)
+      if (store?.userId) {
+        await insertLedgerEntry(tx, store.userId, profit, "debit", "order_cancelled", ref, agentNote);
+      }
 
-    // Log for the admin performing the cancellation
-    const adminId = req.session.userId!;
-    await insertLedgerEntry(tx, adminId, profit, "debit", "order_cancelled", `${ref}-admin`, adminNote);
+      // Log for the admin performing the cancellation
+      const adminId = req.session.userId!;
+      await insertLedgerEntry(tx, adminId, profit, "debit", "order_cancelled", `${ref}-admin`, adminNote);
 
-    const [u] = await tx.select().from(storeOrdersTable).where(eq(storeOrdersTable.id, id));
-    return u;
-  });
+      const [u] = await tx.select().from(storeOrdersTable).where(eq(storeOrdersTable.id, id));
+      return u;
+    });
 
-  res.json(formatStoreOrder(updated));
+    res.json(formatStoreOrder(updated));
+  } catch (err: unknown) {
+    const e = err as { message?: string; status?: number };
+    res.status(e.status ?? 500).json({ error: e.message ?? "Cancellation failed" });
+  }
 });
 
 router.post("/admin/store-orders/bulk-status", requireAuth, async (req, res) => {
@@ -1064,11 +1086,13 @@ router.post("/admin/store-orders/bulk-status", requireAuth, async (req, res) => 
   }
   const numIds = ids.map(Number).filter(n => !isNaN(n));
   if (numIds.length === 0) { res.status(400).json({ error: "No valid IDs" }); return; }
-  const VALID = ["pending", "processing", "completed", "failed", "cancelled"];
+  const VALID = ["pending", "processing", "completed", "delivered", "failed", "cancelled"];
   if (!VALID.includes(status)) { res.status(400).json({ error: "Invalid status" }); return; }
 
-  if (status === "completed") {
-    // Must credit profit per-order atomically — cannot use a single bulk UPDATE
+  if (status === "completed" || status === "delivered") {
+    // Settle path: must credit profit per-order atomically — cannot use a single
+    // bulk UPDATE. Only paid orders still in delivered='processing' settle; anything
+    // already delivered/refunded/cancelled is skipped, never re-credited.
     let updatedCount = 0;
     for (const id of numIds) {
       try {
@@ -1078,8 +1102,10 @@ router.post("/admin/store-orders/bulk-status", requireAuth, async (req, res) => 
             .from(storeOrdersTable)
             .where(eq(storeOrdersTable.id, id))
             .for("update");
-          if (!locked || locked.status === "completed") return;
-          await tx.update(storeOrdersTable).set({ status: "completed" }).where(eq(storeOrdersTable.id, id));
+          if (!locked || locked.status !== "paid" || locked.delivered !== "processing") return;
+          await tx.update(storeOrdersTable)
+            .set({ delivered: "delivered" })
+            .where(and(eq(storeOrdersTable.id, id), eq(storeOrdersTable.status, "paid"), eq(storeOrdersTable.delivered, "processing")));
           const profit = parseFloat(locked.profit);
           await tx.update(storesTable)
             .set({ profitBalance: sql`profit_balance + ${profit.toFixed(2)}::numeric` })
@@ -1092,8 +1118,29 @@ router.post("/admin/store-orders/bulk-status", requireAuth, async (req, res) => 
     return;
   }
 
-  await db.update(storeOrdersTable).set({ status }).where(inArray(storeOrdersTable.id, numIds));
-  res.json({ updated: numIds.length });
+  if (status === "processing" || status === "failed") {
+    // Fulfillment writes — only paid, not-yet-delivered orders may move.
+    const updated = await db.update(storeOrdersTable)
+      .set({ delivered: status })
+      .where(and(
+        inArray(storeOrdersTable.id, numIds),
+        eq(storeOrdersTable.status, "paid"),
+        or(isNull(storeOrdersTable.delivered), ne(storeOrdersTable.delivered, "delivered")),
+      ))
+      .returning({ id: storeOrdersTable.id });
+    res.json({ updated: updated.length });
+    return;
+  }
+
+  // Payment-status writes (pending/cancelled) — never touch a delivered order.
+  const updated = await db.update(storeOrdersTable)
+    .set({ status })
+    .where(and(
+      inArray(storeOrdersTable.id, numIds),
+      or(isNull(storeOrdersTable.delivered), ne(storeOrdersTable.delivered, "delivered")),
+    ))
+    .returning({ id: storeOrdersTable.id });
+  res.json({ updated: updated.length });
 });
 
 // ─── ADMIN: WITHDRAWAL APPROVE / REJECT ──────────────────────────────────────

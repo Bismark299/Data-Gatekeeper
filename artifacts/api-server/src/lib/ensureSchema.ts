@@ -24,6 +24,81 @@ export async function ensureSchema(): Promise<void> {
       logger.error({ err }, "ensureSchema statement failed");
     }
   }
+
+  await migrateStatusSplit();
+}
+
+async function hasConstraint(name: string): Promise<boolean> {
+  const res = await db.execute(
+    sql`SELECT 1 FROM pg_constraint WHERE conname = ${name}`,
+  );
+  return ((res as { rows?: unknown[] }).rows?.length ?? 0) > 0;
+}
+
+/**
+ * One-shot split of the legacy dual-purpose `status` column into:
+ *   - status    = payment only  (pending | paid | failed | refunded)
+ *   - delivered = fulfillment   (NULL | processing | delivered | failed)
+ *
+ * Legacy mapping (platform orders are wallet-paid at creation, so every
+ * non-failed legacy row was already paid):
+ *   orders:       completed → (paid, delivered)   processing → (paid, processing)
+ *                 pending   → (paid, NULL)        failed     → (refunded, failed)
+ *   store_orders: completed → (paid, delivered)   processing → (paid, processing)
+ *                 paid      → (paid, NULL)        pending/failed/cancelled unchanged
+ *
+ * Gated on the NEW check constraint existing — the constraint is added last,
+ * inside the same transaction as the backfill, so a partial failure re-runs the
+ * whole (idempotent) block on next boot. Safe to run on every start, on both
+ * the dev DB and the external Render prod DB.
+ */
+async function migrateStatusSplit(): Promise<void> {
+  try {
+    if (!(await hasConstraint("orders_payment_status_check"))) {
+      await db.execute(sql`ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivered text`);
+      await db.transaction(async (tx) => {
+        await tx.execute(sql`ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_status_check`);
+        await tx.execute(sql`UPDATE orders SET status = 'paid', delivered = 'delivered' WHERE status = 'completed'`);
+        await tx.execute(sql`UPDATE orders SET status = 'paid', delivered = 'processing' WHERE status = 'processing'`);
+        // Legacy 'failed' rows: only call them refunded when the refund ledger
+        // entry actually exists; the rest stay 'paid' (fulfillment failed, money
+        // never returned) so they remain visible as refundable.
+        await tx.execute(sql`
+          UPDATE orders SET status = 'refunded', delivered = 'failed'
+          WHERE status = 'failed'
+            AND EXISTS (SELECT 1 FROM wallet_ledger wl WHERE wl.reference = 'refund-order-' || orders.id)
+        `);
+        await tx.execute(sql`UPDATE orders SET status = 'paid', delivered = 'failed' WHERE status = 'failed'`);
+        await tx.execute(sql`UPDATE orders SET status = 'paid' WHERE status = 'pending'`);
+        await tx.execute(
+          sql`ALTER TABLE orders ADD CONSTRAINT orders_payment_status_check CHECK (status IN ('pending', 'paid', 'failed', 'refunded'))`,
+        );
+        await tx.execute(
+          sql`ALTER TABLE orders ADD CONSTRAINT orders_delivered_check CHECK (delivered IS NULL OR delivered IN ('processing', 'delivered', 'failed'))`,
+        );
+      });
+      logger.info("migrateStatusSplit: orders migrated to payment/delivered split");
+    }
+
+    if (!(await hasConstraint("store_orders_payment_status_check"))) {
+      await db.execute(sql`ALTER TABLE store_orders ADD COLUMN IF NOT EXISTS delivered text`);
+      await db.transaction(async (tx) => {
+        // Drop any legacy status CHECK first (name varies by how the DB was created)
+        await tx.execute(sql`ALTER TABLE store_orders DROP CONSTRAINT IF EXISTS store_orders_status_check`);
+        await tx.execute(sql`UPDATE store_orders SET status = 'paid', delivered = 'delivered' WHERE status = 'completed'`);
+        await tx.execute(sql`UPDATE store_orders SET status = 'paid', delivered = 'processing' WHERE status = 'processing'`);
+        await tx.execute(
+          sql`ALTER TABLE store_orders ADD CONSTRAINT store_orders_payment_status_check CHECK (status IN ('pending', 'paid', 'failed', 'cancelled', 'refunded'))`,
+        );
+        await tx.execute(
+          sql`ALTER TABLE store_orders ADD CONSTRAINT store_orders_delivered_check CHECK (delivered IS NULL OR delivered IN ('processing', 'delivered', 'failed'))`,
+        );
+      });
+      logger.info("migrateStatusSplit: store_orders migrated to payment/delivered split");
+    }
+  } catch (err) {
+    logger.error({ err }, "migrateStatusSplit failed");
+  }
 }
 
 /**
@@ -76,15 +151,17 @@ export async function recoverStuckTopupghBatches(): Promise<void> {
     const deletedCount = (deleted as { rowCount?: number }).rowCount ?? 0;
 
     // (2) Safety net: free still-unfulfilled orders pinned to a failed batch.
+    // "Unfulfilled" = paid but never dispatched (delivered IS NULL) — parked
+    // (delivered='processing') orders are deliberately excluded (see (3)).
     const freedOrders = await db.execute(sql`
       UPDATE orders SET topupgh_batch_id = NULL
-      WHERE status = 'pending' AND topupgh_batch_id IN (
+      WHERE status = 'paid' AND delivered IS NULL AND topupgh_batch_id IN (
         SELECT id FROM topupgh_batches WHERE status = 'failed'
       )
     `);
     const freedStore = await db.execute(sql`
       UPDATE store_orders SET topupgh_batch_id = NULL
-      WHERE status = 'paid' AND topupgh_batch_id IN (
+      WHERE status = 'paid' AND delivered IS NULL AND topupgh_batch_id IN (
         SELECT id FROM topupgh_batches WHERE status = 'failed'
       )
     `);
@@ -96,20 +173,20 @@ export async function recoverStuckTopupghBatches(): Promise<void> {
     // just before the create-order call) that never resolved means the process
     // died after the request was issued but before the result was recorded. The
     // order MAY have been created + charged at TopUpGH, so it is AMBIGUOUS — never
-    // requeue it. Park the orders as 'processing' (excluded from re-dispatch and
-    // from the failed-batch safety-net above) and fail the batch for manual review.
-    // The 5-minute age guard avoids touching a dispatch that is legitimately
-    // in-flight (a normal create-order resolves in seconds).
+    // requeue it. Park the orders as delivered='processing' (excluded from
+    // re-dispatch and from the failed-batch safety-net above) and fail the batch
+    // for manual review. The 5-minute age guard avoids touching a dispatch that is
+    // legitimately in-flight (a normal create-order resolves in seconds).
     await db.execute(sql`
-      UPDATE orders SET status = 'processing'
-      WHERE status = 'pending' AND topupgh_batch_id IN (
+      UPDATE orders SET delivered = 'processing'
+      WHERE status = 'paid' AND delivered IS NULL AND topupgh_batch_id IN (
         SELECT id FROM topupgh_batches
         WHERE status = 'dispatching' AND created_at < now() - interval '5 minutes'
       )
     `);
     await db.execute(sql`
-      UPDATE store_orders SET status = 'processing'
-      WHERE status = 'paid' AND topupgh_batch_id IN (
+      UPDATE store_orders SET delivered = 'processing'
+      WHERE status = 'paid' AND delivered IS NULL AND topupgh_batch_id IN (
         SELECT id FROM topupgh_batches
         WHERE status = 'dispatching' AND created_at < now() - interval '5 minutes'
       )

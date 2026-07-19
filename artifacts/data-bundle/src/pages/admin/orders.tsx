@@ -23,6 +23,7 @@ import {
   CheckCircle2, XCircle, Banknote, Zap, AlertCircle, Store, Clock,
   DollarSign, TrendingUp,
 } from "lucide-react";
+import { platformPhase, storePhase, awaitingDispatch } from "@/lib/orderPhase";
 
 // ─── constants ────────────────────────────────────────────────────────────────
 const STATUS_COLORS: Record<string, string> = {
@@ -30,16 +31,19 @@ const STATUS_COLORS: Record<string, string> = {
   paid:       "bg-violet-100 text-violet-800 dark:bg-violet-900/20 dark:text-violet-400",
   processing: "bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400",
   completed:  "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-400",
+  delivered:  "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-400",
   failed:     "bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400",
   cancelled:  "bg-gray-100 text-gray-600 dark:bg-gray-800/40 dark:text-gray-400",
+  refunded:   "bg-rose-100 text-rose-700 dark:bg-rose-900/20 dark:text-rose-400",
 };
 
 const STATUS_DOT: Record<string, string> = {
   pending: "bg-amber-400", paid: "bg-violet-400", processing: "bg-blue-400",
-  completed: "bg-emerald-400", failed: "bg-red-400", cancelled: "bg-gray-400",
+  completed: "bg-emerald-400", delivered: "bg-emerald-400", failed: "bg-red-400",
+  cancelled: "bg-gray-400", refunded: "bg-rose-400",
 };
 
-const ORDER_STATUSES = ["all", "pending", "processing", "completed", "failed"] as const;
+const ORDER_STATUSES = ["all", "pending", "processing", "completed", "failed", "refunded"] as const;
 const PAGE_SIZES = [10, 25, 50, 100];
 
 const NETWORKS = [
@@ -121,7 +125,7 @@ function AdminOrdersContent() {
 
   const handleStatusChange = (orderId: number, status: string) => {
     updateStatus.mutate({ id: orderId, data: { status } }, {
-      onSuccess: () => { toast({ title: `Order #${orderId} updated to ${status}` }); patchOrder(orderId, { status }); },
+      onSuccess: (updated) => { toast({ title: `Order #${orderId} updated to ${status}` }); patchOrder(orderId, updated as unknown as Record<string, unknown>); },
       onError:   () => toast({ title: "Error updating status", variant: "destructive" }),
     });
   };
@@ -136,7 +140,7 @@ function AdminOrdersContent() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error);
       toast({ title: `Order #${orderId} cancelled & GH₵${json.refunded?.toFixed(2)} refunded` });
-      patchOrder(orderId, { status: "failed" });
+      patchOrder(orderId, { status: "refunded" });
     } catch (e: unknown) {
       toast({ title: (e as Error).message || "Error refunding order", variant: "destructive" });
     } finally {
@@ -153,7 +157,7 @@ function AdminOrdersContent() {
         if (dateTo) { const to = new Date(dateTo); to.setHours(23, 59, 59, 999); if (d > to) return false; }
         return true;
       };
-      const processingStoreOrders = (Array.isArray(storeOrders) ? storeOrders : []).filter((o: any) => o.status === "processing" && inRange(o));
+      const processingStoreOrders = (Array.isArray(storeOrders) ? storeOrders : []).filter((o: any) => o.delivered === "processing" && inRange(o));
       const [platformRes] = await Promise.all([
         fetch("/api/admin/orders/complete-processing", {
           method: "POST", credentials: "include",
@@ -191,7 +195,7 @@ function AdminOrdersContent() {
   const filteredStoreOrders = useMemo(() => {
     let src = Array.isArray(storeOrders) ? storeOrders : [];
     if (networkFilter !== "all") src = src.filter((o: any) => (o.bundleNetwork ?? "") === networkFilter);
-    if (storeStatusFilter !== "all") src = src.filter((o: any) => o.status === storeStatusFilter);
+    if (storeStatusFilter !== "all") src = src.filter((o: any) => storePhase(o) === storeStatusFilter);
     if (!storePhoneSearch.trim()) {
       if (storeDateFrom) src = src.filter((o: any) => new Date(o.createdAt) >= new Date(storeDateFrom));
       if (storeDateTo) { const to = new Date(storeDateTo); to.setHours(23, 59, 59, 999); src = src.filter((o: any) => new Date(o.createdAt) <= to); }
@@ -239,12 +243,13 @@ function AdminOrdersContent() {
 
   // ── network pending counts (platform + store orders combined) ──
   const networkPendingCounts = useMemo(() => {
-    type NormalOrder = { id: number; phoneNumber: string; bundleData: string; status: string; network: string; isStore?: boolean };
+    type NormalOrder = { id: number; phoneNumber: string; bundleData: string; status: string; delivered: string | null; network: string; isStore?: boolean };
     const platform: NormalOrder[] = (allOrders ?? []).map(o => ({
       id: o.id,
       phoneNumber: o.phoneNumber,
       bundleData: o.bundleData ?? "",
       status: o.status,
+      delivered: (o as any).delivered ?? null,
       network: (o as any).network ?? "",
       isStore: false,
     }));
@@ -253,14 +258,15 @@ function AdminOrdersContent() {
       phoneNumber: o.customerPhone,
       bundleData: o.bundleData ?? "",
       status: o.status,
+      delivered: o.delivered ?? null,
       network: o.bundleNetwork ?? "",
       isStore: true,
     }));
     const all = [...platform, ...store];
     return NETWORKS.map(n => ({
       ...n,
-      count: all.filter(o => o.status === "pending" && o.network === n.value).length,
-      orders: all.filter(o => o.status === "pending" && o.network === n.value),
+      count: all.filter(o => awaitingDispatch(o) && o.network === n.value).length,
+      orders: all.filter(o => awaitingDispatch(o) && o.network === n.value),
     }));
   }, [allOrders, storeOrders]);
 
@@ -309,8 +315,8 @@ function AdminOrdersContent() {
 
   // ── combined platform + store day orders for unified stat cards ──
   const combinedDayStats = useMemo(() => {
-    type NormOrder = { status: string; amount: number };
-    const platform: NormOrder[] = dayOrders.map(o => ({ status: o.status, amount: Number(o.price) }));
+    type NormOrder = { phase: string; amount: number };
+    const platform: NormOrder[] = dayOrders.map(o => ({ phase: platformPhase(o as any), amount: Number(o.price) }));
     const storeDay: NormOrder[] = (Array.isArray(storeOrders) ? storeOrders : [])
       .filter((o: any) => {
         if (networkFilter !== "all" && (o.bundleNetwork ?? "") !== networkFilter) return false;
@@ -319,27 +325,27 @@ function AdminOrdersContent() {
         if (dateTo) { const to = new Date(dateTo); to.setHours(23, 59, 59, 999); if (d > to) return false; }
         return true;
       })
-      .map((o: any) => ({ status: o.status, amount: Number(o.sellingPrice) }));
+      .map((o: any) => ({ phase: storePhase(o), amount: Number(o.sellingPrice) }));
     return [...platform, ...storeDay];
   }, [dayOrders, storeOrders, networkFilter, dateFrom, dateTo]);
 
-  const combinedProcessingCount = combinedDayStats.filter(o => o.status === "processing").length;
+  const combinedProcessingCount = combinedDayStats.filter(o => o.phase === "processing").length;
 
   // ── stat cards ──
   const statCards = useMemo(() => [
     { icon: ShoppingCart, label: "Total Orders",    value: combinedDayStats.length,                                                    sub: dateFrom === dateTo ? `For ${dateFrom}` : `${dateFrom} → ${dateTo}`, colorClass: "text-violet-600",  bgClass: "bg-violet-100 dark:bg-violet-900/20" },
-    { icon: Clock,        label: "Pending",          value: combinedDayStats.filter(o => o.status === "pending").length,               sub: "Awaiting processing",    colorClass: "text-amber-600",   bgClass: "bg-amber-100 dark:bg-amber-900/20",   pulse: combinedDayStats.filter(o => o.status === "pending").length > 0 },
-    { icon: Zap,          label: "Processing",       value: combinedDayStats.filter(o => o.status === "processing").length,            sub: "Being processed",        colorClass: "text-sky-600",     bgClass: "bg-sky-100 dark:bg-sky-900/20",       pulse: combinedDayStats.filter(o => o.status === "processing").length > 0 },
-    { icon: CheckCircle2, label: "Completed",        value: combinedDayStats.filter(o => o.status === "completed").length,             sub: "Successfully fulfilled", colorClass: "text-emerald-600", bgClass: "bg-emerald-100 dark:bg-emerald-900/20" },
-    { icon: AlertCircle,  label: "Failed/Cancelled", value: combinedDayStats.filter(o => o.status === "failed" || o.status === "cancelled").length, sub: "Failed or cancelled", colorClass: "text-red-600", bgClass: "bg-red-100 dark:bg-red-900/20" },
-    { icon: DollarSign,   label: "Revenue",          value: `GH₵${combinedDayStats.filter(o => o.status === "completed").reduce((s, o) => s + o.amount, 0).toFixed(2)}`, sub: "Completed orders value", colorClass: "text-teal-600", bgClass: "bg-teal-100 dark:bg-teal-900/20", accent: true },
+    { icon: Clock,        label: "Pending",          value: combinedDayStats.filter(o => o.phase === "pending" || o.phase === "paid").length,               sub: "Awaiting processing",    colorClass: "text-amber-600",   bgClass: "bg-amber-100 dark:bg-amber-900/20",   pulse: combinedDayStats.filter(o => o.phase === "pending" || o.phase === "paid").length > 0 },
+    { icon: Zap,          label: "Processing",       value: combinedDayStats.filter(o => o.phase === "processing").length,            sub: "Being processed",        colorClass: "text-sky-600",     bgClass: "bg-sky-100 dark:bg-sky-900/20",       pulse: combinedDayStats.filter(o => o.phase === "processing").length > 0 },
+    { icon: CheckCircle2, label: "Completed",        value: combinedDayStats.filter(o => o.phase === "completed").length,             sub: "Successfully fulfilled", colorClass: "text-emerald-600", bgClass: "bg-emerald-100 dark:bg-emerald-900/20" },
+    { icon: AlertCircle,  label: "Failed/Refunded",  value: combinedDayStats.filter(o => o.phase === "failed" || o.phase === "cancelled" || o.phase === "refunded").length, sub: "Failed, cancelled or refunded", colorClass: "text-red-600", bgClass: "bg-red-100 dark:bg-red-900/20" },
+    { icon: DollarSign,   label: "Revenue",          value: `GH₵${combinedDayStats.filter(o => o.phase === "completed").reduce((s, o) => s + o.amount, 0).toFixed(2)}`, sub: "Completed orders value", colorClass: "text-teal-600", bgClass: "bg-teal-100 dark:bg-teal-900/20", accent: true },
   ], [combinedDayStats, dateFrom, dateTo]);
 
   // ── status counts ──
   const statusCounts = useMemo(() => {
     const src = (allOrders ?? []).filter(o => networkFilter === "all" || (o.network ?? "") === networkFilter);
     return Object.fromEntries(
-      ORDER_STATUSES.map(s => [s, s === "all" ? src.length : src.filter(o => o.status === s).length])
+      ORDER_STATUSES.map(s => [s, s === "all" ? src.length : src.filter(o => platformPhase(o as any) === s).length])
     );
   }, [allOrders, networkFilter]);
 
@@ -350,7 +356,7 @@ function AdminOrdersContent() {
     let src = allOrders ?? [];
 
     if (networkFilter !== "all") src = src.filter(o => (o.network ?? "") === networkFilter);
-    if (statusTab !== "all") src = src.filter(o => o.status === statusTab);
+    if (statusTab !== "all") src = src.filter(o => platformPhase(o as any) === statusTab);
     if (phoneSearch.trim()) {
       const q = phoneSearch.trim();
       src = src.filter(o => o.phoneNumber.includes(q));
@@ -385,7 +391,7 @@ function AdminOrdersContent() {
 
   // ── CSV export ──
   const handleExport = () => {
-    const headers = ["Order ID", "Date", "User ID", "Phone Number", "Network", "Bundle Name", "Data", "Amount (GHS)", "Status"];
+    const headers = ["Order ID", "Date", "User ID", "Phone Number", "Network", "Bundle Name", "Data", "Amount (GHS)", "Payment", "Delivered"];
     const esc = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`;
     const rows = processedOrders.map(o => [
       `#${o.id}`,
@@ -397,6 +403,7 @@ function AdminOrdersContent() {
       esc(o.bundleData ?? ""),
       Number(o.price).toFixed(2),
       o.status,
+      (o as any).delivered ?? "",
     ]);
     const csv = [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
     const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
@@ -439,9 +446,9 @@ function AdminOrdersContent() {
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${pageView === "store" ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground"}`}
             >
               <Store className="w-3.5 h-3.5" /> Store Orders
-              {(storeOrders ?? []).filter((o: any) => o.status === "processing").length > 0 && (
+              {(storeOrders ?? []).filter((o: any) => o.delivered === "processing").length > 0 && (
                 <span className="ml-1 px-1.5 py-0.5 rounded-full bg-blue-500 text-white text-[10px] font-bold">
-                  {(storeOrders ?? []).filter((o: any) => o.status === "processing").length}
+                  {(storeOrders ?? []).filter((o: any) => o.delivered === "processing").length}
                 </span>
               )}
             </button>
@@ -500,7 +507,7 @@ function AdminOrdersContent() {
                     <Select value={storeStatusFilter} onValueChange={setStoreStatusFilter}>
                       <SelectTrigger className="h-7 w-32 text-xs"><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        {["all", "pending", "processing", "completed", "failed", "cancelled"].map(s => (
+                        {["all", "pending", "paid", "processing", "completed", "failed", "cancelled", "refunded"].map(s => (
                           <SelectItem key={s} value={s} className="capitalize">{s === "all" ? "All statuses" : s}</SelectItem>
                         ))}
                       </SelectContent>
@@ -544,9 +551,10 @@ function AdminOrdersContent() {
                     </thead>
                     <tbody className="divide-y divide-border">
                       {filteredStoreOrders.map((o: any) => {
-                        const statusColor = STATUS_COLORS[o.status] ?? "bg-gray-100 text-gray-700";
+                        const phase = storePhase(o);
+                        const statusColor = STATUS_COLORS[phase] ?? "bg-gray-100 text-gray-700";
                         const isActioning = actioningId === o.id;
-                        const canAct = o.status !== "completed" && o.status !== "cancelled";
+                        const canAct = phase !== "completed" && phase !== "cancelled" && phase !== "refunded";
                         return (
                           <tr key={o.id} className="hover:bg-muted/30 transition-colors">
                             <td className="hidden sm:table-cell px-4 py-3 font-mono text-xs text-muted-foreground">#{o.id}</td>
@@ -565,7 +573,7 @@ function AdminOrdersContent() {
                             <td className="hidden sm:table-cell px-4 py-3 font-semibold">GH₵{o.sellingPrice.toFixed(2)}</td>
                             <td className="hidden sm:table-cell px-4 py-3 text-emerald-600 font-semibold">{o.systemProfit != null ? `+GH₵${Number(o.systemProfit).toFixed(2)}` : "—"}</td>
                             <td className="px-4 py-3">
-                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${statusColor}`}>{o.status}</span>
+                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${statusColor}`}>{phase}</span>
                             </td>
                             <td className="hidden sm:table-cell px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(o.createdAt)}</td>
                             <td className="px-4 py-3">
@@ -842,27 +850,28 @@ function AdminOrdersContent() {
                             {order.status}
                           </span>
                         </td>
-                        <td className="hidden lg:table-cell px-5 py-3.5 text-xs text-muted-foreground whitespace-nowrap">
-                          {(order as any).delivery && ((order as any).delivery.date || (order as any).delivery.time || (order as any).delivery.status) ? (
-                            <div className="flex flex-col">
-                              {(order as any).delivery.status && (
-                                <span className="font-semibold capitalize text-foreground">{(order as any).delivery.status}</span>
-                              )}
-                              {((order as any).delivery.date || (order as any).delivery.time) && (
-                                <span>{[(order as any).delivery.date, (order as any).delivery.time].filter(Boolean).join(" ")}</span>
-                              )}
-                            </div>
-                          ) : (
-                            <span className="text-muted-foreground/50">—</span>
-                          )}
+                        <td className="hidden lg:table-cell px-5 py-3.5 text-xs whitespace-nowrap">
+                          <div className="flex flex-col gap-0.5">
+                            {(order as any).delivered ? (
+                              <span className={`inline-flex w-fit items-center px-2 py-0.5 rounded-full text-[10px] font-bold capitalize ${STATUS_COLORS[(order as any).delivered] ?? "bg-gray-100 text-gray-700"}`}>
+                                {(order as any).delivered}
+                              </span>
+                            ) : (
+                              <span className="text-muted-foreground/50">—</span>
+                            )}
+                            {(order as any).delivery && ((order as any).delivery.date || (order as any).delivery.time) && (
+                              <span className="text-muted-foreground">{[(order as any).delivery.date, (order as any).delivery.time].filter(Boolean).join(" ")}</span>
+                            )}
+                          </div>
                         </td>
                         <td className="hidden md:table-cell px-5 py-3.5">
-                          <Select defaultValue={order.status} onValueChange={v => handleStatusChange(order.id, v)}>
+                          <Select defaultValue={platformPhase(order as any)} onValueChange={v => handleStatusChange(order.id, v)}>
                             <SelectTrigger className="w-32 h-7 text-xs" data-testid={`select-status-${order.id}`}>
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
                               <SelectItem value="pending">Pending</SelectItem>
+                              <SelectItem value="paid">Paid</SelectItem>
                               <SelectItem value="processing">Processing</SelectItem>
                               <SelectItem value="completed">Completed</SelectItem>
                               <SelectItem value="failed">Failed</SelectItem>
@@ -870,7 +879,7 @@ function AdminOrdersContent() {
                           </Select>
                         </td>
                         <td className="px-5 py-3.5">
-                          {order.status !== "completed" && order.status !== "failed" ? (
+                          {order.status === "paid" && (!(order as any).delivered || (order as any).delivered === "processing") ? (
                             <div className="flex items-center gap-1.5">
                               <OrderDeliveryCheckButton
                                 orderId={order.id}

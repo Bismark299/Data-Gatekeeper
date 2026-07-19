@@ -3,6 +3,7 @@ import { useParams, Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { storeApi, type PublicStore, type StoreBundle } from "@/lib/storeApi";
 import { BundleCard, BundleCardMini, NETWORK_LABELS, NETWORK_STYLES } from "@/components/BundleCard";
+import { storePhase } from "@/lib/orderPhase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -241,7 +242,7 @@ function OrderStatusCard({
     </div>
   );
 
-  const isSuccess = order?.status === "completed";
+  const isSuccess = !!order && (order as any).delivered === "delivered";
   return (
     <div className="max-w-md mx-auto py-12 px-4 text-center space-y-5">
       <div className={`w-20 h-20 rounded-3xl mx-auto flex items-center justify-center ${isSuccess ? "bg-emerald-100 dark:bg-emerald-900/20" : "bg-amber-100 dark:bg-amber-900/20"}`}>
@@ -517,12 +518,14 @@ export default function PublicStorePage() {
                 ) : (
                   <div className="divide-y divide-border rounded-xl border border-border overflow-hidden">
                     {trackedOrders.map((o: any) => {
-                      const statusColor = o.status === "completed" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400"
-                        : o.status === "processing" ? "bg-blue-100 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400"
-                        : o.status === "paid" ? "bg-violet-100 text-violet-700 dark:bg-violet-900/20 dark:text-violet-400"
-                        : o.status === "pending" ? "bg-amber-100 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400"
+                      const phase = storePhase(o);
+                      const statusColor = phase === "completed" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400"
+                        : phase === "processing" ? "bg-blue-100 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400"
+                        : phase === "paid" ? "bg-violet-100 text-violet-700 dark:bg-violet-900/20 dark:text-violet-400"
+                        : phase === "pending" ? "bg-amber-100 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400"
+                        : phase === "refunded" ? "bg-rose-100 text-rose-700 dark:bg-rose-900/20 dark:text-rose-400"
                         : "bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400";
-                      const StatusIcon = o.status === "completed" ? CheckCircle2 : o.status === "cancelled" ? XCircle : Clock;
+                      const StatusIcon = phase === "completed" ? CheckCircle2 : (phase === "cancelled" || phase === "refunded") ? XCircle : Clock;
                       const nStyle = NETWORK_STYLES[o.bundleNetwork];
                       return (
                         <div key={o.id} className="flex items-center gap-3 px-4 py-3.5 bg-background hover:bg-muted/30 transition-colors">
@@ -542,7 +545,7 @@ export default function PublicStorePage() {
                             <div className="text-sm font-bold text-foreground">GH₵{o.sellingPrice.toFixed(2)}</div>
                             <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full ${statusColor}`}>
                               <StatusIcon className="w-2.5 h-2.5" />
-                              {o.status}
+                              {phase}
                             </span>
                           </div>
                         </div>

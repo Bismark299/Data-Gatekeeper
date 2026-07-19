@@ -1225,6 +1225,11 @@ components:
           type: number
         status:
           type: string
+          description: Payment state (pending, paid, failed, refunded)
+        delivered:
+          type: string
+          nullable: true
+          description: Fulfillment state (null = not dispatched, processing, delivered, failed)
         phoneNumber:
           type: string
         network:

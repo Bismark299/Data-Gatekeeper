@@ -18,6 +18,7 @@ const STATUS_COLORS: Record<string, string> = {
   processing: "bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400",
   completed:  "bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400",
   failed:     "bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400",
+  refunded:   "bg-rose-100 text-rose-700 dark:bg-rose-900/20 dark:text-rose-400",
 };
 
 const STATUS_ICONS: Record<string, React.ReactNode> = {
@@ -25,6 +26,7 @@ const STATUS_ICONS: Record<string, React.ReactNode> = {
   processing: <Wifi className="w-3 h-3" />,
   completed:  <CheckCircle2 className="w-3 h-3" />,
   failed:     <AlertCircle className="w-3 h-3" />,
+  refunded:   <AlertCircle className="w-3 h-3" />,
 };
 
 const NETWORK_COLORS: Record<string, string> = {
@@ -35,6 +37,7 @@ const NETWORK_COLORS: Record<string, string> = {
 };
 
 import React from "react";
+import { platformPhase } from "@/lib/orderPhase";
 
 export default function Dashboard() {
   return (
@@ -53,9 +56,9 @@ function DashboardContent() {
   todayStart.setHours(0, 0, 0, 0);
 
   const todayOrders   = orders?.filter(o => new Date(o.createdAt) >= todayStart) ?? [];
-  const completed     = todayOrders.filter(o => o.status === "completed");
-  const pending       = todayOrders.filter(o => o.status === "pending" || o.status === "processing");
-  const failed        = todayOrders.filter(o => o.status === "failed");
+  const completed     = todayOrders.filter(o => platformPhase(o as any) === "completed");
+  const pending       = todayOrders.filter(o => { const p = platformPhase(o as any); return p === "pending" || p === "processing"; });
+  const failed        = todayOrders.filter(o => { const p = platformPhase(o as any); return p === "failed" || p === "refunded"; });
   const totalSpent    = completed.reduce((s, o) => s + o.price, 0);
   const lastOrder     = orders?.[0];
   const recentOrders  = orders?.slice(0, 5) ?? [];
@@ -202,9 +205,9 @@ function DashboardContent() {
             </div>
             <div className="flex items-center gap-4 shrink-0">
               <span className="text-xl font-extrabold text-foreground">GH₵{lastOrder.price}</span>
-              <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold capitalize ${STATUS_COLORS[lastOrder.status]}`}>
-                {STATUS_ICONS[lastOrder.status]}
-                {lastOrder.status}
+              <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold capitalize ${STATUS_COLORS[platformPhase(lastOrder as any)]}`}>
+                {STATUS_ICONS[platformPhase(lastOrder as any)]}
+                {platformPhase(lastOrder as any)}
               </span>
             </div>
           </div>
@@ -252,9 +255,9 @@ function DashboardContent() {
                       <td className="px-6 py-3 text-muted-foreground">{order.phoneNumber}</td>
                       <td className="px-6 py-3 font-bold text-foreground">GH₵{order.price}</td>
                       <td className="px-6 py-3">
-                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold capitalize ${STATUS_COLORS[order.status]}`}>
-                          {STATUS_ICONS[order.status]}
-                          {order.status}
+                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold capitalize ${STATUS_COLORS[platformPhase(order as any)]}`}>
+                          {STATUS_ICONS[platformPhase(order as any)]}
+                          {platformPhase(order as any)}
                         </span>
                       </td>
                       <td className="px-6 py-3 text-muted-foreground text-xs">
