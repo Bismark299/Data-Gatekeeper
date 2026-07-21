@@ -879,13 +879,15 @@ function AdminOrdersContent() {
                           </Select>
                         </td>
                         <td className="px-5 py-3.5">
-                          {order.status === "paid" && (!(order as any).delivered || (order as any).delivered === "processing") ? (
+                          {order.status === "paid" && (!(order as any).delivered || (order as any).delivered === "processing" || (order as any).delivered === "failed") ? (
                             <div className="flex items-center gap-1.5">
-                              <OrderDeliveryCheckButton
-                                orderId={order.id}
-                                scope="admin"
-                                invalidateKeys={[getAdminListOrdersQueryKey({})]}
-                              />
+                              {(order as any).delivered !== "failed" && (
+                                <OrderDeliveryCheckButton
+                                  orderId={order.id}
+                                  scope="admin"
+                                  invalidateKeys={[getAdminListOrdersQueryKey({})]}
+                                />
+                              )}
                               <button
                                 onClick={() => handleRefund(order.id)}
                                 disabled={refundingId === order.id}

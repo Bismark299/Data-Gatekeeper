@@ -74,6 +74,7 @@ A full-stack data bundle sales platform with a modern client interface and admin
 - `deposits.reference` has a DB-level UNIQUE constraint
 - **Order status split**: `status` = payment only (pending/paid/failed/refunded; +cancelled for store orders), `delivered` = fulfillment (NULL/processing/delivered/failed). Both enforced by DB-level CHECK constraints (`*_payment_status_check`, `*_delivered_check`). Migration auto-runs at boot (`migrateStatusSplit` in ensureSchema); Render deploy runbook: `docs/render-status-split-runbook.md`
 - All financial mutations wrapped in `db.transaction()` with `SELECT FOR UPDATE`
+- **Order refunds** (`refundOrderInTx` in `lib/refunds.ts`) — single money-safe path shared by the admin single/bulk refund routes AND the McBIS poller. Idempotency anchored on the `refund-order-{id}` ledger credit (checked under row lock). McBIS "cancelled/canceled" → auto-refund + delivered='failed'; McBIS "failed" → marked failed only, admin refunds via "Cancel & Refund" button (shown for paid orders that are undispatched, processing, or failed)
 - **Reconciliation endpoint** (`GET /admin/reconcile`) — surfaces stuck processing orders and wallet/ledger discrepancies
 - **Pagination** on all admin list endpoints (page/pageSize params)
 - Store order lookup (`GET /s/:slug/orders`) requires phone + email (two-factor customer identification)

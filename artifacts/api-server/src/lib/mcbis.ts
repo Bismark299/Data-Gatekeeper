@@ -22,6 +22,7 @@ import { sql } from "drizzle-orm";
 import axios from "axios";
 import { db, settingsTable, ordersTable, storeOrdersTable, bundlesTable, storesTable } from "@workspace/db";
 import { logger } from "./logger";
+import { refundOrderInTx } from "./refunds";
 
 const mcbisAxios = axios.create({
   timeout: 15_000, // 15-second hard limit per request
@@ -354,7 +355,30 @@ export function startMcbisPoller(): void {
           if (s === "success" || s === "completed" || s === "delivered") {
             await db.update(ordersTable).set({ delivered: "delivered" }).where(and(eq(ordersTable.id, o.id), eq(ordersTable.status, "paid"), eq(ordersTable.delivered, "processing")));
             settled = true;
-          } else if (s === "failed" || s === "cancelled" || s === "canceled") {
+          } else if (s === "cancelled" || s === "canceled") {
+            // Provider explicitly cancelled — mark fulfillment failed AND auto-refund
+            // the customer's wallet through the same money-safe path as the admin
+            // refund routes (row lock + idempotent `refund-order-{id}` ledger anchor,
+            // so a concurrent admin refund can never double-credit).
+            try {
+              const refunded = await db.transaction(async (tx) => {
+                const amount = await refundOrderInTx(tx, o.id, null);
+                // Same tx, row still locked: refundOrderInTx already rejected
+                // delivered orders, so flipping fulfillment to failed is safe here.
+                await tx.update(ordersTable).set({ delivered: "failed" }).where(eq(ordersTable.id, o.id));
+                return amount;
+              });
+              logger.info({ orderId: o.id, ref: o.ref, refunded }, "McBIS poller: provider cancelled — order marked failed and auto-refunded");
+            } catch (refundErr) {
+              // Not refundable (already refunded / status changed mid-poll) — still
+              // mark fulfillment failed exactly like the plain "failed" branch.
+              logger.warn({ orderId: o.id, ref: o.ref, err: refundErr instanceof Error ? refundErr.message : String(refundErr) }, "McBIS poller: cancelled order not auto-refunded — marked failed only");
+              await db.update(ordersTable).set({ delivered: "failed" }).where(and(eq(ordersTable.id, o.id), eq(ordersTable.status, "paid"), eq(ordersTable.delivered, "processing")));
+            }
+            settled = true;
+          } else if (s === "failed") {
+            // Delivery failure (not an explicit cancel) — no automatic money movement;
+            // admin refunds via the "Cancel & Refund" action on failed orders.
             await db.update(ordersTable).set({ delivered: "failed" }).where(and(eq(ordersTable.id, o.id), eq(ordersTable.status, "paid"), eq(ordersTable.delivered, "processing")));
             settled = true;
           } else if (s !== "pending" && s !== "processing") {

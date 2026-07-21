@@ -17,6 +17,7 @@ import {
 } from "../lib/ckgodsway";
 import { logger } from "../lib/logger";
 import { creditWallet, insertLedgerEntry } from "./wallet";
+import { refundOrderInTx } from "../lib/refunds";
 import {
   AdminListUsersQueryParams,
   AdminUpdateUserParams,
@@ -374,81 +375,10 @@ router.patch("/admin/orders/:id/status", requireAdmin, async (req, res): Promise
   res.json(formatOrder(order));
 });
 
-// Shared money-safe refund: locks the order row, guards terminal states, marks
-// it failed, credits the customer's wallet, and records both ledger entries.
-// Used by the single-order refund route AND the bulk cancel-and-refund route so
-// they behave identically. Must be called inside a db.transaction.
-type OrderRefundTx = Parameters<Parameters<typeof db.transaction>[0]>[0];
-
-async function refundOrderInTx(
-  tx: OrderRefundTx,
-  id: number,
-  adminId: number,
-  opts?: { allowedDelivered?: (string | null)[]; requireNoProviderRef?: boolean },
-): Promise<number> {
-  const [locked] = await tx
-    .select()
-    .from(ordersTable)
-    .where(eq(ordersTable.id, id))
-    .for("update");
-
-  if (!locked) throw Object.assign(new Error("Order not found"), { status: 404 });
-  if (locked.delivered === "delivered") throw Object.assign(new Error("Cannot refund a delivered order"), { status: 400 });
-  if (locked.status === "refunded") throw Object.assign(new Error("Order is already refunded"), { status: 400 });
-  if (locked.status !== "paid") {
-    throw Object.assign(new Error(`Order payment status is ${locked.status}; only paid orders can be refunded`), { status: 400 });
-  }
-  // Callers (e.g. bulk cancel) may restrict which fulfillment states are eligible.
-  if (opts?.allowedDelivered && !opts.allowedDelivered.includes(locked.delivered)) {
-    throw Object.assign(new Error(`Order delivery state is ${locked.delivered ?? "not dispatched"}; not eligible for bulk cancel`), { status: 400 });
-  }
-  // An undispatched order (delivered IS NULL) can already be provider-locked (LOCK-*
-  // reference set before `delivered` flips to "processing"), so refuse to bulk-refund
-  // an undispatched order that has been handed to a provider — that would risk
-  // refund + delivery. A delivered='processing' order ALWAYS carries a provider ref
-  // (that's how it was dispatched); it is refunded here deliberately. This is
-  // money-safe against a late delivery because every settle path requires
-  // status='paid', so once this order is refunded no webhook/poll can complete it.
-  if (
-    opts?.requireNoProviderRef &&
-    locked.delivered == null &&
-    (locked.mcbisReference || locked.ckgodswayReference || locked.topupghBatchId != null)
-  ) {
-    throw Object.assign(new Error("Order is already dispatched/in-flight; cancel individually after a delivery check"), { status: 400 });
-  }
-
-  // Durable idempotency independent of orders.status (which other writers — admin
-  // status routes, provider pollers — can change): never credit twice for the
-  // same order. The order row is locked above, so concurrent refunds on this
-  // order serialize and the second one sees this committed ledger entry.
-  const [existingRefund] = await tx
-    .select({ ref: walletLedgerTable.reference })
-    .from(walletLedgerTable)
-    .where(and(
-      eq(walletLedgerTable.reference, `refund-order-${id}`),
-      eq(walletLedgerTable.type, "credit"),
-    ))
-    .limit(1);
-  if (existingRefund) throw Object.assign(new Error("Order is already failed/refunded"), { status: 400 });
-
-  await tx.update(ordersTable).set({ status: "refunded" }).where(eq(ordersTable.id, id));
-
-  // Credit the refund amount back to wallet and record in the ledger
-  await creditWallet(locked.userId, parseFloat(locked.price), tx, {
-    source: "refund",
-    reference: `refund-order-${id}`,
-    note: `Refund for cancelled order #${id} (${locked.bundleName})`,
-  });
-
-  // Log the cancellation in the admin's own ledger for audit trail
-  await insertLedgerEntry(
-    tx, adminId, parseFloat(locked.price), "debit", "order_cancelled",
-    `cancel-order-${id}`,
-    `Cancelled order #${id} for user #${locked.userId} — GH₵${locked.price} refunded`,
-  );
-
-  return Number(locked.price);
-}
+// Shared money-safe refund (refundOrderInTx) lives in ../lib/refunds — used by
+// the single-order refund route, the bulk cancel-and-refund route, AND the
+// McBIS poller's auto-refund on provider cancellation, so all paths behave
+// identically.
 
 router.post("/admin/orders/:id/refund", requireAdmin, async (req, res): Promise<void> => {
   const id = Number(req.params.id);
