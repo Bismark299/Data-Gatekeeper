@@ -146,6 +146,26 @@ export interface Deposit {
   createdAt: string;
 }
 
+export type WalletLedgerEntryType =
+  (typeof WalletLedgerEntryType)[keyof typeof WalletLedgerEntryType];
+
+export const WalletLedgerEntryType = {
+  credit: "credit",
+  debit: "debit",
+} as const;
+
+export interface WalletLedgerEntry {
+  id: number;
+  amount: number;
+  type: WalletLedgerEntryType;
+  source: string;
+  /** @nullable */
+  reference?: string | null;
+  /** @nullable */
+  note?: string | null;
+  createdAt: string;
+}
+
 export interface MomoInfo {
   momoNumber: string;
   referenceCode: string;

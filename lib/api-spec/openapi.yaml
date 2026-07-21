@@ -453,6 +453,27 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /wallet/ledger:
+    get:
+      operationId: getWalletLedger
+      tags: [wallet]
+      summary: List wallet ledger entries (all balance changes) for current user
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WalletLedgerEntry"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /wallet/momo-info:
     get:
       operationId: getMomoInfo
@@ -1317,6 +1338,31 @@ components:
         - amount
         - status
         - method
+        - createdAt
+
+    WalletLedgerEntry:
+      type: object
+      properties:
+        id:
+          type: integer
+        amount:
+          type: number
+        type:
+          type: string
+          enum: [credit, debit]
+        source:
+          type: string
+        reference:
+          type: ["string", "null"]
+        note:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+      required:
+        - id
+        - amount
+        - type
+        - source
         - createdAt
 
     MomoInfo:

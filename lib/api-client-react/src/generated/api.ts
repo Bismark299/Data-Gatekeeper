@@ -51,6 +51,7 @@ import type {
   UpdateOrderStatusBody,
   UserProfile,
   WalletBalance,
+  WalletLedgerEntry,
 } from "./api.schemas";
 
 import { customFetch } from "../custom-fetch";
@@ -1447,6 +1448,81 @@ export function useListDeposits<
   request?: SecondParameter<typeof customFetch>;
 }): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getListDepositsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary List wallet ledger entries (all balance changes) for current user
+ */
+export const getGetWalletLedgerUrl = () => {
+  return `/api/wallet/ledger`;
+};
+
+export const getWalletLedger = async (
+  options?: RequestInit,
+): Promise<WalletLedgerEntry[]> => {
+  return customFetch<WalletLedgerEntry[]>(getGetWalletLedgerUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetWalletLedgerQueryKey = () => {
+  return [`/api/wallet/ledger`] as const;
+};
+
+export const getGetWalletLedgerQueryOptions = <
+  TData = Awaited<ReturnType<typeof getWalletLedger>>,
+  TError = ErrorType<ErrorResponse>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getWalletLedger>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetWalletLedgerQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getWalletLedger>>> = ({
+    signal,
+  }) => getWalletLedger({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getWalletLedger>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetWalletLedgerQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getWalletLedger>>
+>;
+export type GetWalletLedgerQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary List wallet ledger entries (all balance changes) for current user
+ */
+
+export function useGetWalletLedger<
+  TData = Awaited<ReturnType<typeof getWalletLedger>>,
+  TError = ErrorType<ErrorResponse>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getWalletLedger>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetWalletLedgerQueryOptions(options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

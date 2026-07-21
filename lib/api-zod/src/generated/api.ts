@@ -288,6 +288,20 @@ export const ListDepositsResponseItem = zod.object({
 export const ListDepositsResponse = zod.array(ListDepositsResponseItem);
 
 /**
+ * @summary List wallet ledger entries (all balance changes) for current user
+ */
+export const GetWalletLedgerResponseItem = zod.object({
+  id: zod.number(),
+  amount: zod.number(),
+  type: zod.enum(["credit", "debit"]),
+  source: zod.string(),
+  reference: zod.string().nullish(),
+  note: zod.string().nullish(),
+  createdAt: zod.string(),
+});
+export const GetWalletLedgerResponse = zod.array(GetWalletLedgerResponseItem);
+
+/**
  * @summary Get MoMo payment instructions for the current user
  */
 export const GetMomoInfoResponse = zod.object({

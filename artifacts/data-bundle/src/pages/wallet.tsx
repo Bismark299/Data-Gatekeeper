@@ -2,11 +2,13 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   useGetWalletBalance,
   useListDeposits,
+  useGetWalletLedger,
   useInitializePaystackDeposit,
   useClaimMomoDeposit,
   useGetMomoInfo,
   getGetWalletBalanceQueryKey,
   getListDepositsQueryKey,
+  getGetWalletLedgerQueryKey,
   verifyPaystackDeposit,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -54,6 +56,7 @@ function WalletContent() {
     { query: { refetchInterval: 12_000 } } as any,
   );
   const { data: deposits } = useListDeposits({ query: { refetchInterval: 15_000 } } as any);
+  const { data: ledger }    = useGetWalletLedger({ query: { refetchInterval: 15_000 } } as any);
   const { data: momoInfo }  = useGetMomoInfo();
   const initPaystack        = useInitializePaystackDeposit();
   const claimMomo           = useClaimMomoDeposit();
@@ -61,6 +64,7 @@ function WalletContent() {
   const invalidate = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: getGetWalletBalanceQueryKey() });
     queryClient.invalidateQueries({ queryKey: getListDepositsQueryKey() });
+    queryClient.invalidateQueries({ queryKey: getGetWalletLedgerQueryKey() });
   }, [queryClient]);
 
   // Auto-verify when Paystack redirects back with ?paystack_ref=...
@@ -169,13 +173,40 @@ function WalletContent() {
     navigator.clipboard.writeText(text).then(() => toast({ title: `${label} copied!` }));
   };
 
-  // Pagination logic
-  const totalDeposits = deposits?.length ?? 0;
-  const totalPages    = Math.max(1, Math.ceil(totalDeposits / pageSize));
+  // Transaction history tabs: "activity" = full wallet ledger (deposits,
+  // purchases, refunds), "deposits" = deposit records incl. pending/rejected.
+  const [historyTab, setHistoryTab] = useState<"activity" | "deposits">("activity");
+
+  // Pagination logic (shared across both tabs)
+  const totalRows  = (historyTab === "activity" ? ledger?.length : deposits?.length) ?? 0;
+  const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
   const pagedDeposits = useMemo(() => {
+    if (historyTab !== "deposits") return [];
     const start = (page - 1) * pageSize;
     return (deposits ?? []).slice(start, start + pageSize);
-  }, [deposits, page, pageSize]);
+  }, [deposits, page, pageSize, historyTab]);
+  const pagedLedger = useMemo(() => {
+    if (historyTab !== "activity") return [];
+    const start = (page - 1) * pageSize;
+    return (ledger ?? []).slice(start, start + pageSize);
+  }, [ledger, page, pageSize, historyTab]);
+
+  const ledgerLabel = (source: string, type: string) => {
+    switch (source) {
+      case "paystack":        return "Deposit — Paystack";
+      case "momo":            return "Deposit — Mobile Money";
+      case "mobile_money":    return "Deposit — Mobile Money";
+      case "order":           return type === "credit" ? "Order refund" : "Bundle purchase";
+      case "cart":            return "Bundle purchase";
+      case "bulk_order":      return "Bulk purchase";
+      case "api_order":       return "Bundle purchase (API)";
+      case "refund":          return "Order refund";
+      case "order_cancelled": return type === "credit" ? "Order cancelled — refund" : "Order cancelled";
+      case "admin":           return type === "credit" ? "Admin credit" : "Admin deduction";
+      case "balance":         return "Balance adjustment";
+      default:                return source.replace(/[_-]/g, " ").replace(/^./, c => c.toUpperCase());
+    }
+  };
 
   const statusIcon = (s: string) => {
     if (s === "completed") return <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />;
@@ -395,10 +426,27 @@ function WalletContent() {
           <div className="flex items-center justify-between px-5 py-4 border-b border-border gap-3 flex-wrap">
             <div>
               <h2 className="font-semibold text-foreground">Transaction History</h2>
-              <p className="text-xs text-muted-foreground mt-0.5">{totalDeposits} deposit{totalDeposits !== 1 ? "s" : ""} total</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {totalRows} {historyTab === "activity" ? `transaction${totalRows !== 1 ? "s" : ""}` : `deposit${totalRows !== 1 ? "s" : ""}`} total
+              </p>
+            </div>
+            {/* Tabs */}
+            <div className="flex items-center gap-1 bg-muted rounded-lg p-1" data-testid="history-tabs">
+              {([["activity", "All Activity"], ["deposits", "Deposits"]] as const).map(([key, label]) => (
+                <button
+                  key={key}
+                  onClick={() => { setHistoryTab(key); setPage(1); }}
+                  className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${
+                    historyTab === key ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                  }`}
+                  data-testid={`tab-${key}`}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
             {/* Per-page selector */}
-            {totalDeposits > 0 && (
+            {totalRows > 0 && (
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <span>Show</span>
                 <select
@@ -415,7 +463,7 @@ function WalletContent() {
             )}
           </div>
 
-          {!deposits || deposits.length === 0 ? (
+          {totalRows === 0 ? (
             <div className="flex flex-col items-center justify-center py-14 text-muted-foreground">
               <ArrowDownCircle className="w-10 h-10 mb-3 opacity-20" />
               <p className="text-sm">No transactions yet. Fund your wallet to get started.</p>
@@ -424,43 +472,75 @@ function WalletContent() {
             <>
               {/* Table */}
               <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-border bg-muted/30">
-                      <th className="text-left px-5 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide">Date</th>
-                      <th className="text-left px-5 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide">Method</th>
-                      <th className="text-left px-5 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide">Reference</th>
-                      <th className="text-right px-5 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide">Amount</th>
-                      <th className="text-left px-5 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border">
-                    {pagedDeposits.map(d => (
-                      <tr key={d.id} className="hover:bg-muted/20 transition-colors" data-testid={`deposit-${d.id}`}>
-                        <td className="px-5 py-3.5 text-muted-foreground text-xs whitespace-nowrap">
-                          {new Date(d.createdAt).toLocaleDateString("en-GH", { day: "numeric", month: "short", year: "numeric" })}
-                        </td>
-                        <td className="px-5 py-3.5 font-medium text-foreground capitalize">{methodLabel(d.method)}</td>
-                        <td className="px-5 py-3.5 text-muted-foreground text-xs font-mono truncate max-w-[140px]">
-                          {d.reference || "—"}
-                        </td>
-                        <td className="px-5 py-3.5 text-right font-bold text-green-600">+GH₵{Number(d.amount).toFixed(2)}</td>
-                        <td className="px-5 py-3.5">
-                          <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full capitalize font-medium ${statusColor(d.status)}`}>
-                            {statusIcon(d.status)}
-                            {d.status}
-                          </span>
-                        </td>
+                {historyTab === "activity" ? (
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-border bg-muted/30">
+                        <th className="text-left px-5 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide">Date</th>
+                        <th className="text-left px-5 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide">Description</th>
+                        <th className="text-left px-5 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide">Reference</th>
+                        <th className="text-right px-5 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide">Amount</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {pagedLedger.map(e => (
+                        <tr key={e.id} className="hover:bg-muted/20 transition-colors" data-testid={`ledger-${e.id}`}>
+                          <td className="px-5 py-3.5 text-muted-foreground text-xs whitespace-nowrap">
+                            {new Date(e.createdAt).toLocaleDateString("en-GH", { day: "numeric", month: "short", year: "numeric" })}
+                          </td>
+                          <td className="px-5 py-3.5">
+                            <span className="font-medium text-foreground">{ledgerLabel(e.source, e.type)}</span>
+                            {e.note && <div className="text-[11px] text-muted-foreground mt-0.5 truncate max-w-[260px]">{e.note}</div>}
+                          </td>
+                          <td className="px-5 py-3.5 text-muted-foreground text-xs font-mono truncate max-w-[140px]">
+                            {e.reference || "—"}
+                          </td>
+                          <td className={`px-5 py-3.5 text-right font-bold ${e.type === "credit" ? "text-green-600" : "text-red-500"}`}>
+                            {e.type === "credit" ? "+" : "−"}GH₵{Math.abs(Number(e.amount)).toFixed(2)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : (
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-border bg-muted/30">
+                        <th className="text-left px-5 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide">Date</th>
+                        <th className="text-left px-5 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide">Method</th>
+                        <th className="text-left px-5 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide">Reference</th>
+                        <th className="text-right px-5 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide">Amount</th>
+                        <th className="text-left px-5 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {pagedDeposits.map(d => (
+                        <tr key={d.id} className="hover:bg-muted/20 transition-colors" data-testid={`deposit-${d.id}`}>
+                          <td className="px-5 py-3.5 text-muted-foreground text-xs whitespace-nowrap">
+                            {new Date(d.createdAt).toLocaleDateString("en-GH", { day: "numeric", month: "short", year: "numeric" })}
+                          </td>
+                          <td className="px-5 py-3.5 font-medium text-foreground capitalize">{methodLabel(d.method)}</td>
+                          <td className="px-5 py-3.5 text-muted-foreground text-xs font-mono truncate max-w-[140px]">
+                            {d.reference || "—"}
+                          </td>
+                          <td className="px-5 py-3.5 text-right font-bold text-green-600">+GH₵{Number(d.amount).toFixed(2)}</td>
+                          <td className="px-5 py-3.5">
+                            <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full capitalize font-medium ${statusColor(d.status)}`}>
+                              {statusIcon(d.status)}
+                              {d.status}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
               </div>
 
               {/* Pagination footer */}
               <div className="flex items-center justify-between px-5 py-3 border-t border-border text-xs text-muted-foreground">
                 <span>
-                  Showing {Math.min((page - 1) * pageSize + 1, totalDeposits)}–{Math.min(page * pageSize, totalDeposits)} of {totalDeposits}
+                  Showing {Math.min((page - 1) * pageSize + 1, totalRows)}–{Math.min(page * pageSize, totalRows)} of {totalRows}
                 </span>
                 <div className="flex items-center gap-1">
                   <button
