@@ -1,0 +1,58 @@
+There's no webhook — McBIS doesn't push updates to you. Your system polls McBIS (asks "what's the status now?"). Here's the full flow:
+
+Step 1 — Auto-sync runs every 30 seconds (server/src/index.js):
+
+setInterval(async () => {
+  await datahubService.syncAllPendingOrders();       // legacy orders table
+  await orderGroupService.syncAllProcessingItems();  // new order_items table
+}, 30000);
+
+Step 2 — For each PROCESSING item, it calls McBIS (datahub.service.js line 303):
+
+// GET https://datahub.mcbissolution.com/api/v1/checkOrderStatus/{reference}
+// Authorization: Bearer {your_token}
+const result = await apiRequest(`/checkOrderStatus/${reference}`);
+// McBIS response looks like:
+// {
+//   data: {
+//     status: "success",        ← this just means "API call worked", ignore it
+//     order: {
+//       status: "canceled"      ← THIS is the real order status
+//     }
+//   }
+// }
+const orderStatus = result.data?.order?.status || result.data?.status;
+
+Step 3 — Map their status words to yours (order-group.service.js line 1448):
+
+const s = (orderStatus || '').toLowerCase();
+if (s === 'success' || s === 'completed' || s === 'delivered') {
+  newStatus = 'COMPLETED';
+} else if (s === 'failed' || s === 'error' || s === 'rejected') {
+  newStatus = 'FAILED';
+} else if (s === 'cancelled' || s === 'canceled' || s === 'cancel') {
+  newStatus = 'CANCELLED';   // ← both spellings handled
+} else if (s === 'pending' || s === 'processing' || s === 'queued') {
+  newStatus = 'PROCESSING';  // still waiting, check again next cycle
+} else if (s) {
+  // Something unexpected — warn so we can add it
+  console.warn(`Unrecognized McBIS status: '${s}'`);
+}
+
+Step 4 — On CANCELLED, auto-refund the user (order-group.service.js line 1525):
+
+if (newStatus === 'FAILED' || newStatus === 'CANCELLED') {
+  // Credit amount back to wallet
+  await prisma.wallet.update({
+    where: { userId: order.userId },
+    data: { balance: { increment: item.totalPrice } }
+  });
+  // Log the wallet transaction
+  await prisma.walletTransaction.create({
+    data: {
+      type: 'REFUND',
+      amount: item.totalPrice,
+      description: `Refund for cancelled order ${orderGroup.displayId}`
+    }
+  });
+}
