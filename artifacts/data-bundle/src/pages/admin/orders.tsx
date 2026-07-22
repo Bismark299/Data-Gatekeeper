@@ -218,13 +218,19 @@ function AdminOrdersContent() {
     } finally { setActioningId(null); }
   };
 
-  const handleStoreOrderCancel = async (id: number) => {
+  const handleStoreOrderCancel = async (id: number, isPaid: boolean, amount: number) => {
+    if (isPaid) {
+      const ok = window.confirm(
+        `Cancel store order #${id}?\n\nGH₵${amount.toFixed(2)} will be refunded to the store owner's wallet — they settle with their customer directly.`
+      );
+      if (!ok) return;
+    }
     setActioningId(id);
     try {
       const res = await fetch(`/api/admin/store-orders/${id}/cancel`, { method: "PATCH", credentials: "include" });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error);
-      toast({ title: `Store order #${id} cancelled` });
+      toast({ title: isPaid ? `Store order #${id} cancelled — GH₵${amount.toFixed(2)} refunded to store owner` : `Store order #${id} cancelled` });
       invalidate();
       refetchStoreOrders();
     } catch (e: unknown) {
@@ -588,12 +594,13 @@ function AdminOrdersContent() {
                                     {isActioning ? "…" : "Complete"}
                                   </button>
                                   <button
-                                    onClick={() => handleStoreOrderCancel(o.id)}
+                                    onClick={() => handleStoreOrderCancel(o.id, o.status === "paid", o.sellingPrice)}
                                     disabled={isActioning}
+                                    title={o.status === "paid" ? "Cancel this order and refund the full amount to the store owner's wallet" : "Cancel this unpaid order"}
                                     className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400 hover:bg-red-200 disabled:opacity-50 transition-colors whitespace-nowrap"
                                   >
                                     <XCircle className="w-3 h-3" />
-                                    {isActioning ? "…" : "Cancel"}
+                                    {isActioning ? "…" : o.status === "paid" ? "Cancel & Refund" : "Cancel"}
                                   </button>
                                 </div>
                               ) : (

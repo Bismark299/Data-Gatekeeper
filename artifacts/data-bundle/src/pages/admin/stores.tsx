@@ -231,13 +231,19 @@ function AdminStoresContent() {
     } finally { setActionId(null); }
   };
 
-  const handleCancel = async (orderId: number) => {
+  const handleCancel = async (orderId: number, isPaid: boolean, amount: number) => {
+    if (isPaid) {
+      const ok = window.confirm(
+        `Cancel order #${orderId}?\n\nGH₵${amount.toFixed(2)} will be refunded to the store owner's wallet — they settle with their customer directly.`
+      );
+      if (!ok) return;
+    }
     setActionId(orderId);
     try {
       const res = await fetch(`/api/admin/store-orders/${orderId}/cancel`, { method: "PATCH", credentials: "include" });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error);
-      toast({ title: `Order #${orderId} cancelled` });
+      toast({ title: isPaid ? `Order #${orderId} cancelled — GH₵${amount.toFixed(2)} refunded to store owner` : `Order #${orderId} cancelled` });
       refetchOrders(); refetch();
     } catch (e: unknown) {
       toast({ title: (e as Error).message || "Error", variant: "destructive" });
@@ -347,7 +353,12 @@ function AdminStoresContent() {
                         </thead>
                         <tbody className="divide-y divide-border">
                           {storeOrders.map(o => {
-                            const canAct = o.status !== "completed" && o.status !== "cancelled";
+                            // Complete only makes sense for a paid order still being fulfilled.
+                            const canComplete = o.status === "paid" && o.delivered === "processing";
+                            // Cancel: anything not already cancelled/refunded and not delivered.
+                            const canCancel = o.status !== "cancelled" && o.status !== "refunded" && o.delivered !== "delivered";
+                            const canAct = canComplete || canCancel;
+                            const isPaid = o.status === "paid";
                             const isActioning = actionId === o.id;
                             return (
                               <tr key={o.id} className="hover:bg-muted/20 transition-colors">
@@ -373,14 +384,19 @@ function AdminStoresContent() {
                                 <td className="px-4 py-3">
                                   {canAct ? (
                                     <div className="flex items-center gap-1">
-                                      <button onClick={() => handleComplete(o.id)} disabled={isActioning}
-                                        className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold bg-emerald-100 text-emerald-700 hover:bg-emerald-200 disabled:opacity-50 transition-colors">
-                                        <CheckCircle2 className="w-3 h-3" />{isActioning ? "…" : "Complete"}
-                                      </button>
-                                      <button onClick={() => handleCancel(o.id)} disabled={isActioning}
-                                        className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold bg-red-100 text-red-700 hover:bg-red-200 disabled:opacity-50 transition-colors">
-                                        <XCircle className="w-3 h-3" />{isActioning ? "…" : "Cancel"}
-                                      </button>
+                                      {canComplete && (
+                                        <button onClick={() => handleComplete(o.id)} disabled={isActioning}
+                                          className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold bg-emerald-100 text-emerald-700 hover:bg-emerald-200 disabled:opacity-50 transition-colors">
+                                          <CheckCircle2 className="w-3 h-3" />{isActioning ? "…" : "Complete"}
+                                        </button>
+                                      )}
+                                      {canCancel && (
+                                        <button onClick={() => handleCancel(o.id, isPaid, o.sellingPrice)} disabled={isActioning}
+                                          title={isPaid ? "Cancel this order and refund the full amount to the store owner's wallet" : "Cancel this unpaid order"}
+                                          className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold bg-red-100 text-red-700 hover:bg-red-200 disabled:opacity-50 transition-colors">
+                                          <XCircle className="w-3 h-3" />{isActioning ? "…" : isPaid ? "Cancel & Refund" : "Cancel"}
+                                        </button>
+                                      )}
                                     </div>
                                   ) : <span className="text-xs text-muted-foreground/40">—</span>}
                                 </td>

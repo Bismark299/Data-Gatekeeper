@@ -8,7 +8,7 @@ import { eq, desc, and, ne, or, isNull, sql, inArray } from "drizzle-orm";
 import { z } from "zod";
 import crypto from "crypto";
 import { dispatchOrder } from "../lib/dispatch";
-import { insertLedgerEntry } from "./wallet";
+import { cancelStoreOrderInTx } from "../lib/refunds";
 import {
   genWithdrawalReference,
   processWithdrawalTransfer,
@@ -1037,36 +1037,13 @@ router.patch("/admin/store-orders/:id/cancel", requireAuth, async (req, res) => 
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
 
   try {
+    // Shared money-safe path (also used by the McBIS poller's auto-cancel):
+    // locks the row, guards terminal states, marks the order cancelled, and — for
+    // paid orders — credits the full selling price to the STORE OWNER's wallet
+    // (idempotent via the `refund-store-order-{id}` ledger anchor). The agent
+    // settles with their customer directly.
     const updated = await db.transaction(async (tx) => {
-      // Row lock + delivery guard: a delivered order (profit already credited) can
-      // never be flipped to cancelled, and concurrent settle/cancel calls serialize here.
-      const [locked] = await tx.select().from(storeOrdersTable)
-        .where(eq(storeOrdersTable.id, id)).for("update");
-      if (!locked) throw Object.assign(new Error("Order not found"), { status: 404 });
-      if (locked.status === "cancelled") return locked; // idempotent
-      if (locked.delivered === "delivered") {
-        throw Object.assign(new Error("Order is already delivered — cannot cancel"), { status: 400 });
-      }
-
-      // Get store to find the agent (store owner)
-      const [store] = await tx.select({ userId: storesTable.userId }).from(storesTable).where(eq(storesTable.id, locked.storeId));
-
-      await tx.update(storeOrdersTable).set({ status: "cancelled" }).where(eq(storeOrdersTable.id, id));
-
-      const profit = parseFloat(locked.profit);
-      const ref = `cancel-store-order-${id}`;
-      const agentNote = `Store order #${id} (${locked.bundleData}) cancelled — GH₵${profit.toFixed(2)} profit voided`;
-      const adminNote = `Cancelled store order #${id} for store #${locked.storeId} — GH₵${profit.toFixed(2)} profit voided`;
-
-      // Log for the agent (store owner)
-      if (store?.userId) {
-        await insertLedgerEntry(tx, store.userId, profit, "debit", "order_cancelled", ref, agentNote);
-      }
-
-      // Log for the admin performing the cancellation
-      const adminId = req.session.userId!;
-      await insertLedgerEntry(tx, adminId, profit, "debit", "order_cancelled", `${ref}-admin`, adminNote);
-
+      await cancelStoreOrderInTx(tx, id, req.session.userId!);
       const [u] = await tx.select().from(storeOrdersTable).where(eq(storeOrdersTable.id, id));
       return u;
     });
@@ -1132,7 +1109,25 @@ router.post("/admin/store-orders/bulk-status", requireAuth, async (req, res) => 
     return;
   }
 
-  // Payment-status writes (pending/cancelled) — never touch a delivered order.
+  if (status === "cancelled") {
+    // Money path: paid orders must refund the store owner's wallet, so each order
+    // goes through the shared cancel (row lock + `refund-store-order-{id}` ledger
+    // idempotency). A plain bulk UPDATE here would cancel paid orders WITHOUT the
+    // refund and make them unrefundable afterwards. Ineligible rows are skipped.
+    let updatedCount = 0;
+    for (const id of numIds) {
+      try {
+        await db.transaction(async (tx) => {
+          await cancelStoreOrderInTx(tx, id, req.session.userId!);
+        });
+        updatedCount++;
+      } catch { /* skip rows that are delivered / already cancelled */ }
+    }
+    res.json({ updated: updatedCount });
+    return;
+  }
+
+  // Payment-status write (pending) — never touch a delivered order.
   const updated = await db.update(storeOrdersTable)
     .set({ status })
     .where(and(

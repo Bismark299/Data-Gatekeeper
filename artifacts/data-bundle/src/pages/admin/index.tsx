@@ -379,13 +379,19 @@ function AdminDashboardContent() {
     } finally { setStoreActionId(null); }
   };
 
-  const handleStoreOrderCancel = async (id: number) => {
+  const handleStoreOrderCancel = async (id: number, isPaid: boolean, amount: number) => {
+    if (isPaid) {
+      const ok = window.confirm(
+        `Cancel store order #${id}?\n\nGH₵${amount.toFixed(2)} will be refunded to the store owner's wallet — they settle with their customer directly.`
+      );
+      if (!ok) return;
+    }
     setStoreActionId(id);
     try {
       const res = await fetch(`/api/admin/store-orders/${id}/cancel`, { method: "PATCH", credentials: "include" });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error);
-      toast({ title: `Store order #${id} cancelled` });
+      toast({ title: isPaid ? `Store order #${id} cancelled — GH₵${amount.toFixed(2)} refunded to store owner` : `Store order #${id} cancelled` });
       refetchStoreOrders();
     } catch (e: unknown) {
       toast({ title: (e as Error).message || "Error cancelling order", variant: "destructive" });
@@ -627,9 +633,10 @@ function AdminDashboardContent() {
                                     className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold bg-emerald-100 text-emerald-700 hover:bg-emerald-200 disabled:opacity-50 transition-colors">
                                     <CheckCircle2 className="w-3 h-3" />{isActioning ? "…" : "Complete"}
                                   </button>
-                                  <button onClick={() => handleStoreOrderCancel(o.id)} disabled={isActioning}
+                                  <button onClick={() => handleStoreOrderCancel(o.id, o.status === "paid", o.sellingPrice)} disabled={isActioning}
+                                    title={o.status === "paid" ? "Cancel this order and refund the full amount to the store owner's wallet" : "Cancel this unpaid order"}
                                     className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold bg-red-100 text-red-700 hover:bg-red-200 disabled:opacity-50 transition-colors">
-                                    <XCircle className="w-3 h-3" />{isActioning ? "…" : "Cancel"}
+                                    <XCircle className="w-3 h-3" />{isActioning ? "…" : o.status === "paid" ? "Cancel & Refund" : "Cancel"}
                                   </button>
                                 </div>
                               ) : <span className="text-xs text-muted-foreground/40 italic">—</span>}
