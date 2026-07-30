@@ -551,7 +551,7 @@ function AdminOrdersContent() {
                     <thead>
                       <tr className="border-b border-border bg-muted/40">
                         {["#","Store","Agent","Data","Network","Phone","Revenue","Sys. Profit","Status","Date","Actions"].map((h,i) => (
-                          <th key={h} className={`px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap ${[0,2,4,5,6,7,9].includes(i) ? "hidden sm:table-cell" : ""}`}>{h}</th>
+                          <th key={h} className={`px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap ${[0,2,4,5,6,7,9].includes(i) ? "hidden sm:table-cell" : ""}`}>{h}</th>
                         ))}
                       </tr>
                     </thead>
@@ -563,26 +563,26 @@ function AdminOrdersContent() {
                         const canAct = phase !== "completed" && phase !== "cancelled" && phase !== "refunded";
                         return (
                           <tr key={o.id} className="hover:bg-muted/30 transition-colors">
-                            <td className="hidden sm:table-cell px-4 py-3 font-mono text-xs text-muted-foreground">#{o.id}</td>
-                            <td className="px-4 py-3">
-                              <div className="text-sm font-semibold text-foreground">{o.storeName}</div>
+                            <td className="hidden sm:table-cell px-3 py-2.5 font-mono text-xs text-muted-foreground">#{o.id}</td>
+                            <td className="px-3 py-2.5">
+                              <div className="text-sm font-semibold text-foreground truncate max-w-[150px]" title={o.storeName}>{o.storeName}</div>
                               <div className="text-[10px] text-muted-foreground font-mono">/{o.storeSlug}</div>
                             </td>
-                            <td className="hidden sm:table-cell px-4 py-3 text-xs text-foreground">{o.ownerName ?? "—"}</td>
-                            <td className="px-4 py-3 font-bold text-foreground">{o.bundleData}</td>
-                            <td className="hidden sm:table-cell px-4 py-3">
+                            <td className="hidden sm:table-cell px-3 py-2.5 text-xs text-foreground max-w-[130px]"><span className="truncate block" title={o.ownerName ?? undefined}>{o.ownerName ?? "—"}</span></td>
+                            <td className="px-3 py-2.5 font-bold text-foreground">{o.bundleData}</td>
+                            <td className="hidden sm:table-cell px-3 py-2.5">
                               {NETWORKS.find(n => n.value === o.bundleNetwork)
                                 ? <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${NETWORKS.find(n => n.value === o.bundleNetwork)!.badge}`}>{NETWORKS.find(n => n.value === o.bundleNetwork)!.label}</span>
                                 : <span className="text-xs text-muted-foreground">{o.bundleNetwork}</span>}
                             </td>
-                            <td className="hidden sm:table-cell px-4 py-3 font-mono text-xs">{o.customerPhone}</td>
-                            <td className="hidden sm:table-cell px-4 py-3 font-semibold">GH₵{o.sellingPrice.toFixed(2)}</td>
-                            <td className="hidden sm:table-cell px-4 py-3 text-emerald-600 font-semibold">{o.systemProfit != null ? `+GH₵${Number(o.systemProfit).toFixed(2)}` : "—"}</td>
-                            <td className="px-4 py-3">
+                            <td className="hidden sm:table-cell px-3 py-2.5 font-mono text-xs">{o.customerPhone}</td>
+                            <td className="hidden sm:table-cell px-3 py-2.5 font-semibold">GH₵{o.sellingPrice.toFixed(2)}</td>
+                            <td className="hidden sm:table-cell px-3 py-2.5 text-emerald-600 font-semibold">{o.systemProfit != null ? `+GH₵${Number(o.systemProfit).toFixed(2)}` : "—"}</td>
+                            <td className="px-3 py-2.5">
                               <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${statusColor}`}>{phase}</span>
                             </td>
-                            <td className="hidden sm:table-cell px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(o.createdAt)}</td>
-                            <td className="px-4 py-3">
+                            <td className="hidden sm:table-cell px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(o.createdAt)}</td>
+                            <td className="px-3 py-2.5">
                               {canAct ? (
                                 <div className="flex items-center gap-1.5">
                                   <button
@@ -683,7 +683,7 @@ function AdminOrdersContent() {
           </div>
 
           {/* ─── Network pending buttons ─── */}
-          <div className="flex flex-wrap gap-2 items-center bg-card border border-border rounded-xl px-4 py-3">
+          <div className="flex flex-wrap gap-2 items-center bg-card border border-border rounded-xl px-3 py-2.5">
             <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide shrink-0">Pending by Network:</span>
             {networkPendingCounts.map(n => (
               <button
@@ -824,40 +824,40 @@ function AdminOrdersContent() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-border bg-muted/20">
-                      <th className="hidden sm:table-cell text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                      <th className="hidden sm:table-cell text-left px-3 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
                         <div className="flex items-center gap-1">Date <SortButton field="date" current={sortField} dir={sortDir} onToggle={handleSort} /></div>
                       </th>
-                      <th className="hidden md:table-cell text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Agent</th>
-                      <th className="hidden sm:table-cell text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                      <th className="hidden md:table-cell text-left px-3 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Agent</th>
+                      <th className="hidden sm:table-cell text-left px-3 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
                         <div className="flex items-center gap-1">ID <SortButton field="id" current={sortField} dir={sortDir} onToggle={handleSort} /></div>
                       </th>
-                      <th className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Phone</th>
-                      <th className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Data</th>
-                      <th className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                      <th className="text-left px-3 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Phone</th>
+                      <th className="text-left px-3 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Data</th>
+                      <th className="text-left px-3 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
                         <div className="flex items-center gap-1">Amount <SortButton field="amount" current={sortField} dir={sortDir} onToggle={handleSort} /></div>
                       </th>
-                      <th className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Status</th>
-                      <th className="hidden lg:table-cell text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Delivered</th>
-                      <th className="hidden md:table-cell text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Update</th>
-                      <th className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Actions</th>
+                      <th className="text-left px-3 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Status</th>
+                      <th className="hidden lg:table-cell text-left px-3 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Delivered</th>
+                      <th className="hidden md:table-cell text-left px-3 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Update</th>
+                      <th className="text-left px-3 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
                     {pagedOrders.map(order => (
                       <tr key={order.id} className="hover:bg-muted/20 transition-colors group" data-testid={`row-order-${order.id}`}>
-                        <td className="hidden sm:table-cell px-5 py-3.5 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(order.createdAt)}</td>
-                        <td className="hidden md:table-cell px-5 py-3.5 text-xs text-foreground">{(order as any).userName ?? "—"}</td>
-                        <td className="hidden sm:table-cell px-5 py-3.5 text-xs font-mono text-muted-foreground">#{order.id}</td>
-                        <td className="px-5 py-3.5 font-mono text-sm text-muted-foreground">{order.phoneNumber}</td>
-                        <td className="px-5 py-3.5 font-bold text-foreground text-xs">{order.bundleData ?? "—"}</td>
-                        <td className="px-5 py-3.5 font-bold text-foreground text-xs">GH₵{Number(order.price).toFixed(2)}</td>
-                        <td className="px-5 py-3.5">
+                        <td className="hidden sm:table-cell px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(order.createdAt)}</td>
+                        <td className="hidden md:table-cell px-3 py-2.5 text-xs text-foreground max-w-[130px]"><span className="truncate block" title={(order as any).userName ?? undefined}>{(order as any).userName ?? "—"}</span></td>
+                        <td className="hidden sm:table-cell px-3 py-2.5 text-xs font-mono text-muted-foreground">#{order.id}</td>
+                        <td className="px-3 py-2.5 font-mono text-sm text-muted-foreground">{order.phoneNumber}</td>
+                        <td className="px-3 py-2.5 font-bold text-foreground text-xs">{order.bundleData ?? "—"}</td>
+                        <td className="px-3 py-2.5 font-bold text-foreground text-xs">GH₵{Number(order.price).toFixed(2)}</td>
+                        <td className="px-3 py-2.5">
                           <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold capitalize ${STATUS_COLORS[order.status]}`}>
                             <span className={`w-1.5 h-1.5 rounded-full ${STATUS_DOT[order.status]}`} />
                             {order.status}
                           </span>
                         </td>
-                        <td className="hidden lg:table-cell px-5 py-3.5 text-xs whitespace-nowrap">
+                        <td className="hidden lg:table-cell px-3 py-2.5 text-xs whitespace-nowrap">
                           <div className="flex flex-col gap-0.5">
                             {(order as any).delivered ? (
                               <span className={`inline-flex w-fit items-center px-2 py-0.5 rounded-full text-[10px] font-bold capitalize ${STATUS_COLORS[(order as any).delivered] ?? "bg-gray-100 text-gray-700"}`}>
@@ -871,7 +871,7 @@ function AdminOrdersContent() {
                             )}
                           </div>
                         </td>
-                        <td className="hidden md:table-cell px-5 py-3.5">
+                        <td className="hidden md:table-cell px-3 py-2.5">
                           <Select defaultValue={platformPhase(order as any)} onValueChange={v => handleStatusChange(order.id, v)}>
                             <SelectTrigger className="w-32 h-7 text-xs" data-testid={`select-status-${order.id}`}>
                               <SelectValue />
@@ -885,7 +885,7 @@ function AdminOrdersContent() {
                             </SelectContent>
                           </Select>
                         </td>
-                        <td className="px-5 py-3.5">
+                        <td className="px-3 py-2.5">
                           {order.status === "paid" && (!(order as any).delivered || (order as any).delivered === "processing" || (order as any).delivered === "failed") ? (
                             <div className="flex items-center gap-1.5">
                               {(order as any).delivered !== "failed" && (

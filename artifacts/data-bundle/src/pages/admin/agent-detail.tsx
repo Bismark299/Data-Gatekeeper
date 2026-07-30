@@ -364,7 +364,7 @@ function AdminAgentDetailContent() {
                   { id: "deposits",     label: `Deposits (${profile.recentDeposits.length})`,   icon: CreditCard },
                 ] as { id: Tab; label: string; icon: React.ElementType }[]).map(t => (
                   <button key={t.id} onClick={() => setTab(t.id)}
-                    className={`flex items-center gap-2 px-5 py-3.5 text-sm font-semibold border-b-2 transition-colors whitespace-nowrap ${
+                    className={`flex items-center gap-2 px-3 py-2.5 text-sm font-semibold border-b-2 transition-colors whitespace-nowrap ${
                       tab === t.id ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"
                     }`}>
                     <t.icon className="w-4 h-4" />{t.label}
@@ -387,7 +387,7 @@ function AdminAgentDetailContent() {
                   ) : (
                     <div className="divide-y divide-border">
                       {profile.recentOrders.slice(0, 5).map(o => (
-                        <div key={o.id} className="px-5 py-3.5 flex items-center gap-3">
+                        <div key={o.id} className="px-3 py-2.5 flex items-center gap-3">
                           <div className="flex-1 min-w-0">
                             <div className="font-semibold text-sm truncate">{o.bundleName}</div>
                             <div className="text-xs text-muted-foreground">{o.phoneNumber} · {fmtDate(o.createdAt)}</div>
@@ -413,7 +413,7 @@ function AdminAgentDetailContent() {
                   ) : (
                     <div className="divide-y divide-border">
                       {profile.recentDeposits.slice(0, 5).map(d => (
-                        <div key={d.id} className="px-5 py-3.5 flex items-center gap-3">
+                        <div key={d.id} className="px-3 py-2.5 flex items-center gap-3">
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
                               <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold capitalize ${METHOD_COLORS[d.method] ?? "bg-muted text-muted-foreground"}`}>{d.method}</span>
@@ -470,24 +470,24 @@ function AdminAgentDetailContent() {
                         <thead>
                           <tr className="bg-muted/30 border-b border-border">
                             {["#", "Bundle", "Phone", "Amount", "Status", "Date"].map(h => (
-                              <th key={h} className="text-left px-5 py-3 text-xs font-bold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
+                              <th key={h} className="text-left px-3 py-2 text-xs font-bold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
                             ))}
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-border">
                           {ordPaged.map(o => (
                             <tr key={o.id} className="hover:bg-muted/20 transition-colors">
-                              <td className="px-5 py-3.5 text-xs font-mono text-muted-foreground">#{o.id}</td>
-                              <td className="px-5 py-3.5">
+                              <td className="px-3 py-2.5 text-xs font-mono text-muted-foreground">#{o.id}</td>
+                              <td className="px-3 py-2.5">
                                 <div className="font-semibold text-foreground">{o.bundleName}</div>
                                 <div className="text-xs text-muted-foreground">{o.bundleData}</div>
                               </td>
-                              <td className="px-5 py-3.5 font-mono text-xs text-muted-foreground">{o.phoneNumber}</td>
-                              <td className="px-5 py-3.5 font-bold text-foreground">GH₵{o.price.toFixed(2)}</td>
-                              <td className="px-5 py-3.5">
+                              <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">{o.phoneNumber}</td>
+                              <td className="px-3 py-2.5 font-bold text-foreground">GH₵{o.price.toFixed(2)}</td>
+                              <td className="px-3 py-2.5">
                                 <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold capitalize ${STATUS_COLORS[o.status] ?? ""}`}>{o.status}</span>
                               </td>
-                              <td className="px-5 py-3.5 text-xs text-muted-foreground whitespace-nowrap">{fmtDatetime(o.createdAt)}</td>
+                              <td className="px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">{fmtDatetime(o.createdAt)}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -524,30 +524,30 @@ function AdminAgentDetailContent() {
                         <thead>
                           <tr className="bg-muted/30 border-b border-border">
                             {["#", "Bundle", "Network", "Customer Phone", "Sold For", "Profit", "Status", "Date"].map(h => (
-                              <th key={h} className="text-left px-5 py-3 text-xs font-bold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
+                              <th key={h} className="text-left px-3 py-2 text-xs font-bold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
                             ))}
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-border">
                           {storePaged.map(o => (
                             <tr key={o.id} className="hover:bg-muted/20 transition-colors">
-                              <td className="px-5 py-3.5 text-xs font-mono text-muted-foreground">#{o.id}</td>
-                              <td className="px-5 py-3.5">
+                              <td className="px-3 py-2.5 text-xs font-mono text-muted-foreground">#{o.id}</td>
+                              <td className="px-3 py-2.5">
                                 <div className="font-semibold text-foreground">{o.bundleName}</div>
                                 <div className="text-xs text-muted-foreground">{o.bundleData}</div>
                               </td>
-                              <td className="px-5 py-3.5">
+                              <td className="px-3 py-2.5">
                                 <span className="text-xs font-bold uppercase px-2 py-0.5 rounded-full bg-muted text-muted-foreground">
                                   {o.bundleNetwork}
                                 </span>
                               </td>
-                              <td className="px-5 py-3.5 font-mono text-xs text-muted-foreground">{o.customerPhone}</td>
-                              <td className="px-5 py-3.5 font-bold text-foreground">GH₵{o.sellingPrice.toFixed(2)}</td>
-                              <td className="px-5 py-3.5 font-bold text-emerald-600">+GH₵{o.profit.toFixed(2)}</td>
-                              <td className="px-5 py-3.5">
+                              <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">{o.customerPhone}</td>
+                              <td className="px-3 py-2.5 font-bold text-foreground">GH₵{o.sellingPrice.toFixed(2)}</td>
+                              <td className="px-3 py-2.5 font-bold text-emerald-600">+GH₵{o.profit.toFixed(2)}</td>
+                              <td className="px-3 py-2.5">
                                 <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold capitalize ${STATUS_COLORS[o.status] ?? ""}`}>{o.status}</span>
                               </td>
-                              <td className="px-5 py-3.5 text-xs text-muted-foreground whitespace-nowrap">{fmtDatetime(o.createdAt)}</td>
+                              <td className="px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">{fmtDatetime(o.createdAt)}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -574,24 +574,24 @@ function AdminAgentDetailContent() {
                         <thead>
                           <tr className="bg-muted/30 border-b border-border">
                             {["#", "Amount", "Method", "Note", "Reference", "Status", "Date"].map(h => (
-                              <th key={h} className="text-left px-5 py-3 text-xs font-bold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
+                              <th key={h} className="text-left px-3 py-2 text-xs font-bold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
                             ))}
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-border">
                           {depPaged.map(d => (
                             <tr key={d.id} className="hover:bg-muted/20 transition-colors">
-                              <td className="px-5 py-3.5 text-xs font-mono text-muted-foreground">#{d.id}</td>
-                              <td className="px-5 py-3.5 font-bold text-emerald-600">+GH₵{d.amount.toFixed(2)}</td>
-                              <td className="px-5 py-3.5">
+                              <td className="px-3 py-2.5 text-xs font-mono text-muted-foreground">#{d.id}</td>
+                              <td className="px-3 py-2.5 font-bold text-emerald-600">+GH₵{d.amount.toFixed(2)}</td>
+                              <td className="px-3 py-2.5">
                                 <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold capitalize ${METHOD_COLORS[d.method] ?? "bg-muted text-muted-foreground"}`}>{d.method}</span>
                               </td>
-                              <td className="px-5 py-3.5 text-xs text-muted-foreground">{d.note ?? "—"}</td>
-                              <td className="px-5 py-3.5 text-xs font-mono text-muted-foreground max-w-[140px] truncate" title={d.reference ?? ""}>{d.reference ?? "—"}</td>
-                              <td className="px-5 py-3.5">
+                              <td className="px-3 py-2.5 text-xs text-muted-foreground">{d.note ?? "—"}</td>
+                              <td className="px-3 py-2.5 text-xs font-mono text-muted-foreground max-w-[140px] truncate" title={d.reference ?? ""}>{d.reference ?? "—"}</td>
+                              <td className="px-3 py-2.5">
                                 <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold capitalize ${STATUS_COLORS[d.status] ?? ""}`}>{d.status}</span>
                               </td>
-                              <td className="px-5 py-3.5 text-xs text-muted-foreground whitespace-nowrap">{fmtDatetime(d.createdAt)}</td>
+                              <td className="px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">{fmtDatetime(d.createdAt)}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -620,7 +620,7 @@ function AdminAgentDetailContent() {
 
 function PaginationBar({ page, total, onChange }: { page: number; total: number; onChange: (p: number) => void }) {
   return (
-    <div className="flex items-center justify-between px-5 py-3.5 border-t border-border text-xs text-muted-foreground">
+    <div className="flex items-center justify-between px-3 py-2.5 border-t border-border text-xs text-muted-foreground">
       <span>Page {page} of {total}</span>
       <div className="flex items-center gap-1">
         <button onClick={() => onChange(Math.max(1, page - 1))} disabled={page === 1}

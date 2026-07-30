@@ -128,12 +128,12 @@ function AdminReportContent() {
               <table className="w-full text-sm">
                 <thead>
                   <tr>
-                    <th className="text-left font-semibold px-5 py-3.5 whitespace-nowrap bg-gray-900 text-white">Order Date</th>
-                    <th className="text-left font-semibold px-5 py-3.5 whitespace-nowrap bg-gray-900 text-white">No. of Orders</th>
-                    <th className="text-left font-semibold px-5 py-3.5 whitespace-nowrap bg-gray-900 text-white">Data (GB)</th>
-                    <th className="text-left font-semibold px-5 py-3.5 whitespace-nowrap bg-gray-900 text-white">Cost</th>
-                    <th className="text-left font-semibold px-5 py-3.5 whitespace-nowrap bg-gray-900 text-white">Price</th>
-                    <th className="text-left font-semibold px-5 py-3.5 whitespace-nowrap bg-blue-600 text-white">Profit (GHS)</th>
+                    <th className="text-left font-semibold px-3 py-2.5 whitespace-nowrap bg-gray-900 text-white">Order Date</th>
+                    <th className="text-left font-semibold px-3 py-2.5 whitespace-nowrap bg-gray-900 text-white">No. of Orders</th>
+                    <th className="text-left font-semibold px-3 py-2.5 whitespace-nowrap bg-gray-900 text-white">Data (GB)</th>
+                    <th className="text-left font-semibold px-3 py-2.5 whitespace-nowrap bg-gray-900 text-white">Cost</th>
+                    <th className="text-left font-semibold px-3 py-2.5 whitespace-nowrap bg-gray-900 text-white">Price</th>
+                    <th className="text-left font-semibold px-3 py-2.5 whitespace-nowrap bg-blue-600 text-white">Profit (GHS)</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -157,14 +157,14 @@ function AdminReportContent() {
                         key={r.date}
                         className={`border-b border-border last:border-0 ${i % 2 === 1 ? "bg-muted/40" : ""}`}
                       >
-                        <td className="px-5 py-3.5 whitespace-nowrap font-medium text-foreground">
+                        <td className="px-3 py-2.5 whitespace-nowrap font-medium text-foreground">
                           {fmtReportDate(r.date)}
                         </td>
-                        <td className="px-5 py-3.5 whitespace-nowrap text-foreground">{num(r.orders)}</td>
-                        <td className="px-5 py-3.5 whitespace-nowrap text-foreground">{num(r.dataGb)}GB</td>
-                        <td className="px-5 py-3.5 whitespace-nowrap text-foreground">{money(r.cost)}</td>
-                        <td className="px-5 py-3.5 whitespace-nowrap text-foreground">{money(r.price)}</td>
-                        <td className="px-5 py-3.5 whitespace-nowrap font-semibold text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/10">
+                        <td className="px-3 py-2.5 whitespace-nowrap text-foreground">{num(r.orders)}</td>
+                        <td className="px-3 py-2.5 whitespace-nowrap text-foreground">{num(r.dataGb)}GB</td>
+                        <td className="px-3 py-2.5 whitespace-nowrap text-foreground">{money(r.cost)}</td>
+                        <td className="px-3 py-2.5 whitespace-nowrap text-foreground">{money(r.price)}</td>
+                        <td className="px-3 py-2.5 whitespace-nowrap font-semibold text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/10">
                           {money(r.profit)}
                         </td>
                       </tr>
@@ -174,14 +174,14 @@ function AdminReportContent() {
                 {report.length > 0 && (
                   <tfoot>
                     <tr className="border-t-2 border-border bg-muted/60 font-bold">
-                      <td className="px-5 py-3.5 whitespace-nowrap text-foreground">Total</td>
-                      <td className="px-5 py-3.5 whitespace-nowrap text-foreground">{num(totals.orders)}</td>
-                      <td className="px-5 py-3.5 whitespace-nowrap text-foreground">
+                      <td className="px-3 py-2.5 whitespace-nowrap text-foreground">Total</td>
+                      <td className="px-3 py-2.5 whitespace-nowrap text-foreground">{num(totals.orders)}</td>
+                      <td className="px-3 py-2.5 whitespace-nowrap text-foreground">
                         {num(Math.round(totals.dataGb * 100) / 100)}GB
                       </td>
-                      <td className="px-5 py-3.5 whitespace-nowrap text-foreground">{money(totals.cost)}</td>
-                      <td className="px-5 py-3.5 whitespace-nowrap text-foreground">{money(totals.price)}</td>
-                      <td className="px-5 py-3.5 whitespace-nowrap text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/10">
+                      <td className="px-3 py-2.5 whitespace-nowrap text-foreground">{money(totals.cost)}</td>
+                      <td className="px-3 py-2.5 whitespace-nowrap text-foreground">{money(totals.price)}</td>
+                      <td className="px-3 py-2.5 whitespace-nowrap text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/10">
                         {money(totals.profit)}
                       </td>
                     </tr>

@@ -339,7 +339,7 @@ function AdminMomoContent() {
                 <thead>
                   <tr className="border-b border-border bg-muted/30">
                     {([["DATE","hidden sm:table-cell"],["TRANSACTION ID","hidden sm:table-cell"],["AMOUNT",""],["SENDER",""],["REFERENCE","hidden sm:table-cell"],["USER","hidden sm:table-cell"],["STATUS",""],["ACTIONS",""]] as [string,string][]).map(([h,cls]) => (
-                      <th key={h} className={`text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider whitespace-nowrap ${cls}`}>{h}</th>
+                      <th key={h} className={`text-left px-3 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider whitespace-nowrap ${cls}`}>{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -350,24 +350,24 @@ function AdminMomoContent() {
                     <tr><td colSpan={8} className="text-center py-12 text-muted-foreground text-sm">No transactions found</td></tr>
                   ) : pagedRows.map(d => (
                     <tr key={d.id} className="hover:bg-muted/20 transition-colors">
-                      <td className="hidden sm:table-cell px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(d.createdAt)}</td>
-                      <td className="hidden sm:table-cell px-4 py-3 font-mono font-semibold text-foreground text-xs">{d.txId}</td>
-                      <td className="px-4 py-3 font-bold text-emerald-600 whitespace-nowrap">GH₵{d.amount.toFixed(2)}</td>
-                      <td className="px-4 py-3 text-foreground text-xs">{d.sender || <span className="text-muted-foreground">—</span>}</td>
-                      <td className="hidden sm:table-cell px-4 py-3 font-mono text-xs text-muted-foreground">{d.agentCode || <span className="text-muted-foreground">—</span>}</td>
-                      <td className="hidden sm:table-cell px-4 py-3 text-xs">
+                      <td className="hidden sm:table-cell px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(d.createdAt)}</td>
+                      <td className="hidden sm:table-cell px-3 py-2.5 font-mono font-semibold text-foreground text-xs">{d.txId}</td>
+                      <td className="px-3 py-2.5 font-bold text-emerald-600 whitespace-nowrap">GH₵{d.amount.toFixed(2)}</td>
+                      <td className="px-3 py-2.5 text-foreground text-xs">{d.sender || <span className="text-muted-foreground">—</span>}</td>
+                      <td className="hidden sm:table-cell px-3 py-2.5 font-mono text-xs text-muted-foreground">{d.agentCode || <span className="text-muted-foreground">—</span>}</td>
+                      <td className="hidden sm:table-cell px-3 py-2.5 text-xs">
                         {d.userName
                           ? <div><div className="font-medium text-foreground">{d.userName}</div><div className="text-muted-foreground">{d.depositCode}</div></div>
                           : <span className="text-muted-foreground">—</span>
                         }
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-3 py-2.5">
                         <span className={`inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full font-medium capitalize ${STATUS_STYLE[d.status] ?? "bg-muted text-muted-foreground"}`}>
                           {statusIcon(d.status)}
                           {d.status}
                         </span>
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-3 py-2.5">
                         {d.status !== "completed" && d.status !== "voided" && d.status !== "reversed" && (
                           <div className="flex items-center gap-1.5">
                             <Button

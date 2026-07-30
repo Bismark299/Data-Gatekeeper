@@ -347,7 +347,7 @@ function AdminStoresContent() {
                         <thead>
                           <tr className="border-b border-border bg-muted/20">
                             {([["#","hidden sm:table-cell"],["Data",""],["Network","hidden sm:table-cell"],["Phone",""],["Revenue","hidden sm:table-cell"],["Profit","hidden sm:table-cell"],["Status",""],["Paystack Ref","hidden md:table-cell"],["Date","hidden sm:table-cell"],["Actions",""]] as [string,string][]).map(([h,cls]) => (
-                              <th key={h} className={`text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap ${cls}`}>{h}</th>
+                              <th key={h} className={`text-left px-3 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap ${cls}`}>{h}</th>
                             ))}
                           </tr>
                         </thead>
@@ -362,26 +362,26 @@ function AdminStoresContent() {
                             const isActioning = actionId === o.id;
                             return (
                               <tr key={o.id} className="hover:bg-muted/20 transition-colors">
-                                <td className="hidden sm:table-cell px-4 py-3 font-mono text-xs text-muted-foreground">#{o.id}</td>
-                                <td className="px-4 py-3 font-bold text-xs">{o.bundleData}</td>
-                                <td className="hidden sm:table-cell px-4 py-3">
+                                <td className="hidden sm:table-cell px-3 py-2.5 font-mono text-xs text-muted-foreground">#{o.id}</td>
+                                <td className="px-3 py-2.5 font-bold text-xs">{o.bundleData}</td>
+                                <td className="hidden sm:table-cell px-3 py-2.5">
                                   <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${NETWORK_BADGE[o.bundleNetwork] ?? "bg-gray-100 text-gray-700"}`}>
                                     {NETWORK_LABEL[o.bundleNetwork] ?? o.bundleNetwork}
                                   </span>
                                 </td>
-                                <td className="px-4 py-3 font-mono text-xs">{o.customerPhone}</td>
-                                <td className="hidden sm:table-cell px-4 py-3 font-semibold text-xs">GH₵{o.sellingPrice.toFixed(2)}</td>
-                                <td className="hidden sm:table-cell px-4 py-3 text-emerald-600 font-semibold text-xs">+GH₵{o.profit.toFixed(2)}</td>
-                                <td className="px-4 py-3">
+                                <td className="px-3 py-2.5 font-mono text-xs">{o.customerPhone}</td>
+                                <td className="hidden sm:table-cell px-3 py-2.5 font-semibold text-xs">GH₵{o.sellingPrice.toFixed(2)}</td>
+                                <td className="hidden sm:table-cell px-3 py-2.5 text-emerald-600 font-semibold text-xs">+GH₵{o.profit.toFixed(2)}</td>
+                                <td className="px-3 py-2.5">
                                   <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${STATUS_COLORS[o.status] ?? ""}`}>
                                     {o.status}
                                   </span>
                                 </td>
-                                <td className="hidden md:table-cell px-4 py-3 font-mono text-[10px] text-muted-foreground max-w-[140px] truncate" title={o.paystackReference || undefined}>
+                                <td className="hidden md:table-cell px-3 py-2.5 font-mono text-[10px] text-muted-foreground max-w-[140px] truncate" title={o.paystackReference || undefined}>
                                   {o.paystackReference || <span className="italic opacity-50">—</span>}
                                 </td>
-                                <td className="hidden sm:table-cell px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(o.createdAt)}</td>
-                                <td className="px-4 py-3">
+                                <td className="hidden sm:table-cell px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(o.createdAt)}</td>
+                                <td className="px-3 py-2.5">
                                   {canAct ? (
                                     <div className="flex items-center gap-1">
                                       {canComplete && (
@@ -423,7 +423,7 @@ function AdminStoresContent() {
                         <thead>
                           <tr className="border-b border-border bg-muted/20">
                             {([["#","hidden sm:table-cell"],["Amount",""],["Method","hidden sm:table-cell"],["Account",""],["Account Name","hidden sm:table-cell"],["Status",""],["Ref","hidden sm:table-cell"],["Date","hidden sm:table-cell"],["Actions",""]] as [string,string][]).map(([h,cls]) => (
-                              <th key={h} className={`text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap ${cls}`}>{h}</th>
+                              <th key={h} className={`text-left px-3 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap ${cls}`}>{h}</th>
                             ))}
                           </tr>
                         </thead>
@@ -434,23 +434,23 @@ function AdminStoresContent() {
                             const networkKey = w.bankCode ?? w.momoNetwork;
                             return (
                             <tr key={w.id} className={`hover:bg-muted/20 transition-colors ${needsAction ? "bg-amber-50/40 dark:bg-amber-900/5" : ""}`}>
-                              <td className="hidden sm:table-cell px-4 py-3 font-mono text-xs text-muted-foreground">#{w.id}</td>
-                              <td className="px-4 py-3 font-bold text-foreground">GH₵{w.amount.toFixed(2)}</td>
-                              <td className="hidden sm:table-cell px-4 py-3">
+                              <td className="hidden sm:table-cell px-3 py-2.5 font-mono text-xs text-muted-foreground">#{w.id}</td>
+                              <td className="px-3 py-2.5 font-bold text-foreground">GH₵{w.amount.toFixed(2)}</td>
+                              <td className="hidden sm:table-cell px-3 py-2.5">
                                 <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${NETWORK_BADGE[networkKey] ?? "bg-gray-100 text-gray-700"}`}>
                                   {NETWORK_LABEL[networkKey] ?? w.method ?? networkKey ?? "—"}
                                 </span>
                               </td>
-                              <td className="px-4 py-3 font-mono text-xs">{w.accountNumber || "—"}</td>
-                              <td className="hidden sm:table-cell px-4 py-3 text-xs font-medium">{w.accountName || "—"}</td>
-                              <td className="px-4 py-3">
+                              <td className="px-3 py-2.5 font-mono text-xs">{w.accountNumber || "—"}</td>
+                              <td className="hidden sm:table-cell px-3 py-2.5 text-xs font-medium">{w.accountName || "—"}</td>
+                              <td className="px-3 py-2.5">
                                 <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${STATUS_COLORS[w.status] ?? "bg-gray-100 text-gray-700"}`}>
                                   {STATUS_LABEL[w.status] ?? w.status}
                                 </span>
                               </td>
-                              <td className="hidden sm:table-cell px-4 py-3 font-mono text-[10px] text-muted-foreground max-w-[120px] truncate" title={w.note}>{w.note || "—"}</td>
-                              <td className="hidden sm:table-cell px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(w.createdAt)}</td>
-                              <td className="px-4 py-3">
+                              <td className="hidden sm:table-cell px-3 py-2.5 font-mono text-[10px] text-muted-foreground max-w-[120px] truncate" title={w.note}>{w.note || "—"}</td>
+                              <td className="hidden sm:table-cell px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(w.createdAt)}</td>
+                              <td className="px-3 py-2.5">
                                 <WithdrawalActions
                                   w={w}
                                   isActioning={isActioning}
@@ -521,7 +521,7 @@ function AdminStoresContent() {
                     <thead>
                       <tr className="border-b border-border bg-muted/20">
                         {["Store", "Orders", "Completed", "Processing", "Earned", "Withdrawn", "Balance", "Created"].map(h => (
-                          <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
+                          <th key={h} className="text-left px-3 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
                         ))}
                       </tr>
                     </thead>
@@ -642,7 +642,7 @@ function AdminStoresContent() {
                           <thead>
                             <tr className="border-b border-border bg-muted/20">
                               {([["Store",""],["Amount",""],["Method","hidden sm:table-cell"],["Account",""],["Account Name","hidden md:table-cell"],["Status",""],["Date","hidden sm:table-cell"],["Actions",""]] as [string,string][]).map(([h,cls]) => (
-                                <th key={h} className={`text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap ${cls}`}>{h}</th>
+                                <th key={h} className={`text-left px-3 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap ${cls}`}>{h}</th>
                               ))}
                             </tr>
                           </thead>
@@ -652,7 +652,7 @@ function AdminStoresContent() {
                               const networkKey = w.bankCode ?? w.method;
                               return (
                                 <tr key={w.id} className={`hover:bg-muted/20 transition-colors ${w.status === "pending" ? "bg-amber-50/40 dark:bg-amber-900/5" : ""}`}>
-                                  <td className="px-4 py-3">
+                                  <td className="px-3 py-2.5">
                                     <button
                                       onClick={() => { setSelectedStoreId(w.storeId); setDetailTab("withdrawals"); }}
                                       className="text-left font-semibold text-foreground text-xs hover:text-primary hover:underline"
@@ -662,15 +662,15 @@ function AdminStoresContent() {
                                     </button>
                                     {w.storeSlug && <div className="text-[10px] text-muted-foreground font-mono">/{w.storeSlug}</div>}
                                   </td>
-                                  <td className="px-4 py-3 font-bold text-foreground">GH₵{w.amount.toFixed(2)}</td>
-                                  <td className="hidden sm:table-cell px-4 py-3">
+                                  <td className="px-3 py-2.5 font-bold text-foreground">GH₵{w.amount.toFixed(2)}</td>
+                                  <td className="hidden sm:table-cell px-3 py-2.5">
                                     <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${NETWORK_BADGE[networkKey] ?? "bg-gray-100 text-gray-700"}`}>
                                       {NETWORK_LABEL[networkKey] ?? w.method ?? networkKey ?? "—"}
                                     </span>
                                   </td>
-                                  <td className="px-4 py-3 font-mono text-xs">{w.accountNumber || "—"}</td>
-                                  <td className="hidden md:table-cell px-4 py-3 text-xs font-medium">{w.accountName || "—"}</td>
-                                  <td className="px-4 py-3">
+                                  <td className="px-3 py-2.5 font-mono text-xs">{w.accountNumber || "—"}</td>
+                                  <td className="hidden md:table-cell px-3 py-2.5 text-xs font-medium">{w.accountName || "—"}</td>
+                                  <td className="px-3 py-2.5">
                                     <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${STATUS_COLORS[w.status] ?? "bg-gray-100 text-gray-700"}`}>
                                       {STATUS_LABEL[w.status] ?? w.status}
                                     </span>
@@ -678,8 +678,8 @@ function AdminStoresContent() {
                                       <div className="text-[10px] text-red-500 mt-0.5 max-w-[160px] truncate" title={w.failureReason}>{w.failureReason}</div>
                                     )}
                                   </td>
-                                  <td className="hidden sm:table-cell px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(w.createdAt)}</td>
-                                  <td className="px-4 py-3">
+                                  <td className="hidden sm:table-cell px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(w.createdAt)}</td>
+                                  <td className="px-3 py-2.5">
                                     <WithdrawalActions
                                       w={w}
                                       isActioning={isActioning}

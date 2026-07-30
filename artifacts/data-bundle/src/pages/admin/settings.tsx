@@ -190,7 +190,7 @@ function NetworkSettingsSection({
         {NETWORK_CONFIG.map(({ key, label, dot }) => {
           const enabled = (local[key] ?? "true") !== "false";
           return (
-            <div key={key} className="flex items-center justify-between bg-muted/30 rounded-xl px-4 py-3">
+            <div key={key} className="flex items-center justify-between bg-muted/30 rounded-xl px-3 py-2.5">
               <div className="flex items-center gap-3">
                 <div className={`w-2.5 h-2.5 rounded-full ${dot}`} />
                 <div>
@@ -288,7 +288,7 @@ function TopUpGHSection({
       )}
 
       {/* Toggle row */}
-      <div className="flex items-center justify-between bg-muted/30 rounded-xl px-4 py-3">
+      <div className="flex items-center justify-between bg-muted/30 rounded-xl px-3 py-2.5">
         <div>
           <div className="text-sm font-semibold text-foreground">Enable Batch Fulfillment</div>
           <div className="text-xs text-muted-foreground">MTN orders are queued and dispatched in batches to TopUpGH</div>
@@ -422,7 +422,7 @@ function McbisSolutionSection({
       )}
 
       {/* Toggle row */}
-      <div className="flex items-center justify-between bg-muted/30 rounded-xl px-4 py-3">
+      <div className="flex items-center justify-between bg-muted/30 rounded-xl px-3 py-2.5">
         <div>
           <div className="text-sm font-semibold text-foreground">Enable Auto-Fulfillment</div>
           <div className="text-xs text-muted-foreground">MTN orders are sent to McbisSolution immediately after payment</div>
@@ -524,7 +524,7 @@ function CkGodswaySection({
       </div>
 
       {/* Toggle row */}
-      <div className="flex items-center justify-between bg-muted/30 rounded-xl px-4 py-3">
+      <div className="flex items-center justify-between bg-muted/30 rounded-xl px-3 py-2.5">
         <div>
           <div className="text-sm font-semibold text-foreground">Enable Auto-Fulfillment</div>
           <div className="text-xs text-muted-foreground">Telecel / AT-iShare / AT-BigTime orders are sent to CK Godsway immediately after payment</div>

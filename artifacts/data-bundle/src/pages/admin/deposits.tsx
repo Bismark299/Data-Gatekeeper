@@ -218,33 +218,33 @@ function AdminDepositsContent() {
                   <thead>
                     <tr className="border-b border-border bg-muted/20">
                       {([["Date","hidden sm:table-cell"],["User",""],["Amount",""],["Method","hidden sm:table-cell"],["Reference","hidden sm:table-cell"],["Status",""],["Actions",""]] as [string,string][]).map(([h,cls]) => (
-                        <th key={h} className={`text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap ${cls}`}>{h}</th>
+                        <th key={h} className={`text-left px-3 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap ${cls}`}>{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
                     {paged.map(d => (
                       <tr key={d.id} className="hover:bg-muted/20 transition-colors" data-testid={`deposit-claim-${d.id}`}>
-                        <td className="hidden sm:table-cell px-5 py-3.5 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(d.createdAt)}</td>
-                        <td className="px-5 py-3.5">
-                          <div className="font-semibold text-foreground">{d.userName}</div>
+                        <td className="hidden sm:table-cell px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(d.createdAt)}</td>
+                        <td className="px-3 py-2.5">
+                          <div className="font-semibold text-foreground truncate max-w-[160px]" title={d.userName}>{d.userName}</div>
                           <div className="text-xs text-muted-foreground">{d.userEmail}</div>
                         </td>
-                        <td className="px-5 py-3.5 font-bold text-emerald-600">GH₵{d.amount.toFixed(2)}</td>
-                        <td className="hidden sm:table-cell px-5 py-3.5">
+                        <td className="px-3 py-2.5 font-bold text-emerald-600">GH₵{d.amount.toFixed(2)}</td>
+                        <td className="hidden sm:table-cell px-3 py-2.5">
                           <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
                             {d.method === "paystack" ? <CreditCard className="w-3.5 h-3.5" /> : <Smartphone className="w-3.5 h-3.5" />}
                             {d.method === "paystack" ? "Paystack" : "MoMo"}
                           </span>
                         </td>
-                        <td className="hidden sm:table-cell px-5 py-3.5 font-mono text-xs text-muted-foreground truncate max-w-[130px]">{d.reference ?? "—"}</td>
-                        <td className="px-5 py-3.5">
+                        <td className="hidden sm:table-cell px-3 py-2.5 font-mono text-xs text-muted-foreground truncate max-w-[130px]">{d.reference ?? "—"}</td>
+                        <td className="px-3 py-2.5">
                           <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold capitalize ${STATUS_STYLES[d.status]}`}>
                             <span className={`w-1.5 h-1.5 rounded-full ${STATUS_DOT[d.status]}`} />
                             {d.status === "completed" ? "Approved" : d.status}
                           </span>
                         </td>
-                        <td className="px-5 py-3.5">
+                        <td className="px-3 py-2.5">
                           {d.status === "pending" ? (
                             <div className="flex items-center gap-1.5">
                               <Button size="sm" variant="outline" className="h-7 text-xs gap-1 border-red-200 text-red-600 hover:bg-red-50" onClick={() => handleReject(d.id)} disabled={rejectMutation.isPending} data-testid={`button-reject-${d.id}`}>

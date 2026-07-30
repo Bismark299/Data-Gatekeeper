@@ -278,7 +278,7 @@ function AdminUsersContent() {
                   <thead>
                     <tr className="border-b border-border bg-muted/20">
                       {([["Ref Code","hidden sm:table-cell"],["Joined","hidden sm:table-cell"],["Name",""],["Email","hidden md:table-cell"],["Phone","hidden md:table-cell"],["Balance",""],["Role",""],["Status",""],["Actions",""]] as [string,string][]).map(([h,cls]) => (
-                        <th key={h} className={`text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap ${cls}`}>{h}</th>
+                        <th key={h} className={`text-left px-3 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap ${cls}`}>{h}</th>
                       ))}
                     </tr>
                   </thead>
@@ -287,7 +287,7 @@ function AdminUsersContent() {
                       const walletBalance = (u as { walletBalance?: number }).walletBalance ?? 0;
                       return (
                         <tr key={u.id} className="hover:bg-muted/20 transition-colors" data-testid={`row-user-${u.id}`}>
-                          <td className="hidden sm:table-cell px-5 py-3.5">
+                          <td className="hidden sm:table-cell px-3 py-2.5">
                             {(u as { depositCode?: string | null }).depositCode ? (
                               <span className="text-xs font-mono font-bold text-primary bg-primary/10 border border-primary/20 px-2 py-0.5 rounded-md whitespace-nowrap">
                                 {(u as { depositCode?: string | null }).depositCode}
@@ -296,8 +296,8 @@ function AdminUsersContent() {
                               <span className="text-xs text-muted-foreground">—</span>
                             )}
                           </td>
-                          <td className="hidden sm:table-cell px-5 py-3.5 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(u.createdAt)}</td>
-                          <td className="px-5 py-3.5">
+                          <td className="hidden sm:table-cell px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(u.createdAt)}</td>
+                          <td className="px-3 py-2.5">
                             <button
                               onClick={() => navigate(`/admin/agents/${u.id}`)}
                               className="flex items-center gap-2 text-left group/agent hover:opacity-80 transition-opacity"
@@ -305,20 +305,20 @@ function AdminUsersContent() {
                               <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center shrink-0 text-xs font-bold text-primary">
                                 {u.name.charAt(0).toUpperCase()}
                               </div>
-                              <span className="font-semibold text-foreground whitespace-nowrap group-hover/agent:text-primary transition-colors">{u.name}</span>
+                              <span className="font-semibold text-foreground truncate max-w-[160px] group-hover/agent:text-primary transition-colors" title={u.name}>{u.name}</span>
                             </button>
                           </td>
-                          <td className="hidden md:table-cell px-5 py-3.5 text-xs text-muted-foreground">{u.email}</td>
-                          <td className="hidden md:table-cell px-5 py-3.5 text-sm text-muted-foreground font-mono">
+                          <td className="hidden md:table-cell px-3 py-2.5 text-xs text-muted-foreground max-w-[180px]"><span className="truncate block" title={u.email}>{u.email}</span></td>
+                          <td className="hidden md:table-cell px-3 py-2.5 text-sm text-muted-foreground font-mono">
                             {u.phone ? (u.phone.startsWith("+233") ? "0" + u.phone.slice(4) : u.phone) : "—"}
                           </td>
-                          <td className="px-5 py-3.5">
+                          <td className="px-3 py-2.5">
                             <span className={`inline-flex items-center gap-1 text-xs font-bold ${walletBalance > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}`}>
                               <Wallet className="w-3 h-3" />
                               GH₵{walletBalance.toFixed(2)}
                             </span>
                           </td>
-                          <td className="px-5 py-3.5">
+                          <td className="px-3 py-2.5">
                             <Select value={u.role} onValueChange={(newRole) => changeRole({ id: u.id, name: u.name }, newRole)}>
                               <SelectTrigger
                                 className={`h-7 px-2.5 text-xs font-semibold border-0 w-auto gap-1 ${
@@ -339,7 +339,7 @@ function AdminUsersContent() {
                               </SelectContent>
                             </Select>
                           </td>
-                          <td className="px-5 py-3.5">
+                          <td className="px-3 py-2.5">
                             <button
                               onClick={() => toggleActive({ id: u.id, isActive: u.isActive, name: u.name })}
                               className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold transition-colors ${
@@ -353,7 +353,7 @@ function AdminUsersContent() {
                               {u.isActive ? "Active" : "Inactive"}
                             </button>
                           </td>
-                          <td className="px-5 py-3.5">
+                          <td className="px-3 py-2.5">
                             <div className="flex items-center gap-1">
                               <Button
                                 variant="ghost" size="icon" className="h-7 w-7 text-amber-600 hover:text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-900/20"

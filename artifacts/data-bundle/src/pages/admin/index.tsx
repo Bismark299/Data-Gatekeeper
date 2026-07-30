@@ -593,7 +593,7 @@ function AdminDashboardContent() {
                     <thead>
                       <tr className="border-b border-border bg-muted/20">
                         {[["#","hidden sm:table-cell"],["Store",""],["Agent","hidden md:table-cell"],["Data",""],["Network","hidden sm:table-cell"],["Phone","hidden sm:table-cell"],["Revenue","hidden sm:table-cell"],["Sys. Profit","hidden sm:table-cell"],["Status",""],["Date","hidden sm:table-cell"],["Actions",""]].map(([h, cls]) => (
-                          <th key={h} className={`text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap ${cls}`}>{h}</th>
+                          <th key={h} className={`text-left px-3 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap ${cls}`}>{h}</th>
                         ))}
                       </tr>
                     </thead>
@@ -606,27 +606,27 @@ function AdminDashboardContent() {
                         const nConf = NETWORKS.find(n => n.value === o.bundleNetwork);
                         return (
                           <tr key={o.id} className="hover:bg-muted/20 transition-colors">
-                            <td className="hidden sm:table-cell px-4 py-3 font-mono text-xs text-muted-foreground">#{o.id}</td>
-                            <td className="px-4 py-3">
-                              <div className="text-xs font-semibold text-foreground">{o.storeName}</div>
+                            <td className="hidden sm:table-cell px-3 py-2.5 font-mono text-xs text-muted-foreground">#{o.id}</td>
+                            <td className="px-3 py-2.5">
+                              <div className="text-xs font-semibold text-foreground truncate max-w-[150px]" title={o.storeName}>{o.storeName}</div>
                               <div className="text-[10px] text-muted-foreground font-mono">/{o.storeSlug}</div>
                             </td>
-                            <td className="hidden md:table-cell px-4 py-3 text-xs text-foreground">{o.ownerName ?? "—"}</td>
-                            <td className="px-4 py-3 font-bold text-foreground text-xs">{o.bundleData}</td>
-                            <td className="hidden sm:table-cell px-4 py-3">
+                            <td className="hidden md:table-cell px-3 py-2.5 text-xs text-foreground max-w-[130px]"><span className="truncate block" title={o.ownerName ?? undefined}>{o.ownerName ?? "—"}</span></td>
+                            <td className="px-3 py-2.5 font-bold text-foreground text-xs">{o.bundleData}</td>
+                            <td className="hidden sm:table-cell px-3 py-2.5">
                               {nConf ? <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${nConf.badge}`}>{nConf.label}</span>
                                 : <span className="text-xs text-muted-foreground">{o.bundleNetwork}</span>}
                             </td>
-                            <td className="hidden sm:table-cell px-4 py-3 font-mono text-xs">{o.customerPhone}</td>
-                            <td className="hidden sm:table-cell px-4 py-3 font-semibold text-xs">GH₵{o.sellingPrice.toFixed(2)}</td>
-                            <td className="hidden sm:table-cell px-4 py-3 font-semibold text-xs">
+                            <td className="hidden sm:table-cell px-3 py-2.5 font-mono text-xs">{o.customerPhone}</td>
+                            <td className="hidden sm:table-cell px-3 py-2.5 font-semibold text-xs">GH₵{o.sellingPrice.toFixed(2)}</td>
+                            <td className="hidden sm:table-cell px-3 py-2.5 font-semibold text-xs">
                               {o.systemProfit != null
                                 ? <span className="text-emerald-600">+GH₵{o.systemProfit.toFixed(2)}</span>
                                 : <span className="text-muted-foreground italic text-[10px]">—</span>}
                             </td>
-                            <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${statusColor}`}>{phase}</span></td>
-                            <td className="hidden sm:table-cell px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(o.createdAt)}</td>
-                            <td className="px-4 py-3">
+                            <td className="px-3 py-2.5"><span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${statusColor}`}>{phase}</span></td>
+                            <td className="hidden sm:table-cell px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(o.createdAt)}</td>
+                            <td className="px-3 py-2.5">
                               {canAct ? (
                                 <div className="flex items-center gap-1.5">
                                   <button onClick={() => handleStoreOrderComplete(o.id)} disabled={isActioning}
@@ -658,7 +658,7 @@ function AdminDashboardContent() {
                 <thead>
                   <tr className="border-b border-border bg-muted/20">
                     {([["Date","hidden sm:table-cell"],["Agent","hidden md:table-cell"],["Order ID","hidden sm:table-cell"],["Phone",""],["Network","hidden sm:table-cell"],["Data",""],["Amount",""],["Status",""],["Update","hidden md:table-cell"],["Actions",""]] as [string,string][]).map(([h,cls]) => (
-                      <th key={h} className={`text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap ${cls}`}>{h}</th>
+                      <th key={h} className={`text-left px-3 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap ${cls}`}>{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -672,11 +672,11 @@ function AdminDashboardContent() {
                     </tr>
                   ) : pagedOrders.map(order => (
                     <tr key={order.id} className="hover:bg-muted/20 transition-colors" data-testid={`row-order-${order.id}`}>
-                      <td className="hidden sm:table-cell px-5 py-3.5 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(order.createdAt)}</td>
-                      <td className="hidden md:table-cell px-5 py-3.5 text-xs text-foreground">{(order as any).userName ?? "—"}</td>
-                      <td className="hidden sm:table-cell px-5 py-3.5 text-xs font-mono text-muted-foreground">#{order.id}</td>
-                      <td className="px-5 py-3.5 font-mono text-xs text-muted-foreground">{order.phoneNumber}</td>
-                      <td className="hidden sm:table-cell px-5 py-3.5">
+                      <td className="hidden sm:table-cell px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(order.createdAt)}</td>
+                      <td className="hidden md:table-cell px-3 py-2.5 text-xs text-foreground max-w-[130px]"><span className="truncate block" title={(order as any).userName ?? undefined}>{(order as any).userName ?? "—"}</span></td>
+                      <td className="hidden sm:table-cell px-3 py-2.5 text-xs font-mono text-muted-foreground">#{order.id}</td>
+                      <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">{order.phoneNumber}</td>
+                      <td className="hidden sm:table-cell px-3 py-2.5">
                         {(order as { network?: string | null }).network ? (
                           <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-bold ${
                             (order as { network?: string }).network === "mtn" ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400" :
@@ -688,15 +688,15 @@ function AdminDashboardContent() {
                           </span>
                         ) : <span className="text-muted-foreground/40 text-xs">—</span>}
                       </td>
-                      <td className="px-5 py-3.5 font-bold text-foreground text-xs">{(order as { bundleData?: string }).bundleData ?? "—"}</td>
-                      <td className="px-5 py-3.5 font-bold text-foreground text-xs">GH₵{Number(order.price).toFixed(2)}</td>
-                      <td className="px-5 py-3.5">
+                      <td className="px-3 py-2.5 font-bold text-foreground text-xs">{(order as { bundleData?: string }).bundleData ?? "—"}</td>
+                      <td className="px-3 py-2.5 font-bold text-foreground text-xs">GH₵{Number(order.price).toFixed(2)}</td>
+                      <td className="px-3 py-2.5">
                         <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold capitalize ${STATUS_COLORS[order.status]}`}>
                           <span className={`w-1.5 h-1.5 rounded-full ${STATUS_DOT[order.status]}`} />
                           {order.status}
                         </span>
                       </td>
-                      <td className="hidden md:table-cell px-5 py-3.5">
+                      <td className="hidden md:table-cell px-3 py-2.5">
                         <Select defaultValue={platformPhase(order as any)} onValueChange={v => handleStatusChange(order.id, v)}>
                           <SelectTrigger className="w-32 h-7 text-xs" data-testid={`select-status-${order.id}`}>
                             <SelectValue />
@@ -710,7 +710,7 @@ function AdminDashboardContent() {
                           </SelectContent>
                         </Select>
                       </td>
-                      <td className="px-5 py-3.5">
+                      <td className="px-3 py-2.5">
                         {order.status === "paid" && (!(order as any).delivered || (order as any).delivered === "processing") && (
                           <button
                             onClick={() => handleRefundOrder(order.id, Number(order.price))}

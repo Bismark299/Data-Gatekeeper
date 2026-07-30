@@ -293,7 +293,7 @@ function AdminBundlesContent() {
                   <thead>
                     <tr className="border-b border-border bg-muted/20">
                       {([["Network",""],["Data",""],["Buying Cost","hidden sm:table-cell"],["Dealer Price","hidden sm:table-cell"],["Agent Price","hidden sm:table-cell"],["Status",""],["Actions",""]] as [string,string][]).map(([h,cls]) => (
-                        <th key={h} className={`text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap ${cls}`}>{h}</th>
+                        <th key={h} className={`text-left px-3 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap ${cls}`}>{h}</th>
                       ))}
                     </tr>
                   </thead>
@@ -302,25 +302,25 @@ function AdminBundlesContent() {
                       const nc = NETWORK_COLORS[bundle.network ?? ""] ?? { badge: "bg-muted text-muted-foreground" };
                       return (
                         <tr key={bundle.id} className="hover:bg-muted/20 transition-colors" data-testid={`row-bundle-${bundle.id}`}>
-                          <td className="px-5 py-3.5">
+                          <td className="px-3 py-2.5">
                             <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold ${nc.badge}`}>
                               <span className={`w-2 h-2 rounded-full ${NETWORKS.find(n => n.value === bundle.network)?.dot}`} />
                               {netLabel(bundle.network ?? "")}
                             </span>
                           </td>
-                          <td className="px-5 py-3.5 font-bold text-foreground text-base">{bundle.dataAmount}</td>
-                          <td className="hidden sm:table-cell px-5 py-3.5">GH₵{Number(bundle.price).toFixed(2)}</td>
-                          <td className="hidden sm:table-cell px-5 py-3.5">
+                          <td className="px-3 py-2.5 font-bold text-foreground text-base">{bundle.dataAmount}</td>
+                          <td className="hidden sm:table-cell px-3 py-2.5">GH₵{Number(bundle.price).toFixed(2)}</td>
+                          <td className="hidden sm:table-cell px-3 py-2.5">
                             {(bundle as Bundle).dealerPrice != null
                               ? <span className="font-semibold text-foreground">GH₵{Number((bundle as Bundle).dealerPrice).toFixed(2)}</span>
                               : <span className="text-muted-foreground/40 italic text-xs">—</span>}
                           </td>
-                          <td className="hidden sm:table-cell px-5 py-3.5">
+                          <td className="hidden sm:table-cell px-3 py-2.5">
                             {(bundle as Bundle).agentPrice != null
                               ? <span className="font-semibold text-foreground">GH₵{Number((bundle as Bundle).agentPrice).toFixed(2)}</span>
                               : <span className="inline-flex items-center gap-1 text-amber-500 text-xs font-medium"><AlertTriangle className="w-3 h-3" />Not set</span>}
                           </td>
-                          <td className="px-5 py-3.5">
+                          <td className="px-3 py-2.5">
                             <button
                               onClick={() => toggleActive(bundle as Bundle)}
                               className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold transition-colors ${
@@ -334,7 +334,7 @@ function AdminBundlesContent() {
                               {bundle.isActive ? "Active" : "Failed"}
                             </button>
                           </td>
-                          <td className="px-5 py-3.5">
+                          <td className="px-3 py-2.5">
                             <div className="flex items-center gap-1">
                               <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(bundle as Bundle)} data-testid={`button-edit-${bundle.id}`}>
                                 <Pencil className="w-3.5 h-3.5" />

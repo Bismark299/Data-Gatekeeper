@@ -462,7 +462,7 @@ function AllTransactions() {
               <thead>
                 <tr className="bg-muted/40 border-b border-border">
                   {([["Date","hidden sm:table-cell"],["Reference","hidden sm:table-cell"],["Agent",""],["Amount (GHS)",""],["Prev Balance","hidden sm:table-cell"],["Curr Balance","hidden sm:table-cell"],["Status",""],["Type",""],["Source","hidden sm:table-cell"]] as [string,string][]).map(([h,cls]) => (
-                    <th key={h} className={`text-left px-4 py-3.5 text-[11px] font-bold text-muted-foreground uppercase tracking-wider whitespace-nowrap ${cls}`}>
+                    <th key={h} className={`text-left px-3 py-2 text-[11px] font-bold text-muted-foreground uppercase tracking-wider whitespace-nowrap ${cls}`}>
                       {h}
                     </th>
                   ))}
@@ -472,48 +472,48 @@ function AllTransactions() {
                 {rows.map(r => (
                   <tr key={r.key} className={`hover:bg-muted/30 transition-colors ${isFetching ? "opacity-60" : ""}`}>
                     {/* Date */}
-                    <td className="hidden sm:table-cell px-4 py-3 whitespace-nowrap">
+                    <td className="hidden sm:table-cell px-3 py-2.5 whitespace-nowrap">
                       <span className="text-muted-foreground text-xs">{fmtDatetime(r.date)}</span>
                     </td>
 
                     {/* Reference */}
-                    <td className="hidden sm:table-cell px-4 py-3 max-w-[180px]">
+                    <td className="hidden sm:table-cell px-3 py-2.5 max-w-[180px]">
                       <span className="font-mono text-xs text-foreground/80 truncate block" title={r.ref}>{r.ref}</span>
                       {r.note && <span className="text-[10px] text-muted-foreground truncate block max-w-[160px]" title={r.note}>{r.note}</span>}
                     </td>
 
                     {/* Agent */}
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      <div className="font-semibold text-foreground text-xs">{r.userName}</div>
-                      <div className="text-[10px] text-muted-foreground font-mono">{r.agentCode}</div>
+                    <td className="px-3 py-2.5 max-w-[140px]">
+                      <div className="font-semibold text-foreground text-xs truncate" title={r.userName}>{r.userName}</div>
+                      <div className="text-[10px] text-muted-foreground font-mono truncate">{r.agentCode}</div>
                     </td>
 
                     {/* Amount */}
-                    <td className="px-4 py-3 whitespace-nowrap">
+                    <td className="px-3 py-2.5 whitespace-nowrap">
                       <span className={`font-bold text-sm ${r.amount >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
                         {r.amount >= 0 ? "+" : ""}{r.amount.toFixed(2)}
                       </span>
                     </td>
 
                     {/* Prev Balance */}
-                    <td className="hidden sm:table-cell px-4 py-3 whitespace-nowrap">
+                    <td className="hidden sm:table-cell px-3 py-2.5 whitespace-nowrap">
                       <span className="text-muted-foreground text-xs">{r.prevBalance.toFixed(2)}</span>
                     </td>
 
                     {/* Curr Balance */}
-                    <td className="hidden sm:table-cell px-4 py-3 whitespace-nowrap">
+                    <td className="hidden sm:table-cell px-3 py-2.5 whitespace-nowrap">
                       <span className="font-semibold text-xs text-foreground">{r.currBalance.toFixed(2)}</span>
                     </td>
 
                     {/* Status */}
-                    <td className="px-4 py-3 whitespace-nowrap">
+                    <td className="px-3 py-2.5 whitespace-nowrap">
                       <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold capitalize ${TX_STATUS_COLORS[r.status] ?? "bg-muted text-muted-foreground"}`}>
                         {r.status}
                       </span>
                     </td>
 
                     {/* Type */}
-                    <td className="px-4 py-3 whitespace-nowrap">
+                    <td className="px-3 py-2.5 whitespace-nowrap">
                       <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold capitalize ${
                         r.type === "credit"
                           ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400"
@@ -524,7 +524,7 @@ function AllTransactions() {
                     </td>
 
                     {/* Source */}
-                    <td className="hidden sm:table-cell px-4 py-3 whitespace-nowrap">
+                    <td className="hidden sm:table-cell px-3 py-2.5 whitespace-nowrap">
                       <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${SOURCE_META[r.source]?.color ?? "bg-muted text-muted-foreground"}`}>
                         {SOURCE_META[r.source]?.label ?? r.source}
                       </span>
@@ -538,7 +538,7 @@ function AllTransactions() {
 
         {/* Pagination */}
         {total > pageSize && (
-          <div className="flex items-center justify-between px-5 py-3.5 border-t border-border text-xs text-muted-foreground">
+          <div className="flex items-center justify-between px-3 py-2.5 border-t border-border text-xs text-muted-foreground">
             <span>
               Showing {Math.min((page - 1) * pageSize + 1, total)}–{Math.min(page * pageSize, total)} of {total.toLocaleString()}
             </span>
@@ -715,7 +715,7 @@ function AdminWalletsContent() {
                 <button
                   key={t}
                   onClick={() => setTab(t)}
-                  className={`px-5 py-3.5 text-sm font-semibold capitalize border-b-2 transition-colors ${
+                  className={`px-3 py-2.5 text-sm font-semibold capitalize border-b-2 transition-colors ${
                     tab === t
                       ? "border-primary text-primary"
                       : "border-transparent text-muted-foreground hover:text-foreground"
@@ -807,7 +807,7 @@ function AdminWalletsContent() {
                               { label: "Last Active", field: "updated" as SortField, hint: "" },
                               { label: "Action", field: null, hint: "" },
                             ].map(({ label, field, hint }) => (
-                              <th key={label} title={hint || undefined} className="text-left px-5 py-3.5 text-xs font-bold text-muted-foreground uppercase tracking-wider whitespace-nowrap">
+                              <th key={label} title={hint || undefined} className="text-left px-3 py-2.5 text-xs font-bold text-muted-foreground uppercase tracking-wider whitespace-nowrap">
                                 {field ? (
                                   <button className="flex items-center hover:text-foreground transition-colors" onClick={() => handleSort(field)} title={hint || undefined}>
                                     {label}
@@ -926,7 +926,7 @@ function AdminWalletsContent() {
 
                   {/* Pagination */}
                   {filtered.length > pageSize && (
-                    <div className="flex items-center justify-between px-5 py-3.5 border-t border-border text-xs text-muted-foreground">
+                    <div className="flex items-center justify-between px-3 py-2.5 border-t border-border text-xs text-muted-foreground">
                       <span>
                         Showing {Math.min((page - 1) * pageSize + 1, filtered.length)}–{Math.min(page * pageSize, filtered.length)} of {filtered.length}
                       </span>
