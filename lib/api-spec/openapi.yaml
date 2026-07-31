@@ -1435,11 +1435,11 @@ components:
         id:
           type: integer
         userId:
-          type: integer
+          type: ["integer", "null"]
         userName:
-          type: string
+          type: ["string", "null"]
         userEmail:
-          type: string
+          type: ["string", "null"]
         amount:
           type: number
         status:

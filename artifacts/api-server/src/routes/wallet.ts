@@ -8,6 +8,7 @@ import { DepositToWalletBody } from "@workspace/api-zod";
 import { z } from "zod";
 import crypto from "crypto";
 import { getAppOrigin } from "../lib/origin";
+import { logger } from "../lib/logger";
 
 // Union type that accepts both the top-level db and a transaction context
 type DbOrTx = typeof db | NodePgTransaction<any, any>;
@@ -434,7 +435,15 @@ export async function handlePaystackWebhook(body: {
         .for("update");
 
       if (locked) {
-        if (locked.userId == null) return; // Cannot credit without knowing which user
+        if (locked.userId == null) {
+          // Cannot credit without knowing which user — leave pending; the admin
+          // deposits view flags unlinked deposits so this can't sit unnoticed.
+          logger.warn(
+            { depositId: locked.id, reference, amount: locked.amount },
+            "Paystack webhook: deposit has no linked user — left pending for manual resolution"
+          );
+          return;
+        }
         // Pre-existing pending record — complete it
         await tx.update(depositsTable)
           .set({ status: "completed", note: "Auto-credited via Paystack webhook" })
@@ -449,7 +458,14 @@ export async function handlePaystackWebhook(body: {
 
       // No pre-existing record (deposit not created at init time) — create it now
       const webhookUserId = metadata?.userId;
-      if (!webhookUserId) return; // Cannot credit without knowing which user
+      if (!webhookUserId) {
+        // Cannot credit without knowing which user — no metadata userId on the charge.
+        logger.warn(
+          { reference, amountPesewas },
+          "Paystack webhook: charge.success has no userId metadata — skipped crediting"
+        );
+        return;
+      }
 
       const amountGhs: number = Number(
         metadata?.amountGhs ??

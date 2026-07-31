@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import {
   CheckCircle2, XCircle, Clock, Menu, RefreshCw, Search, X,
-  ChevronLeft, ChevronRight, Download, Filter, CreditCard, Smartphone,
+  ChevronLeft, ChevronRight, Download, Filter, CreditCard, Smartphone, AlertTriangle,
 } from "lucide-react";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -93,8 +93,8 @@ function AdminDepositsContent() {
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       src = src.filter(d =>
-        d.userName.toLowerCase().includes(q) ||
-        d.userEmail.toLowerCase().includes(q) ||
+        (d.userName ?? "").toLowerCase().includes(q) ||
+        (d.userEmail ?? "").toLowerCase().includes(q) ||
         (d.reference ?? "").toLowerCase().includes(q)
       );
     }
@@ -105,7 +105,7 @@ function AdminDepositsContent() {
   const paged      = useMemo(() => filtered.slice((page - 1) * pageSize, page * pageSize), [filtered, page, pageSize]);
 
   const handleExport = () => {
-    const rows = filtered.map(d => [d.id, `"${d.userName}"`, d.userEmail, d.amount.toFixed(2), d.method, d.reference ?? "", d.status, fmtDate(d.createdAt)]);
+    const rows = filtered.map(d => [d.id, `"${d.userName ?? "NO LINKED USER"}"`, d.userEmail ?? "", d.amount.toFixed(2), d.method, d.reference ?? "", d.status, fmtDate(d.createdAt)]);
     const csv  = [["ID", "User", "Email", "Amount", "Method", "Reference", "Status", "Date"].join(","), ...rows.map(r => r.join(","))].join("\n");
     const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
     a.download = "deposits.csv"; a.click();
@@ -131,6 +131,11 @@ function AdminDepositsContent() {
           <div className="flex-1">
             <h1 className="text-xl font-bold text-foreground">Deposits</h1>
             <p className="text-xs text-muted-foreground">
+              {(allDeposits ?? []).filter(d => d.status === "pending" && d.userId == null).length > 0 && (
+                <span className="text-red-600 font-semibold" data-testid="text-unlinked-warning">
+                  {(allDeposits ?? []).filter(d => d.status === "pending" && d.userId == null).length} pending with no linked user ·{" "}
+                </span>
+              )}
               {counts.pending > 0 && <span className="text-amber-600 font-semibold">{counts.pending} pending · </span>}
               {filtered.length} shown
             </p>
@@ -227,8 +232,20 @@ function AdminDepositsContent() {
                       <tr key={d.id} className="hover:bg-muted/20 transition-colors" data-testid={`deposit-claim-${d.id}`}>
                         <td className="hidden sm:table-cell px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(d.createdAt)}</td>
                         <td className="px-3 py-2.5">
-                          <div className="font-semibold text-foreground truncate max-w-[160px]" title={d.userName}>{d.userName}</div>
-                          <div className="text-xs text-muted-foreground">{d.userEmail}</div>
+                          {d.userId == null ? (
+                            <span
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400"
+                              title="This deposit has no linked user account — it cannot be auto-credited. Investigate the payment reference and resolve manually."
+                              data-testid={`badge-no-user-${d.id}`}
+                            >
+                              <AlertTriangle className="w-3 h-3" /> No linked user
+                            </span>
+                          ) : (
+                            <>
+                              <div className="font-semibold text-foreground truncate max-w-[160px]" title={d.userName ?? undefined}>{d.userName}</div>
+                              <div className="text-xs text-muted-foreground">{d.userEmail}</div>
+                            </>
+                          )}
                         </td>
                         <td className="px-3 py-2.5 font-bold text-emerald-600">GH₵{d.amount.toFixed(2)}</td>
                         <td className="hidden sm:table-cell px-3 py-2.5">

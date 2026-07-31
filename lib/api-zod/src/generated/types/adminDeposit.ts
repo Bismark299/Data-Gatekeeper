@@ -8,9 +8,12 @@
 
 export interface AdminDeposit {
   id: number;
-  userId: number;
-  userName: string;
-  userEmail: string;
+  /** @nullable */
+  userId: number | null;
+  /** @nullable */
+  userName: string | null;
+  /** @nullable */
+  userEmail: string | null;
   amount: number;
   status: string;
   method: string;

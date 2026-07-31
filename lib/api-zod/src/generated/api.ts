@@ -557,9 +557,9 @@ export const AdminListDepositsQueryParams = zod.object({
 
 export const AdminListDepositsResponseItem = zod.object({
   id: zod.number(),
-  userId: zod.number(),
-  userName: zod.string(),
-  userEmail: zod.string(),
+  userId: zod.number().nullable(),
+  userName: zod.string().nullable(),
+  userEmail: zod.string().nullable(),
   amount: zod.number(),
   status: zod.string(),
   method: zod.string(),
@@ -580,9 +580,9 @@ export const AdminApproveDepositParams = zod.object({
 
 export const AdminApproveDepositResponse = zod.object({
   id: zod.number(),
-  userId: zod.number(),
-  userName: zod.string(),
-  userEmail: zod.string(),
+  userId: zod.number().nullable(),
+  userName: zod.string().nullable(),
+  userEmail: zod.string().nullable(),
   amount: zod.number(),
   status: zod.string(),
   method: zod.string(),
@@ -600,9 +600,9 @@ export const AdminRejectDepositParams = zod.object({
 
 export const AdminRejectDepositResponse = zod.object({
   id: zod.number(),
-  userId: zod.number(),
-  userName: zod.string(),
-  userEmail: zod.string(),
+  userId: zod.number().nullable(),
+  userName: zod.string().nullable(),
+  userEmail: zod.string().nullable(),
   amount: zod.number(),
   status: zod.string(),
   method: zod.string(),
