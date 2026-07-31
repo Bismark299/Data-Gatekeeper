@@ -7,6 +7,6 @@
  */
 
 export interface MomoClaimBody {
-  amount: number;
+  amount?: number;
   transactionId: string;
 }

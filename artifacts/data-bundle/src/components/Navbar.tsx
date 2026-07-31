@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/context/AuthContext";
 import { useCart } from "@/context/CartContext";
-import { useGetWalletBalance } from "@workspace/api-client-react";
+import { useGetWalletBalance, getGetWalletBalanceQueryKey } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
 import {
   Menu, X, Wifi, LogOut, ShieldCheck, ShoppingCart, Wallet, UserCircle, Store, ArrowLeftRight,
@@ -15,7 +15,7 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 export function Navbar() {
   const { isAuthenticated, isAdmin, user, signOut } = useAuth();
   const { cartCount, setOpen: setCartOpen } = useCart();
-  const { data: wallet } = useGetWalletBalance({ query: { enabled: isAuthenticated } });
+  const { data: wallet } = useGetWalletBalance({ query: { queryKey: getGetWalletBalanceQueryKey(), enabled: isAuthenticated } });
   const [location] = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
 

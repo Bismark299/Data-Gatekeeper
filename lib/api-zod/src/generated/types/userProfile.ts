@@ -14,5 +14,7 @@ export interface UserProfile {
   phone?: string | null;
   role: string;
   isActive: boolean;
+  /** @nullable */
+  depositCode?: string | null;
   createdAt: string;
 }

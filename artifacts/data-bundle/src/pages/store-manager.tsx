@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { storeApi, type Store, type StoreBundle, type StoreStats } from "@/lib/storeApi";
-import { useListBundles, getGetWalletBalanceQueryKey } from "@workspace/api-client-react";
+import { useListBundles, getGetWalletBalanceQueryKey, getListBundlesQueryKey } from "@workspace/api-client-react";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { useAuth } from "@/context/AuthContext";
 import { Navbar } from "@/components/Navbar";
@@ -496,7 +496,7 @@ function BundlesTab({ storeBundles, store: _store, userRole: _userRole }: { stor
   const [bulkNetwork, setBulkNetwork] = useState<string | null>(null);
 
   // Load ALL system bundles always — no network filter
-  const { data: allBundles = [], isLoading } = useListBundles({}, { query: { staleTime: 60_000 } });
+  const { data: allBundles = [], isLoading } = useListBundles({}, { query: { queryKey: getListBundlesQueryKey({}), staleTime: 60_000 } });
 
   // bundleId → storeBundle for O(1) lookup
   const storeBundleMap = new Map(storeBundles.map(sb => [sb.bundleId, sb]));

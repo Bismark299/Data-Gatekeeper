@@ -42,7 +42,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  const { data: cart, isLoading } = useGetCart({ query: { enabled: isAuthenticated } });
+  const { data: cart, isLoading } = useGetCart({ query: { queryKey: getGetCartQueryKey(), enabled: isAuthenticated } });
   const addToCart = useAddToCart();
   const removeFromCart = useRemoveFromCart();
   const clearCart = useClearCart();

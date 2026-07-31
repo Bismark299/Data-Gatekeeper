@@ -1106,6 +1106,8 @@ components:
           type: string
         isActive:
           type: boolean
+        depositCode:
+          type: ["string", "null"]
         createdAt:
           type: string
       required:
@@ -1370,6 +1372,8 @@ components:
       properties:
         momoNumber:
           type: string
+        momoName:
+          type: string
         referenceCode:
           type: string
       required:
@@ -1423,7 +1427,6 @@ components:
         transactionId:
           type: string
       required:
-        - amount
         - transactionId
 
     AdminDeposit:

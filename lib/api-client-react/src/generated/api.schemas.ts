@@ -38,6 +38,8 @@ export interface UserProfile {
   phone?: string | null;
   role: string;
   isActive: boolean;
+  /** @nullable */
+  depositCode?: string | null;
   createdAt: string;
 }
 
@@ -168,6 +170,7 @@ export interface WalletLedgerEntry {
 
 export interface MomoInfo {
   momoNumber: string;
+  momoName?: string;
   referenceCode: string;
 }
 
@@ -191,7 +194,7 @@ export interface PaystackVerifyBody {
 }
 
 export interface MomoClaimBody {
-  amount: number;
+  amount?: number;
   transactionId: string;
 }
 

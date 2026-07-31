@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { useListBundles, useGetWalletBalance, usePurchaseBundle, useGetOrder } from "@workspace/api-client-react";
+import { useListBundles, useGetWalletBalance, usePurchaseBundle, useGetOrder, getGetWalletBalanceQueryKey, getGetOrderQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Navbar } from "@/components/Navbar";
 import { BundleCard, BundleCardMini, NETWORK_STYLES, NETWORK_LABELS, type NetworkKey } from "@/components/BundleCard";
@@ -74,8 +74,9 @@ function OrderStatusCard({
   const qc = useQueryClient();
   const { user } = useAuth();
 
-  const { data: order, refetch } = useGetOrder({ id: orderId }, {
+  const { data: order, refetch } = useGetOrder(orderId, {
     query: {
+      queryKey: getGetOrderQueryKey(orderId),
       enabled,
       refetchInterval: (q) => {
         const d = q.state.data;
@@ -272,7 +273,7 @@ export default function Shop() {
   const [completedOrder, setCompletedOrder] = useState<{ id: number; phone: string } | null>(null);
 
   const { data: bundles, isLoading } = useListBundles({ network: activeNetwork });
-  const { data: walletData } = useGetWalletBalance({ query: { enabled: isAuthenticated } });
+  const { data: walletData } = useGetWalletBalance({ query: { queryKey: getGetWalletBalanceQueryKey(), enabled: isAuthenticated } });
   const walletBalance = walletData?.balance ?? 0;
 
   const parseDataMB = (str: string) => {

@@ -274,7 +274,7 @@ export default function ApiClientsPage() {
   return (
     <ProtectedRoute adminOnly>
       <div className="flex h-screen overflow-hidden bg-gray-50">
-        <AdminSidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+        <AdminSidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
         <div className="flex-1 flex flex-col overflow-hidden">
           {/* Header */}
           <div className="bg-white border-b px-6 py-4 flex items-center gap-4">

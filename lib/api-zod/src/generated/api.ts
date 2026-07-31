@@ -40,6 +40,7 @@ export const LoginResponse = zod.object({
     phone: zod.string().nullish(),
     role: zod.string(),
     isActive: zod.boolean(),
+    depositCode: zod.string().nullish(),
     createdAt: zod.string(),
   }),
   message: zod.string(),
@@ -62,6 +63,7 @@ export const GetMeResponse = zod.object({
   phone: zod.string().nullish(),
   role: zod.string(),
   isActive: zod.boolean(),
+  depositCode: zod.string().nullish(),
   createdAt: zod.string(),
 });
 
@@ -306,6 +308,7 @@ export const GetWalletLedgerResponse = zod.array(GetWalletLedgerResponseItem);
  */
 export const GetMomoInfoResponse = zod.object({
   momoNumber: zod.string(),
+  momoName: zod.string().optional(),
   referenceCode: zod.string(),
 });
 
@@ -342,7 +345,7 @@ export const VerifyPaystackDepositResponse = zod.object({
  * @summary Submit a manual MoMo deposit claim for admin review
  */
 export const ClaimMomoDepositBody = zod.object({
-  amount: zod.number(),
+  amount: zod.number().optional(),
   transactionId: zod.string(),
 });
 
@@ -431,6 +434,7 @@ export const AdminListUsersResponseItem = zod.object({
   phone: zod.string().nullish(),
   role: zod.string(),
   isActive: zod.boolean(),
+  depositCode: zod.string().nullish(),
   createdAt: zod.string(),
 });
 export const AdminListUsersResponse = zod.array(AdminListUsersResponseItem);
@@ -457,6 +461,7 @@ export const AdminUpdateUserResponse = zod.object({
   phone: zod.string().nullish(),
   role: zod.string(),
   isActive: zod.boolean(),
+  depositCode: zod.string().nullish(),
   createdAt: zod.string(),
 });
 

@@ -8,5 +8,6 @@
 
 export interface MomoInfo {
   momoNumber: string;
+  momoName?: string;
   referenceCode: string;
 }

@@ -1,4 +1,4 @@
-import { useGetCart, useGetWalletBalance } from "@workspace/api-client-react";
+import { useGetCart, useGetWalletBalance, getGetCartQueryKey, getGetWalletBalanceQueryKey } from "@workspace/api-client-react";
 import { useCart } from "@/context/CartContext";
 import { Button } from "@/components/ui/button";
 import { X, ShoppingCart, Trash2, Wallet } from "lucide-react";
@@ -14,8 +14,8 @@ const NETWORK_COLORS: Record<string, { bg: string; text: string }> = {
 export function CartDrawer() {
   const { open, setOpen, removeItem, clearItems, checkout, isCheckingOut } = useCart();
   const { isAuthenticated } = useAuth();
-  const { data: cart } = useGetCart({ query: { enabled: isAuthenticated } });
-  const { data: wallet } = useGetWalletBalance({ query: { enabled: isAuthenticated } });
+  const { data: cart } = useGetCart({ query: { queryKey: getGetCartQueryKey(), enabled: isAuthenticated } });
+  const { data: wallet } = useGetWalletBalance({ query: { queryKey: getGetWalletBalanceQueryKey(), enabled: isAuthenticated } });
 
   const total = cart?.reduce((s, i) => s + i.price, 0) ?? 0;
   const balance = Number(wallet?.balance ?? 0);
