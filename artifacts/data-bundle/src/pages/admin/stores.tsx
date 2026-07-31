@@ -291,7 +291,7 @@ function AdminStoresContent() {
         <main className="flex-1 overflow-y-auto p-3 sm:p-6">
           {/* Store Detail View */}
           {selectedStoreId && selectedStore ? (
-            <div className="max-w-5xl mx-auto space-y-6">
+            <div className="space-y-6">
               {/* Store header card */}
               <div className="bg-card border border-border rounded-2xl p-6 flex flex-col sm:flex-row gap-4 items-start">
                 <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
@@ -472,7 +472,7 @@ function AdminStoresContent() {
             </div>
           ) : (
             /* All Stores List + Global Withdrawals */
-            <div className="max-w-5xl mx-auto space-y-6">
+            <div className="space-y-6">
               {/* Top-level tab switcher */}
               <div className="flex items-center gap-1 bg-muted/40 rounded-xl p-1 border border-border w-fit">
                 <button onClick={() => setTopTab("stores")}
