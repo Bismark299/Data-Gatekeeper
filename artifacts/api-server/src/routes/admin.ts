@@ -1123,6 +1123,10 @@ router.post("/admin/deposits/:id/approve", requireAdmin, async (req, res): Promi
         );
       }
 
+      if (locked.userId == null) {
+        throw Object.assign(new Error("Deposit has no associated user"), { status: 400 });
+      }
+
       const [dep] = await tx
         .update(depositsTable)
         .set({ status: "completed", note: `Approved by admin #${req.session.userId!}` })
@@ -1143,7 +1147,9 @@ router.post("/admin/deposits/:id/approve", requireAdmin, async (req, res): Promi
     return;
   }
 
-  const [user] = await db.select().from(usersTable).where(eq(usersTable.id, updated.userId));
+  const [user] = updated.userId == null
+    ? []
+    : await db.select().from(usersTable).where(eq(usersTable.id, updated.userId));
 
   res.json({
     ...updated,
@@ -1172,7 +1178,9 @@ router.post("/admin/deposits/:id/reject", requireAdmin, async (req, res): Promis
     .where(eq(depositsTable.id, id))
     .returning();
 
-  const [user] = await db.select().from(usersTable).where(eq(usersTable.id, deposit.userId));
+  const [user] = deposit.userId == null
+    ? []
+    : await db.select().from(usersTable).where(eq(usersTable.id, deposit.userId));
 
   res.json({
     ...updated,
@@ -1835,7 +1843,7 @@ router.get("/admin/wallet-transactions", requireAdmin, async (req, res) => {
     .leftJoin(usersTable, eq(ordersTable.userId, usersTable.id));
 
   interface TxItem {
-    key: string; userId: number; userName: string; depositCode: string | null;
+    key: string; userId: number | null; userName: string; depositCode: string | null;
     amount: number; status: string;
     type: "credit" | "debit"; source: string;
     reference: string; note: string | null; date: Date;
@@ -1870,14 +1878,14 @@ router.get("/admin/wallet-transactions", requireAdmin, async (req, res) => {
     })),
   ].sort((a, b) => b.date.getTime() - a.date.getTime());
 
-  const userTxns = new Map<number, TxItem[]>();
+  const userTxns = new Map<number | null, TxItem[]>();
   for (const t of txns) {
     if (!userTxns.has(t.userId)) userTxns.set(t.userId, []);
     userTxns.get(t.userId)!.push(t);
   }
   const balMap = new Map<string, { prev: number; curr: number }>();
   for (const [uid, utxns] of userTxns) {
-    let running = walletByUser.get(uid) ?? 0;
+    let running = (uid != null ? walletByUser.get(uid) : undefined) ?? 0;
     for (const t of utxns) {
       const curr = running;
       const prev = curr - t.amount;
@@ -1887,7 +1895,7 @@ router.get("/admin/wallet-transactions", requireAdmin, async (req, res) => {
   }
 
   interface ResultTx {
-    key: string; ref: string; userId: number; userName: string; agentCode: string;
+    key: string; ref: string; userId: number | null; userName: string; agentCode: string;
     date: string; amount: number; prevBalance: number; currBalance: number;
     status: string; type: "credit" | "debit"; source: string; note: string | null;
   }

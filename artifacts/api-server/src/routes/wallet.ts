@@ -434,6 +434,7 @@ export async function handlePaystackWebhook(body: {
         .for("update");
 
       if (locked) {
+        if (locked.userId == null) return; // Cannot credit without knowing which user
         // Pre-existing pending record — complete it
         await tx.update(depositsTable)
           .set({ status: "completed", note: "Auto-credited via Paystack webhook" })
@@ -727,7 +728,7 @@ router.post("/sms-webhook", async (req, res) => {
     });
   });
 
-  res.json({ success: true, matched: true, message: `GH₵${amount.toFixed(2)} credited to ${user.username}` });
+  res.json({ success: true, matched: true, message: `GH₵${amount.toFixed(2)} credited to ${user.name}` });
 });
 
 router.get("/momo-info", requireAuth, async (req, res) => {
