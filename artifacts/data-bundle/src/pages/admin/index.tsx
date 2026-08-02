@@ -356,6 +356,32 @@ function AdminDashboardContent() {
     return src;
   }, [allOrders, searchResults, networkFilter, statusTab, phoneSearch, orderIdSearch, dateFrom, dateTo]);
 
+  // When a phone/ID search finds nothing inside the current date range but
+  // matches exist outside it, surface a one-click "widen dates" affordance.
+  const outsideRangeMatches = useMemo(() => {
+    const searching = !!(phoneSearch.trim() || orderIdSearch.trim());
+    if (!searching || filteredOrders.length > 0) return null;
+    let src = searchResults ?? [];
+    if (networkFilter !== "all") src = src.filter(o => (o.network ?? "") === networkFilter);
+    if (statusTab !== "all") src = src.filter(o => platformPhase(o as any) === statusTab);
+    if (phoneSearch.trim()) src = src.filter(o => o.phoneNumber.includes(phoneSearch.trim()));
+    if (orderIdSearch.trim()) src = src.filter(o => String(o.id).includes(orderIdSearch.trim()));
+    if (src.length === 0) return null;
+    const times = src.map(o => new Date(o.createdAt).getTime());
+    return {
+      count: src.length,
+      from: new Date(Math.min(...times)).toISOString().slice(0, 10),
+      to:   new Date(Math.max(...times)).toISOString().slice(0, 10),
+    };
+  }, [filteredOrders, searchResults, networkFilter, statusTab, phoneSearch, orderIdSearch]);
+
+  const widenDatesToMatches = () => {
+    if (!outsideRangeMatches) return;
+    setDateFrom(prev => (prev && prev < outsideRangeMatches.from ? prev : outsideRangeMatches.from));
+    setDateTo(prev => (prev && prev > outsideRangeMatches.to ? prev : outsideRangeMatches.to));
+    setPage(1);
+  };
+
   const statusCounts = useMemo(() => {
     // Status counts from date-filtered orders (dayOrders)
     return Object.fromEntries(
@@ -651,6 +677,22 @@ function AdminDashboardContent() {
                       <td colSpan={10} className="text-center py-14 text-muted-foreground text-sm">
                         <ShoppingCart className="w-8 h-8 mx-auto mb-2 opacity-20" />
                         No orders match your filters
+                        {outsideRangeMatches && (
+                          <div className="mt-2 text-xs" data-testid="hint-outside-range">
+                            <span className="text-foreground font-medium">
+                              {outsideRangeMatches.count} match{outsideRangeMatches.count !== 1 ? "es" : ""} outside this date range
+                            </span>
+                            {" — "}
+                            <button
+                              type="button"
+                              className="text-primary font-semibold underline underline-offset-2"
+                              onClick={widenDatesToMatches}
+                              data-testid="button-widen-dates"
+                            >
+                              Widen dates to show {outsideRangeMatches.count !== 1 ? "them" : "it"}
+                            </button>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   ) : pagedOrders.map(order => (

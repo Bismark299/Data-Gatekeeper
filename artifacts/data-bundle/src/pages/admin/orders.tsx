@@ -387,6 +387,32 @@ function AdminOrdersContent() {
     return src;
   }, [allOrders, networkFilter, statusTab, phoneSearch, orderIdSearch, dateFrom, dateTo, sortField, sortDir]);
 
+  // When a phone/ID search finds nothing inside the current date range but
+  // matches exist outside it, surface a one-click "widen dates" affordance.
+  const outsideRangeMatches = useMemo(() => {
+    const searching = !!(phoneSearch.trim() || orderIdSearch.trim());
+    if (!searching || processedOrders.length > 0) return null;
+    let src = allOrders ?? [];
+    if (networkFilter !== "all") src = src.filter(o => (o.network ?? "") === networkFilter);
+    if (statusTab !== "all") src = src.filter(o => platformPhase(o as any) === statusTab);
+    if (phoneSearch.trim()) src = src.filter(o => o.phoneNumber.includes(phoneSearch.trim()));
+    if (orderIdSearch.trim()) src = src.filter(o => String(o.id).includes(orderIdSearch.trim()));
+    if (src.length === 0) return null;
+    const times = src.map(o => new Date(o.createdAt).getTime());
+    return {
+      count: src.length,
+      from: new Date(Math.min(...times)).toISOString().slice(0, 10),
+      to:   new Date(Math.max(...times)).toISOString().slice(0, 10),
+    };
+  }, [processedOrders, allOrders, networkFilter, statusTab, phoneSearch, orderIdSearch]);
+
+  const widenDatesToMatches = () => {
+    if (!outsideRangeMatches) return;
+    setDateFrom(prev => (prev && prev < outsideRangeMatches.from ? prev : outsideRangeMatches.from));
+    setDateTo(prev => (prev && prev > outsideRangeMatches.to ? prev : outsideRangeMatches.to));
+    setPage(1);
+  };
+
   const totalPages  = Math.max(1, Math.ceil(processedOrders.length / pageSize));
   const pagedOrders = useMemo(() => processedOrders.slice((page - 1) * pageSize, page * pageSize), [processedOrders, page, pageSize]);
 
@@ -766,6 +792,22 @@ function AdminOrdersContent() {
               <div className="py-20 flex flex-col items-center text-muted-foreground">
                 <ShoppingCart className="w-10 h-10 mb-3 opacity-20" />
                 <p className="text-sm">No orders match your filters</p>
+                {outsideRangeMatches && (
+                  <div className="mt-2 text-xs" data-testid="hint-outside-range">
+                    <span className="text-foreground font-medium">
+                      {outsideRangeMatches.count} match{outsideRangeMatches.count !== 1 ? "es" : ""} outside this date range
+                    </span>
+                    {" — "}
+                    <button
+                      type="button"
+                      className="text-primary font-semibold underline underline-offset-2"
+                      onClick={widenDatesToMatches}
+                      data-testid="button-widen-dates"
+                    >
+                      Widen dates to show {outsideRangeMatches.count !== 1 ? "them" : "it"}
+                    </button>
+                  </div>
+                )}
                 {hasFilters && (
                   <button className="mt-2 text-xs text-primary font-semibold" onClick={clearFilters}>Clear all filters</button>
                 )}
