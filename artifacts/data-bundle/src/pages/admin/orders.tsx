@@ -201,6 +201,32 @@ function AdminOrdersContent() {
     return src;
   }, [storeOrders, networkFilter, storeStatusFilter, dateFrom, dateTo, storePhoneSearch]);
 
+  // Mirror of the platform "widen dates" affordance for store orders: when a
+  // phone search finds nothing inside the current date range but matches exist
+  // outside it, surface a one-click fix. /api/admin/store-orders returns the
+  // full history (no limit), so the loaded set is authoritative — no extra
+  // server round-trip is needed.
+  const storeOutsideRangeMatches = useMemo(() => {
+    if (!storePhoneSearch.trim() || filteredStoreOrders.length > 0) return null;
+    let src = Array.isArray(storeOrders) ? storeOrders : [];
+    if (networkFilter !== "all") src = src.filter((o: any) => (o.bundleNetwork ?? "") === networkFilter);
+    if (storeStatusFilter !== "all") src = src.filter((o: any) => storePhase(o) === storeStatusFilter);
+    src = src.filter((o: any) => String(o.customerPhone ?? "").includes(storePhoneSearch.trim()));
+    if (src.length === 0) return null;
+    const times = src.map((o: any) => new Date(o.createdAt).getTime());
+    return {
+      count: src.length,
+      from: new Date(Math.min(...times)).toISOString().slice(0, 10),
+      to:   new Date(Math.max(...times)).toISOString().slice(0, 10),
+    };
+  }, [filteredStoreOrders, storeOrders, networkFilter, storeStatusFilter, storePhoneSearch]);
+
+  const widenDatesToStoreMatches = () => {
+    if (!storeOutsideRangeMatches) return;
+    setDateFrom(prev => (prev && prev < storeOutsideRangeMatches.from ? prev : storeOutsideRangeMatches.from));
+    setDateTo(prev => (prev && prev > storeOutsideRangeMatches.to ? prev : storeOutsideRangeMatches.to));
+  };
+
   const handleStoreOrderComplete = async (id: number) => {
     setActioningId(id);
     try {
@@ -649,6 +675,28 @@ function AdminOrdersContent() {
                   )}
                   <span className="text-xs text-muted-foreground ml-auto">{filteredStoreOrders.length} result{filteredStoreOrders.length !== 1 ? "s" : ""}</span>
                 </div>
+                {filteredStoreOrders.length === 0 ? (
+                  <div className="py-20 flex flex-col items-center text-muted-foreground">
+                    <Store className="w-10 h-10 mb-3 opacity-20" />
+                    <p className="text-sm">No store orders match your filters</p>
+                    {storeOutsideRangeMatches && (
+                      <div className="mt-2 text-xs" data-testid="hint-store-outside-range">
+                        <span className="text-foreground font-medium">
+                          {storeOutsideRangeMatches.count} match{storeOutsideRangeMatches.count !== 1 ? "es" : ""} outside this date range
+                        </span>
+                        {" — "}
+                        <button
+                          type="button"
+                          className="text-primary font-semibold underline underline-offset-2"
+                          onClick={widenDatesToStoreMatches}
+                          data-testid="button-store-widen-dates"
+                        >
+                          Widen dates to show {storeOutsideRangeMatches.count !== 1 ? "them" : "it"}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
@@ -716,6 +764,7 @@ function AdminOrdersContent() {
                     </tbody>
                   </table>
                 </div>
+                )}
                 </>
               )}
             </div>
