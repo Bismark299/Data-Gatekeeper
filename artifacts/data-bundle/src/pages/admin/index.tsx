@@ -21,7 +21,7 @@ import {
 import {
   Menu, Users, ShoppingCart, DollarSign, Package, Clock,
   CheckCircle2, AlertTriangle, ChevronLeft, ChevronRight,
-  Search, X, RefreshCw, ArrowUpRight, BarChart3, Wallet,
+  Search, X, RefreshCw, Wallet,
   XCircle, Copy, Zap, AlertCircle, Trash2, Store, TrendingUp,
 } from "lucide-react";
 import { platformPhase, storePhase, awaitingDispatch } from "@/lib/orderPhase";
@@ -166,8 +166,6 @@ function AdminDashboardContent() {
     refetchInterval: 5000,
     staleTime: 0,
   });
-
-  const handleRefresh = () => { refetchStats(); refetchOrders(); refetchStoreOrders(); toast({ title: "Dashboard refreshed" }); };
 
   const invalidateOrders = useCallback(() => {
     // No args -> bare prefix key ["/api/admin/orders"], which prefix-matches BOTH
@@ -347,10 +345,10 @@ function AdminDashboardContent() {
   const filteredOrders = useMemo(() => {
     const searching = !!(phoneSearch.trim() || orderIdSearch.trim());
     let src = searching ? (searchResults ?? []) : (allOrders ?? []);
-    if (!searching) {
-      if (dateFrom) src = src.filter(o => new Date(o.createdAt) >= new Date(dateFrom));
-      if (dateTo) { const to = new Date(dateTo); to.setHours(23, 59, 59, 999); src = src.filter(o => new Date(o.createdAt) <= to); }
-    }
+    // Date range ALWAYS applies — including during phone/ID search — so the
+    // table never silently falls back to all-history results.
+    if (dateFrom) src = src.filter(o => new Date(o.createdAt) >= new Date(dateFrom));
+    if (dateTo) { const to = new Date(dateTo); to.setHours(23, 59, 59, 999); src = src.filter(o => new Date(o.createdAt) <= to); }
     if (networkFilter !== "all") src = src.filter(o => (o.network ?? "") === networkFilter);
     if (statusTab !== "all") src = src.filter(o => platformPhase(o as any) === statusTab);
     if (phoneSearch.trim()) src = src.filter(o => o.phoneNumber.includes(phoneSearch.trim()));
@@ -421,14 +419,6 @@ function AdminDashboardContent() {
           </div>
           <AdminFinancialSummary />
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={handleRefresh} className="gap-1.5">
-              <RefreshCw className="w-3.5 h-3.5" /> Refresh
-            </Button>
-            <Link href="/admin/stats">
-              <Button variant="outline" size="sm" className="gap-1.5">
-                <BarChart3 className="w-3.5 h-3.5" /> Statistics
-              </Button>
-            </Link>
             {pendingDeposits.length > 0 && (
               <Link href="/admin/deposits">
                 <Button variant="destructive" size="sm" className="gap-1.5" data-testid="alert-pending-deposits">
@@ -514,11 +504,6 @@ function AdminDashboardContent() {
                     )}
                   </button>
                 </div>
-                <Link href="/admin/orders">
-                  <Button variant="outline" size="sm" className="gap-1.5 shrink-0">
-                    <ArrowUpRight className="w-3.5 h-3.5" /> Full View
-                  </Button>
-                </Link>
               </div>
               {/* Date range + search filters */}
               <div className="flex flex-wrap gap-2 items-center">
@@ -529,8 +514,6 @@ function AdminDashboardContent() {
                   className="h-8 rounded-lg border border-border bg-background px-2 text-xs" title="To" />
                 <button onClick={() => { setDateFrom(todayStr); setDateTo(todayStr); setPage(1); }}
                   className="text-xs text-primary hover:underline px-1">Today</button>
-                <button onClick={() => { setDateFrom(""); setDateTo(""); setPage(1); }}
-                  className="text-xs text-muted-foreground hover:text-foreground px-1">All time</button>
                 <Select value={networkFilter} onValueChange={v => { setNetworkFilter(v); setPage(1); }}>
                   <SelectTrigger className="h-8 text-xs w-36" data-testid="select-network-filter">
                     <SelectValue placeholder="All networks" />
@@ -698,15 +681,24 @@ function AdminDashboardContent() {
                       </td>
                       <td className="hidden md:table-cell px-3 py-2.5">
                         <Select defaultValue={platformPhase(order as any)} onValueChange={v => handleStatusChange(order.id, v)}>
-                          <SelectTrigger className="w-32 h-7 text-xs" data-testid={`select-status-${order.id}`}>
-                            <SelectValue />
+                          <SelectTrigger
+                            className={`w-32 h-7 text-xs font-semibold rounded-lg border-0 ${STATUS_COLORS[platformPhase(order as any)] ?? "bg-muted text-foreground"}`}
+                            data-testid={`select-status-${order.id}`}
+                          >
+                            <span className="flex items-center gap-1.5 capitalize">
+                              <span className={`w-1.5 h-1.5 rounded-full ${STATUS_DOT[platformPhase(order as any)] ?? "bg-gray-400"}`} />
+                              <SelectValue />
+                            </span>
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="pending">Pending</SelectItem>
-                            <SelectItem value="paid">Paid</SelectItem>
-                            <SelectItem value="processing">Processing</SelectItem>
-                            <SelectItem value="completed">Completed</SelectItem>
-                            <SelectItem value="failed">Failed</SelectItem>
+                            {(["pending", "paid", "processing", "completed", "failed"] as const).map(s => (
+                              <SelectItem key={s} value={s}>
+                                <span className="flex items-center gap-2 capitalize">
+                                  <span className={`w-2 h-2 rounded-full ${STATUS_DOT[s]}`} />
+                                  {s}
+                                </span>
+                              </SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
                       </td>
