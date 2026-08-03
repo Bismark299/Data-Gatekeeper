@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { storeApi, type Store, type StoreBundle, type StoreStats } from "@/lib/storeApi";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { storeApi, type Store, type StoreBundle, type StoreStats, type StoreOrder, type StoreWithdrawal } from "@/lib/storeApi";
 import { useListBundles, getGetWalletBalanceQueryKey, getListBundlesQueryKey } from "@workspace/api-client-react";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { useAuth } from "@/context/AuthContext";
@@ -176,8 +176,15 @@ function StoreDashboard({ store: initialStore }: { store: Store }) {
   const store: Store = (storeData ?? initialStore)!;
   const { data: stats } = useQuery<StoreStats>({ queryKey: ["myStoreStats"], queryFn: storeApi.getStats, refetchInterval: 30000, staleTime: 15_000 });
   const { data: storeBundles = [] } = useQuery<StoreBundle[]>({ queryKey: ["myStoreBundles"], queryFn: storeApi.getBundles, refetchInterval: 30000 });
-  const { data: orders = [] } = useQuery({ queryKey: ["myStoreOrders"], queryFn: storeApi.getOrders, refetchInterval: 30000, staleTime: 15_000 });
-  const { data: withdrawals = [] } = useQuery({ queryKey: ["myStoreWithdrawals"], queryFn: storeApi.getWithdrawals, refetchInterval: 30000 });
+  // Overview uses only the first page of orders (recent orders list).
+  const { data: recentOrdersPage } = useQuery({
+    queryKey: ["myStoreOrders", "overview"],
+    queryFn: () => storeApi.getOrdersPage({ page: 1, pageSize: 5 }),
+    refetchInterval: 30000,
+    staleTime: 15_000,
+  });
+  const recentOrders = recentOrdersPage?.data ?? [];
+  const recentOrdersTotal = recentOrdersPage?.total ?? 0;
 
   const storeUrl = `${window.location.origin}/s/${store.slug}`;
   const theme = THEME_MAP[store.colorTheme] ?? THEME_MAP.blue;
@@ -249,18 +256,17 @@ function StoreDashboard({ store: initialStore }: { store: Store }) {
       </div>
 
       {/* Tab content */}
-      {tab === "overview" && <OverviewTab stats={stats} orders={orders} storeBundles={storeBundles} />}
+      {tab === "overview" && <OverviewTab stats={stats} recentOrders={recentOrders} totalOrders={recentOrdersTotal} storeBundles={storeBundles} />}
       {tab === "bundles" && <BundlesTab storeBundles={storeBundles} store={store} userRole={user?.role ?? "user"} />}
-      {tab === "orders" && <OrdersTab orders={orders} />}
-      {tab === "withdrawals" && <WithdrawalsTab stats={stats} withdrawals={withdrawals} store={store} />}
+      {tab === "orders" && <OrdersTab />}
+      {tab === "withdrawals" && <WithdrawalsTab stats={stats} store={store} />}
       {tab === "settings" && <SettingsTab store={store} />}
     </div>
   );
 }
 
 // ─── Overview Tab ─────────────────────────────────────────────────────────────
-function OverviewTab({ stats, orders, storeBundles }: { stats?: StoreStats; orders: any[]; storeBundles: StoreBundle[] }) {
-  const recentOrders = orders.slice(0, 5);
+function OverviewTab({ stats, recentOrders, totalOrders, storeBundles }: { stats?: StoreStats; recentOrders: StoreOrder[]; totalOrders: number; storeBundles: StoreBundle[] }) {
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -274,7 +280,7 @@ function OverviewTab({ stats, orders, storeBundles }: { stats?: StoreStats; orde
         <div className="bg-card border border-border rounded-2xl overflow-hidden">
           <div className="px-5 py-4 border-b border-border flex items-center justify-between">
             <h3 className="font-bold text-foreground">Recent Orders</h3>
-            <span className="text-xs text-muted-foreground">{orders.length} total</span>
+            <span className="text-xs text-muted-foreground">{totalOrders} total</span>
           </div>
           <div className="divide-y divide-border">
             {recentOrders.map((o: any) => (
@@ -688,20 +694,42 @@ function BundlesTab({ storeBundles, store: _store, userRole: _userRole }: { stor
 }
 
 // ─── Orders Tab ───────────────────────────────────────────────────────────────
-function OrdersTab({ orders }: { orders: any[] }) {
+const ORDERS_PAGE_SIZE = 50;
+
+function OrdersTab() {
   const todayStr = new Date().toISOString().slice(0, 10);
   const [phoneFilter, setPhoneFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [dateFrom, setDateFrom] = useState(todayStr);
   const [dateTo, setDateTo] = useState(todayStr);
 
-  const filtered = orders.filter(o => {
-    if (phoneFilter && !o.customerPhone.includes(phoneFilter.trim())) return false;
-    if (statusFilter !== "all" && storePhase(o) !== statusFilter) return false;
-    if (dateFrom && new Date(o.createdAt) < new Date(dateFrom)) return false;
-    if (dateTo && new Date(o.createdAt) > new Date(dateTo + "T23:59:59")) return false;
-    return true;
+  // Debounce phone search (server-side) — 300ms.
+  const [debouncedPhone, setDebouncedPhone] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedPhone(phoneFilter.trim()), 300);
+    return () => clearTimeout(t);
+  }, [phoneFilter]);
+
+  const queryParams = useMemo(
+    () => ({ phone: debouncedPhone, status: statusFilter, dateFrom, dateTo }),
+    [debouncedPhone, statusFilter, dateFrom, dateTo],
+  );
+
+  const {
+    data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage,
+  } = useInfiniteQuery({
+    queryKey: ["myStoreOrders", "list", queryParams],
+    queryFn: ({ pageParam }) => storeApi.getOrdersPage({ ...queryParams, page: pageParam, pageSize: ORDERS_PAGE_SIZE }),
+    initialPageParam: 1,
+    getNextPageParam: (lastPage) =>
+      lastPage.page * lastPage.pageSize < lastPage.total ? lastPage.page + 1 : undefined,
+    placeholderData: (prev) => prev,
+    refetchInterval: 30000,
+    staleTime: 15_000,
   });
+
+  const filtered = useMemo<StoreOrder[]>(() => (data?.pages ?? []).flatMap(p => p.data), [data]);
+  const total = data?.pages[0]?.total ?? 0;
 
   const isToday = dateFrom === todayStr && dateTo === todayStr;
   const hasFilters = phoneFilter || statusFilter !== "all" || !isToday;
@@ -713,7 +741,7 @@ function OrdersTab({ orders }: { orders: any[] }) {
           <h3 className="font-bold text-foreground">Store Sales</h3>
           <p className="text-xs text-muted-foreground">
             {isToday ? "Showing today's transactions" : `${dateFrom} → ${dateTo}`}
-            {" · "}{filtered.length} order{filtered.length !== 1 ? "s" : ""}
+            {" · "}{total} order{total !== 1 ? "s" : ""}
           </p>
         </div>
         <Input type="tel" inputMode="numeric" maxLength={10} placeholder="Filter by phone…" value={phoneFilter}
@@ -745,38 +773,52 @@ function OrdersTab({ orders }: { orders: any[] }) {
           )}
         </div>
       </div>
-      {filtered.length === 0 ? (
+      {isLoading ? (
+        <div className="p-6 space-y-3">
+          {[1, 2, 3, 4].map(i => <div key={i} className="h-10 rounded-xl bg-muted animate-pulse" />)}
+        </div>
+      ) : filtered.length === 0 ? (
         <div className="p-12 text-center">
           <ListOrdered className="w-12 h-12 text-muted-foreground mx-auto mb-3" />
-          <p className="text-muted-foreground">{orders.length === 0 ? "No orders yet" : "No orders match your filters"}</p>
+          <p className="text-muted-foreground">{hasFilters ? "No orders match your filters" : "No orders yet"}</p>
         </div>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border bg-muted/40">
-                {["#", "Data", "Network", "Phone", "Revenue", "Profit", "Payment", "Status", "Date"].map(h => (
-                  <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {filtered.map((o: any) => (
-                <tr key={o.id} className="hover:bg-muted/30 transition-colors">
-                  <td className="px-4 py-3 font-mono text-xs text-muted-foreground">#{o.id}</td>
-                  <td className="px-4 py-3 font-semibold text-foreground">{o.bundleData}</td>
-                  <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${NETWORK_COLORS[o.bundleNetwork] ?? "bg-gray-100 text-gray-700"}`}>{NETWORK_LABELS[o.bundleNetwork] ?? o.bundleNetwork}</span></td>
-                  <td className="px-4 py-3 font-mono text-xs">{o.customerPhone}</td>
-                  <td className="px-4 py-3 font-semibold">GH₵{o.sellingPrice.toFixed(2)}</td>
-                  <td className="px-4 py-3 text-emerald-600 font-semibold">+GH₵{o.profit.toFixed(2)}</td>
-                  <td className="px-4 py-3"><span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700">Paid</span></td>
-                  <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${STATUS_COLORS[storePhase(o)] ?? "bg-gray-100"}`}>{storePhase(o)}</span></td>
-                  <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(o.createdAt).toLocaleString("en-GH", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true })}</td>
+        <>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border bg-muted/40">
+                  {["#", "Data", "Network", "Phone", "Revenue", "Profit", "Payment", "Status", "Date"].map(h => (
+                    <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide">{h}</th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {filtered.map((o: StoreOrder) => (
+                  <tr key={o.id} className="hover:bg-muted/30 transition-colors">
+                    <td className="px-4 py-3 font-mono text-xs text-muted-foreground">#{o.id}</td>
+                    <td className="px-4 py-3 font-semibold text-foreground">{o.bundleData}</td>
+                    <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${NETWORK_COLORS[o.bundleNetwork] ?? "bg-gray-100 text-gray-700"}`}>{NETWORK_LABELS[o.bundleNetwork] ?? o.bundleNetwork}</span></td>
+                    <td className="px-4 py-3 font-mono text-xs">{o.customerPhone}</td>
+                    <td className="px-4 py-3 font-semibold">GH₵{o.sellingPrice.toFixed(2)}</td>
+                    <td className="px-4 py-3 text-emerald-600 font-semibold">+GH₵{o.profit.toFixed(2)}</td>
+                    <td className="px-4 py-3"><span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700">Paid</span></td>
+                    <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${STATUS_COLORS[storePhase(o)] ?? "bg-gray-100"}`}>{storePhase(o)}</span></td>
+                    <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(o.createdAt).toLocaleString("en-GH", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true })}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex items-center justify-between px-4 py-3 border-t border-border text-xs text-muted-foreground">
+            <span>Showing {filtered.length} of {total}</span>
+            {hasNextPage && (
+              <Button size="sm" variant="outline" onClick={() => fetchNextPage()} disabled={isFetchingNextPage}>
+                {isFetchingNextPage ? "Loading…" : "Load more"}
+              </Button>
+            )}
+          </div>
+        </>
       )}
     </div>
   );
@@ -791,9 +833,27 @@ const MOMO_NETWORKS = [
 const WITHDRAWAL_FEE = 1;
 const MIN_WITHDRAWAL = 10;
 
+const WITHDRAWALS_PAGE_SIZE = 25;
+
 // ─── Withdrawals Tab ──────────────────────────────────────────────────────────
-function WithdrawalsTab({ stats, withdrawals, store }: { stats?: StoreStats; withdrawals: any[]; store: Store }) {
+function WithdrawalsTab({ stats, store }: { stats?: StoreStats; store: Store }) {
   const qc = useQueryClient();
+
+  const {
+    data: withdrawalsData, fetchNextPage, hasNextPage, isFetchingNextPage,
+  } = useInfiniteQuery({
+    queryKey: ["myStoreWithdrawals", "list"],
+    queryFn: ({ pageParam }) => storeApi.getWithdrawalsPage({ page: pageParam, pageSize: WITHDRAWALS_PAGE_SIZE }),
+    initialPageParam: 1,
+    getNextPageParam: (lastPage) =>
+      lastPage.page * lastPage.pageSize < lastPage.total ? lastPage.page + 1 : undefined,
+    placeholderData: (prev) => prev,
+    refetchInterval: 30000,
+  });
+  const withdrawals = useMemo<StoreWithdrawal[]>(
+    () => (withdrawalsData?.pages ?? []).flatMap(p => p.data),
+    [withdrawalsData],
+  );
 
   const hasSavedMomo = !!(store.momoNumber && store.momoName && store.momoNetwork);
   const [editing, setEditing] = useState(!hasSavedMomo);
@@ -1043,7 +1103,7 @@ function WithdrawalsTab({ stats, withdrawals, store }: { stats?: StoreStats; wit
           <div className="p-10 text-center"><PiggyBank className="w-10 h-10 text-muted-foreground mx-auto mb-2" /><p className="text-sm text-muted-foreground">No withdrawals yet</p></div>
         ) : (
           <div className="divide-y divide-border">
-            {withdrawals.map((w: any) => (
+            {withdrawals.map((w: StoreWithdrawal) => (
               <div key={w.id} className="px-5 py-3.5 flex items-center gap-3">
                 <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${w.status === "completed" ? "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/20" : w.status === "pending" ? "bg-amber-100 text-amber-600 dark:bg-amber-900/20" : "bg-red-100 text-red-600 dark:bg-red-900/20"}`}>
                   {w.status === "completed" ? <CheckCircle2 className="w-4 h-4" /> : w.status === "pending" ? <Clock className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
@@ -1058,6 +1118,13 @@ function WithdrawalsTab({ stats, withdrawals, store }: { stats?: StoreStats; wit
                 </div>
               </div>
             ))}
+            {hasNextPage && (
+              <div className="px-5 py-3 text-center">
+                <Button size="sm" variant="outline" onClick={() => fetchNextPage()} disabled={isFetchingNextPage}>
+                  {isFetchingNextPage ? "Loading…" : "Load more"}
+                </Button>
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -1,7 +1,8 @@
 import { Router } from "express";
 import { db, walletsTable, depositsTable, usersTable, walletLedgerTable, settingsTable } from "@workspace/db";
 import { requireAuth, requireAdmin } from "../middlewares/auth";
-import { eq, desc, and, gte, ilike } from "drizzle-orm";
+import { eq, desc, and, gte, ilike, count } from "drizzle-orm";
+import { parsePage } from "../lib/pagination";
 import { sql } from "drizzle-orm";
 import type { NodePgTransaction } from "drizzle-orm/node-postgres";
 import { DepositToWalletBody } from "@workspace/api-zod";
@@ -149,35 +150,49 @@ router.post("/deposit", requireAdmin, async (req, res) => {
 });
 
 router.get("/deposits", requireAuth, async (req, res) => {
-  const deposits = await db
+  const { wantsPage, page, pageSize, offset } = parsePage(req.query as Record<string, unknown>);
+  const where = eq(depositsTable.userId, req.session.userId!);
+
+  const baseQuery = db
     .select()
     .from(depositsTable)
-    .where(eq(depositsTable.userId, req.session.userId!))
+    .where(where)
     .orderBy(desc(depositsTable.createdAt));
 
-  res.json(
-    deposits.map((d) => ({
-      id: d.id,
-      userId: d.userId,
-      amount: parseFloat(d.amount),
-      status: d.status,
-      method: d.method,
-      reference: d.reference,
-      note: d.note,
-      createdAt: d.createdAt,
-    }))
-  );
+  const fmt = (d: typeof depositsTable.$inferSelect) => ({
+    id: d.id,
+    userId: d.userId,
+    amount: parseFloat(d.amount),
+    status: d.status,
+    method: d.method,
+    reference: d.reference,
+    note: d.note,
+    createdAt: d.createdAt,
+  });
+
+  if (!wantsPage) {
+    res.json((await baseQuery.limit(200)).map(fmt));
+    return;
+  }
+
+  const [[{ total }], deposits] = await Promise.all([
+    db.select({ total: count() }).from(depositsTable).where(where),
+    baseQuery.limit(pageSize).offset(offset),
+  ]);
+  res.json({ total: Number(total), page, pageSize, data: deposits.map(fmt) });
 });
 
 router.get("/ledger", requireAuth, async (req, res) => {
-  const entries = await db
+  const { wantsPage, page, pageSize, offset } = parsePage(req.query as Record<string, unknown>);
+  const where = eq(walletLedgerTable.userId, req.session.userId!);
+
+  const baseQuery = db
     .select()
     .from(walletLedgerTable)
-    .where(eq(walletLedgerTable.userId, req.session.userId!))
-    .orderBy(desc(walletLedgerTable.createdAt))
-    .limit(100);
+    .where(where)
+    .orderBy(desc(walletLedgerTable.createdAt));
 
-  res.json(entries.map(e => ({
+  const fmt = (e: typeof walletLedgerTable.$inferSelect) => ({
     id: e.id,
     amount: parseFloat(e.amount),
     type: e.type,
@@ -185,7 +200,18 @@ router.get("/ledger", requireAuth, async (req, res) => {
     reference: e.reference,
     note: e.note,
     createdAt: e.createdAt,
-  })));
+  });
+
+  if (!wantsPage) {
+    res.json((await baseQuery.limit(100)).map(fmt));
+    return;
+  }
+
+  const [[{ total }], entries] = await Promise.all([
+    db.select({ total: count() }).from(walletLedgerTable).where(where),
+    baseQuery.limit(pageSize).offset(offset),
+  ]);
+  res.json({ total: Number(total), page, pageSize, data: entries.map(fmt) });
 });
 
 const PaystackInitBodySchema = z.object({ amount: z.number().positive().max(10000) });

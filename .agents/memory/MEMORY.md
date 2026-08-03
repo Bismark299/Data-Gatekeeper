@@ -15,5 +15,6 @@
 - [TopUpGH batch finalize gate](topupgh-batch-finalize-gate.md) — settleBatchDeliveries only recomputes batch final status when batch.status==='processing'; every force-complete/reconcile entry point must gate to processing or the batch label goes stale.
 - [Admin list search server-side](admin-list-search.md) — admin phone/id search must hit a server `search` param (ilike phone OR id) & skip the today-default date filter; client-side search over a newest-N slice hides old rows.
 - [TopUpGH request signing](topupgh-request-signing.md) — sign HMAC over INTERNAL prefix `/topupgh-api/v1`+path (NO query string)+body; 401=bad sig, 404 on path-only GET=order-not-found not auth.
+- [List pagination contract](list-pagination-contract.md) — `page` param opts into `{total,page,pageSize,data}` envelope; no param = legacy capped array; date range still returns unfinished orders; search ignores dates.
 - [Typecheck needs lib rebuild](typecheck-stale-lib-dist.md) — frontend typecheck reads api-client-react's compiled dist; rebuild it (tsc -b) first or stale dist yields phantom type errors.
 - [McBIS poller status matching](mcbis-poller-status.md) — stuck orders = head-of-line blocking; round-robin by updatedAt + bump; reconcile must key off createdAt since updatedAt now means "last polled".

@@ -53,8 +53,18 @@ const fmtDatetime = (iso: string) =>
 
 const PAGE_SIZES = [10, 25, 50, 100];
 
-async function fetchWallets(): Promise<WalletRow[]> {
-  const res = await fetch("/api/admin/wallets", { credentials: "include" });
+interface WalletStats {
+  totalUsers: number; totalBalance: number; funded: number;
+  totalLoaded: number; totalOrders: number;
+}
+interface WalletsResponse {
+  total: number; page: number; pageSize: number;
+  stats: WalletStats; data: WalletRow[];
+}
+
+async function fetchWallets(params: Record<string, string>): Promise<WalletsResponse> {
+  const qs = new URLSearchParams(params).toString();
+  const res = await fetch(`/api/admin/wallets?${qs}`, { credentials: "include" });
   if (!res.ok) throw new Error("Failed");
   return res.json();
 }
@@ -591,20 +601,42 @@ function AdminWalletsContent() {
   const { toast } = useToast();
   const qc = useQueryClient();
 
-  const { data: wallets, isLoading, refetch } = useQuery({
-    queryKey: ["admin-wallets"],
-    queryFn:  fetchWallets,
+  // Debounce text search (server-side) like admin/orders.tsx.
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => { setDebouncedSearch(search.trim()); setPage(1); }, 350);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  const listParams = useMemo(() => ({
+    search: debouncedSearch,
+    sort: sortField,
+    dir: sortDir,
+    page: String(page),
+    pageSize: String(pageSize),
+  }), [debouncedSearch, sortField, sortDir, page, pageSize]);
+
+  const { data, isLoading, isFetching, refetch } = useQuery({
+    queryKey: ["admin-wallets", listParams],
+    queryFn:  () => fetchWallets(listParams),
+    placeholderData: (prev) => prev,
     refetchInterval: 30000,
   });
 
+  const paged     = data?.data ?? [];
+  const total     = data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
   const stats = useMemo(() => {
-    const src = wallets ?? [];
-    const total   = src.reduce((s, w) => s + w.balance, 0);
-    const funded  = src.filter(w => w.balance > 0).length;
-    const loaded  = src.reduce((s, w) => s + (w.totalLoaded ?? 0), 0);
-    const spent   = src.reduce((s, w) => s + (w.totalOrders ?? 0), 0);
-    return { total, funded, loaded, spent, count: src.length };
-  }, [wallets]);
+    const s = data?.stats;
+    return {
+      count:  s?.totalUsers   ?? 0,
+      total:  s?.totalBalance ?? 0,
+      funded: s?.funded       ?? 0,
+      loaded: s?.totalLoaded  ?? 0,
+      spent:  s?.totalOrders  ?? 0,
+    };
+  }, [data]);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) setSortDir(d => d === "asc" ? "desc" : "asc");
@@ -612,35 +644,9 @@ function AdminWalletsContent() {
     setPage(1);
   };
 
-  const filtered = useMemo(() => {
-    let src = wallets ?? [];
-    if (search.trim()) {
-      const q = search.trim().toLowerCase();
-      src = src.filter(w =>
-        w.userName.toLowerCase().includes(q) ||
-        w.userEmail.toLowerCase().includes(q) ||
-        String(w.userId).includes(q) ||
-        (w.userPhone ?? "").includes(q) ||
-        (w.userDepositCode ?? "").toLowerCase().includes(q)
-      );
-    }
-    return [...src].sort((a, b) => {
-      let diff = 0;
-      if (sortField === "balance")     diff = a.balance - b.balance;
-      if (sortField === "totalLoaded") diff = (a.totalLoaded ?? 0) - (b.totalLoaded ?? 0);
-      if (sortField === "totalOrders") diff = (a.totalOrders ?? 0) - (b.totalOrders ?? 0);
-      if (sortField === "name")        diff = a.userName.localeCompare(b.userName);
-      if (sortField === "updated")     diff = new Date(a.updatedAt ?? 0).getTime() - new Date(b.updatedAt ?? 0).getTime();
-      return sortDir === "asc" ? diff : -diff;
-    });
-  }, [wallets, search, sortField, sortDir]);
-
-  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
-  const paged      = useMemo(() => filtered.slice((page - 1) * pageSize, page * pageSize), [filtered, page, pageSize]);
-
   const handleExport = () => {
     const header = ["Ref Code", "Name", "Email", "Phone", "Role", "Balance (GH₵)", "Total Loaded (GH₵)", "Total Orders (GH₵)", "Last Updated"];
-    const rows   = filtered.map(w => [
+    const rows   = paged.map(w => [
       w.userDepositCode ?? "", `"${w.userName}"`, w.userEmail, w.userPhone ?? "", w.userRole,
       w.balance.toFixed(2), w.totalLoaded.toFixed(2), w.totalOrders.toFixed(2),
       w.updatedAt ? fmtDate(w.updatedAt) : "",
@@ -700,7 +706,7 @@ function AdminWalletsContent() {
             <button onClick={() => refetch()} className="p-2 rounded-lg hover:bg-muted text-muted-foreground transition-colors" title="Refresh">
               <RefreshCw className="w-4 h-4" />
             </button>
-            <button onClick={handleExport} disabled={!filtered.length}
+            <button onClick={handleExport} disabled={!paged.length}
               className="flex items-center gap-1.5 px-3 h-8 rounded-lg border border-border text-xs font-semibold hover:bg-muted transition-colors disabled:opacity-40">
               <Download className="w-3.5 h-3.5" /> Export
             </button>
@@ -753,11 +759,11 @@ function AdminWalletsContent() {
                       className="w-full pl-9 pr-9 h-9 rounded-xl border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                       placeholder="Search by name, email, ref code…"
                       value={search}
-                      onChange={e => { setSearch(e.target.value); setPage(1); }}
+                      onChange={e => setSearch(e.target.value)}
                       data-testid="input-wallet-search"
                     />
                     {search && (
-                      <button className="absolute right-3 top-1/2 -translate-y-1/2" onClick={() => { setSearch(""); setPage(1); }}>
+                      <button className="absolute right-3 top-1/2 -translate-y-1/2" onClick={() => setSearch("")}>
                         <X className="w-3.5 h-3.5 text-muted-foreground" />
                       </button>
                     )}
@@ -774,8 +780,8 @@ function AdminWalletsContent() {
                     <span>per page</span>
                   </div>
                   <div className="text-xs text-muted-foreground ml-auto">
-                    {filtered.length} wallet{filtered.length !== 1 ? "s" : ""}
-                    {search && ` (filtered from ${wallets?.length ?? 0})`}
+                    {total.toLocaleString()} wallet{total !== 1 ? "s" : ""}
+                    {debouncedSearch && " (filtered)"}
                   </div>
                 </div>
 
@@ -822,7 +828,7 @@ function AdminWalletsContent() {
                           {paged.map(w => (
                             <Fragment key={w.id}>
                               <tr
-                                className="hover:bg-muted/20 transition-colors group"
+                                className={`hover:bg-muted/20 transition-colors group ${isFetching ? "opacity-60" : ""}`}
                                 data-testid={`row-wallet-${w.id}`}
                               >
                                 <td className="hidden sm:table-cell px-5 py-4">
@@ -925,10 +931,10 @@ function AdminWalletsContent() {
                   )}
 
                   {/* Pagination */}
-                  {filtered.length > pageSize && (
+                  {total > pageSize && (
                     <div className="flex items-center justify-between px-3 py-2.5 border-t border-border text-xs text-muted-foreground">
                       <span>
-                        Showing {Math.min((page - 1) * pageSize + 1, filtered.length)}–{Math.min(page * pageSize, filtered.length)} of {filtered.length}
+                        Showing {Math.min((page - 1) * pageSize + 1, total)}–{Math.min(page * pageSize, total)} of {total.toLocaleString()}
                       </span>
                       <div className="flex items-center gap-1">
                         <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}

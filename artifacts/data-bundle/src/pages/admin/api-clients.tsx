@@ -21,8 +21,10 @@ import {
 } from "@/components/ui/select";
 import {
   KeyRound, Copy, RefreshCw, Trash2, Menu, CheckCircle, XCircle,
-  UserPlus, ExternalLink, ChevronDown, ChevronUp,
+  UserPlus, ExternalLink, ChevronDown, ChevronUp, ChevronLeft, ChevronRight,
 } from "lucide-react";
+
+const API_CLIENTS_PAGE_SIZE = 25;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -188,11 +190,12 @@ export default function ApiClientsPage() {
   const [revealed, setRevealed] = useState<{ apiKey: string; name: string } | null>(null);
   const [selectedUserId, setSelectedUserId] = useState<string>("");
   const [userSearch, setUserSearch] = useState("");
+  const [page, setPage] = useState(1);
 
   // Users with API keys
-  const { data: apiData, isLoading } = useQuery<{ users: ApiUser[] }>({
-    queryKey: ["admin-api-clients"],
-    queryFn: () => fetch("/api/admin/api-clients").then(r => r.json()),
+  const { data: apiData, isLoading } = useQuery<{ total: number; page: number; pageSize: number; users: ApiUser[] }>({
+    queryKey: ["admin-api-clients", page],
+    queryFn: () => fetch(`/api/admin/api-clients?page=${page}&pageSize=${API_CLIENTS_PAGE_SIZE}`, { credentials: "include" }).then(r => r.json()),
   });
 
   // All users (for grant-access dropdown)
@@ -202,6 +205,8 @@ export default function ApiClientsPage() {
   });
 
   const apiUsers = apiData?.users ?? [];
+  const apiTotal = apiData?.total ?? apiUsers.length;
+  const apiTotalPages = Math.max(1, Math.ceil(apiTotal / API_CLIENTS_PAGE_SIZE));
 
   const filteredAllUsers = useMemo(() => {
     const q = userSearch.toLowerCase();
@@ -358,7 +363,7 @@ export default function ApiClientsPage() {
               <div className="px-5 py-4 border-b flex items-center justify-between">
                 <h2 className="font-semibold text-gray-900">
                   Active API Keys
-                  <span className="ml-2 text-sm font-normal text-gray-500">({apiUsers.length})</span>
+                  <span className="ml-2 text-sm font-normal text-gray-500">({apiTotal})</span>
                 </h2>
               </div>
 
@@ -472,6 +477,22 @@ export default function ApiClientsPage() {
                       ))}
                     </TableBody>
                   </Table>
+                </div>
+              )}
+
+              {/* Pagination */}
+              {apiTotal > 0 && (
+                <div className="flex items-center justify-between px-5 py-3 border-t text-xs text-gray-500">
+                  <span>Showing {Math.min((page - 1) * API_CLIENTS_PAGE_SIZE + 1, apiTotal)}–{Math.min(page * API_CLIENTS_PAGE_SIZE, apiTotal)} of {apiTotal}</span>
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} className="p-1.5 rounded-lg hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed">
+                      <ChevronLeft className="h-4 w-4" />
+                    </button>
+                    <span className="px-2 font-medium text-gray-700">{page} / {apiTotalPages}</span>
+                    <button onClick={() => setPage(p => Math.min(apiTotalPages, p + 1))} disabled={page >= apiTotalPages} className="p-1.5 rounded-lg hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed">
+                      <ChevronRight className="h-4 w-4" />
+                    </button>
+                  </div>
                 </div>
               )}
             </div>

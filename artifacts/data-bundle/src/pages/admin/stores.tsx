@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { AdminSidebar } from "@/components/AdminSidebar";
@@ -7,7 +7,7 @@ import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import {
-  Menu, Store, ChevronLeft, ExternalLink, ArrowDownCircle,
+  Menu, Store, ChevronLeft, ChevronRight, ExternalLink, ArrowDownCircle,
   ShoppingCart, TrendingUp, Wallet, Search, X, RefreshCw,
   CheckCircle2, XCircle, ThumbsUp, ThumbsDown,
   Banknote, Clock, Loader2, CircleDollarSign, Send, Ban,
@@ -65,11 +65,36 @@ function AdminStoresContent() {
   const [bulkApproving, setBulkApproving] = useState(false);
   const { toast } = useToast();
 
-  const { data: stores, isLoading, refetch } = useQuery<any[]>({
-    queryKey: ["adminStores"],
-    queryFn: () => fetch("/api/admin/stores", { credentials: "include" }).then(r => r.json()),
+  const STORES_PAGE_SIZE = 25;
+  const WD_PAGE_SIZE = 25;
+
+  // ── Stores list: server-side search + pagination ──────────────────────────
+  const [storesPage, setStoresPage] = useState(1);
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => { setDebouncedSearch(search.trim()); setStoresPage(1); }, 350);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  const storesParams = useMemo(() => ({
+    search: debouncedSearch,
+    page: String(storesPage),
+    pageSize: String(STORES_PAGE_SIZE),
+  }), [debouncedSearch, storesPage]);
+
+  const { data: storesResp, isLoading, refetch } = useQuery<any>({
+    queryKey: ["adminStores", storesParams],
+    queryFn: () => {
+      const qs = new URLSearchParams(storesParams).toString();
+      return fetch(`/api/admin/stores?${qs}`, { credentials: "include" }).then(r => r.json());
+    },
+    placeholderData: (prev: any) => prev,
     refetchInterval: 15000,
   });
+
+  const stores: any[] = storesResp?.data ?? [];
+  const storesTotal: number = storesResp?.total ?? 0;
+  const storesTotalPages = Math.max(1, Math.ceil(storesTotal / STORES_PAGE_SIZE));
 
   const { data: storeOrders, refetch: refetchOrders } = useQuery<any[]>({
     queryKey: ["adminStoreOrders", selectedStoreId],
@@ -83,10 +108,29 @@ function AdminStoresContent() {
     enabled: selectedStoreId !== null && detailTab === "withdrawals",
   });
 
+  // ── Withdrawals list: server-side status/search + pagination ──────────────
+  const [wdPage, setWdPage] = useState(1);
+  const [debouncedWdSearch, setDebouncedWdSearch] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => { setDebouncedWdSearch(wdSearch.trim()); setWdPage(1); }, 350);
+    return () => clearTimeout(t);
+  }, [wdSearch]);
+
+  const wdParams = useMemo(() => ({
+    status: wdStatusFilter,
+    search: debouncedWdSearch,
+    page: String(wdPage),
+    pageSize: String(WD_PAGE_SIZE),
+  }), [wdStatusFilter, debouncedWdSearch, wdPage]);
+
   const { data: globalWithdrawals, refetch: refetchGlobalWithdrawals } = useQuery<any>({
-    queryKey: ["adminAllWithdrawals"],
-    queryFn: () => fetch("/api/admin/withdrawals", { credentials: "include" }).then(r => r.json()),
+    queryKey: ["adminAllWithdrawals", wdParams],
+    queryFn: () => {
+      const qs = new URLSearchParams(wdParams).toString();
+      return fetch(`/api/admin/withdrawals?${qs}`, { credentials: "include" }).then(r => r.json());
+    },
     enabled: selectedStoreId === null && topTab === "withdrawals",
+    placeholderData: (prev: any) => prev,
     refetchInterval: 15000,
   });
 
@@ -192,29 +236,11 @@ function AdminStoresContent() {
     } finally { setBulkApproving(false); }
   };
 
+  // summary and pendingProfits are ALWAYS global (never affected by filters/paging).
   const wdSummary = globalWithdrawals?.summary;
-  const filteredWithdrawals = useMemo(() => {
-    let src: any[] = globalWithdrawals?.withdrawals ?? [];
-    if (wdStatusFilter !== "all") src = src.filter((w: any) => w.status === wdStatusFilter);
-    if (wdSearch.trim()) {
-      const q = wdSearch.trim().toLowerCase();
-      src = src.filter((w: any) =>
-        (w.storeName ?? "").toLowerCase().includes(q) ||
-        (w.accountNumber ?? "").toLowerCase().includes(q) ||
-        (w.accountName ?? "").toLowerCase().includes(q),
-      );
-    }
-    return src;
-  }, [globalWithdrawals, wdStatusFilter, wdSearch]);
-
-  const filteredStores = useMemo(() => {
-    let src = stores ?? [];
-    if (search.trim()) {
-      const q = search.trim().toLowerCase();
-      src = src.filter((s: any) => s.name.toLowerCase().includes(q) || s.slug?.toLowerCase().includes(q));
-    }
-    return src;
-  }, [stores, search]);
+  const withdrawals: any[] = globalWithdrawals?.withdrawals ?? [];
+  const wdTotal: number = globalWithdrawals?.total ?? withdrawals.length;
+  const wdTotalPages = Math.max(1, Math.ceil(wdTotal / WD_PAGE_SIZE));
 
   const selectedStore = useMemo(() => (stores ?? []).find((s: any) => s.id === selectedStoreId), [stores, selectedStoreId]);
 
@@ -505,12 +531,12 @@ function AdminStoresContent() {
                     </button>
                   )}
                 </div>
-                <span className="text-sm text-muted-foreground">{filteredStores.length} store{filteredStores.length !== 1 ? "s" : ""}</span>
+                <span className="text-sm text-muted-foreground">{storesTotal.toLocaleString()} store{storesTotal !== 1 ? "s" : ""}</span>
               </div>
 
               {isLoading ? (
                 <div className="py-20 text-center text-muted-foreground">Loading stores…</div>
-              ) : filteredStores.length === 0 ? (
+              ) : stores.length === 0 ? (
                 <div className="py-20 text-center text-muted-foreground">
                   <Store className="w-12 h-12 mx-auto mb-3 opacity-20" />
                   <p className="text-sm">No stores found</p>
@@ -526,7 +552,7 @@ function AdminStoresContent() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border">
-                      {filteredStores.map((s: any) => (
+                      {stores.map((s: any) => (
                         <tr
                           key={s.id}
                           className="hover:bg-muted/20 transition-colors cursor-pointer"
@@ -564,6 +590,24 @@ function AdminStoresContent() {
                       ))}
                     </tbody>
                   </table>
+                  {storesTotal > STORES_PAGE_SIZE && (
+                    <div className="flex items-center justify-between px-4 py-3 border-t border-border text-xs text-muted-foreground">
+                      <span>
+                        Showing {Math.min((storesPage - 1) * STORES_PAGE_SIZE + 1, storesTotal)}–{Math.min(storesPage * STORES_PAGE_SIZE, storesTotal)} of {storesTotal.toLocaleString()}
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <button onClick={() => setStoresPage(p => Math.max(1, p - 1))} disabled={storesPage === 1}
+                          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-border hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed">
+                          <ChevronLeft className="w-3.5 h-3.5" /> Prev
+                        </button>
+                        <span className="px-2 font-semibold text-foreground">Page {storesPage} / {storesTotalPages}</span>
+                        <button onClick={() => setStoresPage(p => Math.min(storesTotalPages, p + 1))} disabled={storesPage >= storesTotalPages}
+                          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-border hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed">
+                          Next <ChevronRight className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
               </>
@@ -594,7 +638,7 @@ function AdminStoresContent() {
                     {(["all", "pending", "processing", "completed", "failed", "cancelled"] as const).map(st => (
                       <button
                         key={st}
-                        onClick={() => setWdStatusFilter(st)}
+                        onClick={() => { setWdStatusFilter(st); setWdPage(1); }}
                         className={`px-3 py-1.5 rounded-lg text-xs font-semibold capitalize transition-colors ${wdStatusFilter === st ? "bg-primary text-primary-foreground" : "bg-muted/50 text-muted-foreground hover:bg-muted"}`}
                       >
                         {st === "all" ? "All" : STATUS_LABEL[st] ?? st}
@@ -632,7 +676,7 @@ function AdminStoresContent() {
                     <div className="overflow-x-auto">
                       {!globalWithdrawals ? (
                         <div className="py-16 text-center text-muted-foreground text-sm">Loading…</div>
-                      ) : filteredWithdrawals.length === 0 ? (
+                      ) : withdrawals.length === 0 ? (
                         <div className="py-16 text-center text-muted-foreground text-sm">
                           <ArrowDownCircle className="w-10 h-10 mx-auto mb-3 opacity-20" />
                           No withdrawals {wdStatusFilter !== "all" ? `with status "${STATUS_LABEL[wdStatusFilter] ?? wdStatusFilter}"` : "yet"}
@@ -647,7 +691,7 @@ function AdminStoresContent() {
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-border">
-                            {filteredWithdrawals.map((w: any) => {
+                            {withdrawals.map((w: any) => {
                               const isActioning = withdrawalActionId === w.id;
                               const networkKey = w.bankCode ?? w.method;
                               return (
@@ -696,6 +740,24 @@ function AdminStoresContent() {
                         </table>
                       )}
                     </div>
+                    {wdTotal > WD_PAGE_SIZE && (
+                      <div className="flex items-center justify-between px-4 py-3 border-t border-border text-xs text-muted-foreground">
+                        <span>
+                          Showing {Math.min((wdPage - 1) * WD_PAGE_SIZE + 1, wdTotal)}–{Math.min(wdPage * WD_PAGE_SIZE, wdTotal)} of {wdTotal.toLocaleString()}
+                        </span>
+                        <div className="flex items-center gap-1">
+                          <button onClick={() => setWdPage(p => Math.max(1, p - 1))} disabled={wdPage === 1}
+                            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-border hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed">
+                            <ChevronLeft className="w-3.5 h-3.5" /> Prev
+                          </button>
+                          <span className="px-2 font-semibold text-foreground">Page {wdPage} / {wdTotalPages}</span>
+                          <button onClick={() => setWdPage(p => Math.min(wdTotalPages, p + 1))} disabled={wdPage >= wdTotalPages}
+                            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-border hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed">
+                            Next <ChevronRight className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {/* Pending Profits — money agents have earned but not yet requested */}

@@ -1,9 +1,9 @@
-import { useState, useMemo } from "react";
+import { useState, useEffect } from "react";
 import {
-  useAdminListDeposits, useAdminApproveDeposit, useAdminRejectDeposit,
+  useAdminApproveDeposit, useAdminRejectDeposit,
   getAdminListDepositsQueryKey,
 } from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { AdminSidebar } from "@/components/AdminSidebar";
 import { AdminFinancialSummary } from "@/components/AdminFinancialSummary";
@@ -19,6 +19,29 @@ import {
 } from "@/components/ui/select";
 
 type StatusTab = "pending" | "completed" | "rejected" | "all";
+
+interface DepositRow {
+  id:        number;
+  userId:    number | null;
+  userName:  string | null;
+  userEmail: string | null;
+  amount:    number;
+  method:    string;
+  reference: string | null;
+  status:    string;
+  note:      string | null;
+  createdAt: string;
+}
+
+interface DepositCounts { all: number; pending: number; completed: number; rejected: number; }
+interface DepositsResponse { total: number; page: number; pageSize: number; counts: Partial<DepositCounts>; data: DepositRow[]; }
+
+async function fetchDeposits(params: Record<string, string>): Promise<DepositsResponse> {
+  const qs = new URLSearchParams(params).toString();
+  const res = await fetch(`/api/admin/deposits?${qs}`, { credentials: "include" });
+  if (!res.ok) throw new Error("Failed to fetch deposits");
+  return res.json();
+}
 
 const STATUS_STYLES: Record<string, string> = {
   completed: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400",
@@ -49,16 +72,47 @@ function AdminDepositsContent() {
   const { toast }   = useToast();
   const queryClient = useQueryClient();
 
-  const { data: allDeposits, isLoading, refetch } = useAdminListDeposits({});
+  // Debounced search
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 350);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  // Reset to page 1 when filters change
+  useEffect(() => { setPage(1); }, [statusTab, debouncedSearch, pageSize]);
+
+  const params = {
+    status: statusTab,
+    ...(debouncedSearch.trim() ? { search: debouncedSearch.trim() } : {}),
+    page: String(page),
+    pageSize: String(pageSize),
+  };
+
+  const currentKey = ["admin-deposits", statusTab, debouncedSearch, page, pageSize] as const;
+
+  const { data, isLoading, refetch } = useQuery({
+    queryKey: currentKey,
+    queryFn:  () => fetchDeposits(params),
+    placeholderData: (prev) => prev,
+  });
+
   const approveMutation = useAdminApproveDeposit();
   const rejectMutation  = useAdminRejectDeposit();
 
-  const invalidate = () => queryClient.invalidateQueries({ queryKey: getAdminListDepositsQueryKey({}) });
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ["admin-deposits"] });
+    queryClient.invalidateQueries({ queryKey: getAdminListDepositsQueryKey({}) });
+  };
 
   const patchDeposit = (id: number, patch: Record<string, unknown>) =>
     queryClient.setQueryData(
-      getAdminListDepositsQueryKey({}),
-      (old: unknown) => Array.isArray(old) ? old.map((d: { id: number }) => d.id === id ? { ...d, ...patch } : d) : old
+      currentKey,
+      (old: unknown) => {
+        const o = old as DepositsResponse | undefined;
+        if (!o || !Array.isArray(o.data)) return old;
+        return { ...o, data: o.data.map(d => d.id === id ? { ...d, ...patch } : d) };
+      }
     );
 
   const handleApprove = (id: number) => {
@@ -75,41 +129,24 @@ function AdminDepositsContent() {
     });
   };
 
-  // Counts per status
-  const counts = useMemo(() => {
-    const src = allDeposits ?? [];
-    return {
-      all: src.length,
-      pending:   src.filter(d => d.status === "pending").length,
-      completed: src.filter(d => d.status === "completed").length,
-      rejected:  src.filter(d => d.status === "rejected").length,
-    };
-  }, [allDeposits]);
+  // Counts per status from server (missing keys = 0)
+  const counts = {
+    all:       data?.counts?.all ?? 0,
+    pending:   data?.counts?.pending ?? 0,
+    completed: data?.counts?.completed ?? 0,
+    rejected:  data?.counts?.rejected ?? 0,
+  };
 
-  // Filter
-  const filtered = useMemo(() => {
-    let src = allDeposits ?? [];
-    if (statusTab !== "all") src = src.filter(d => d.status === statusTab);
-    if (search.trim()) {
-      const q = search.trim().toLowerCase();
-      src = src.filter(d =>
-        (d.userName ?? "").toLowerCase().includes(q) ||
-        (d.userEmail ?? "").toLowerCase().includes(q) ||
-        (d.reference ?? "").toLowerCase().includes(q)
-      );
-    }
-    return src;
-  }, [allDeposits, statusTab, search]);
-
-  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
-  const paged      = useMemo(() => filtered.slice((page - 1) * pageSize, page * pageSize), [filtered, page, pageSize]);
+  const paged      = data?.data ?? [];
+  const total      = data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   const handleExport = () => {
-    const rows = filtered.map(d => [d.id, `"${d.userName ?? "NO LINKED USER"}"`, d.userEmail ?? "", d.amount.toFixed(2), d.method, d.reference ?? "", d.status, fmtDate(d.createdAt)]);
+    const rows = paged.map(d => [d.id, `"${d.userName ?? "NO LINKED USER"}"`, d.userEmail ?? "", d.amount.toFixed(2), d.method, d.reference ?? "", d.status, fmtDate(d.createdAt)]);
     const csv  = [["ID", "User", "Email", "Amount", "Method", "Reference", "Status", "Date"].join(","), ...rows.map(r => r.join(","))].join("\n");
     const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
     a.download = "deposits.csv"; a.click();
-    toast({ title: `Exported ${filtered.length} deposits` });
+    toast({ title: `Exported ${paged.length} deposits` });
   };
 
   const TABS: { key: StatusTab; label: string }[] = [
@@ -131,13 +168,13 @@ function AdminDepositsContent() {
           <div className="flex-1">
             <h1 className="text-xl font-bold text-foreground">Deposits</h1>
             <p className="text-xs text-muted-foreground">
-              {(allDeposits ?? []).filter(d => d.status === "pending" && d.userId == null).length > 0 && (
+              {paged.filter(d => d.status === "pending" && d.userId == null).length > 0 && (
                 <span className="text-red-600 font-semibold" data-testid="text-unlinked-warning">
-                  {(allDeposits ?? []).filter(d => d.status === "pending" && d.userId == null).length} pending with no linked user ·{" "}
+                  {paged.filter(d => d.status === "pending" && d.userId == null).length} pending with no linked user (this page) ·{" "}
                 </span>
               )}
               {counts.pending > 0 && <span className="text-amber-600 font-semibold">{counts.pending} pending · </span>}
-              {filtered.length} shown
+              {total} total
             </p>
           </div>
           <AdminFinancialSummary />
@@ -145,7 +182,7 @@ function AdminDepositsContent() {
             <Button variant="outline" size="sm" onClick={() => refetch()} className="gap-1.5">
               <RefreshCw className="w-3.5 h-3.5" />
             </Button>
-            <Button variant="outline" size="sm" onClick={handleExport} disabled={!filtered.length} className="gap-1.5">
+            <Button variant="outline" size="sm" onClick={handleExport} disabled={!paged.length} className="gap-1.5">
               <Download className="w-3.5 h-3.5" /> Export
             </Button>
           </div>
@@ -285,9 +322,9 @@ function AdminDepositsContent() {
             )}
 
             {/* Pagination */}
-            {filtered.length > 0 && (
+            {total > 0 && (
               <div className="flex items-center justify-between px-5 py-3 border-t border-border text-xs text-muted-foreground">
-                <span>Showing {Math.min((page - 1) * pageSize + 1, filtered.length)}–{Math.min(page * pageSize, filtered.length)} of {filtered.length}</span>
+                <span>Showing {Math.min((page - 1) * pageSize + 1, total)}–{Math.min(page * pageSize, total)} of {total}</span>
                 <div className="flex items-center gap-1">
                   <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} className="p-1.5 rounded-lg hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed">
                     <ChevronLeft className="w-4 h-4" />

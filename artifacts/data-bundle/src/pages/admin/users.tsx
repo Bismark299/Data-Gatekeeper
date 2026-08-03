@@ -1,7 +1,7 @@
-import { useState, useMemo } from "react";
+import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
-import { useAdminListUsers, useAdminUpdateUser, useAdminDeleteUser, getAdminListUsersQueryKey } from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useAdminUpdateUser, useAdminDeleteUser, getAdminListUsersQueryKey } from "@workspace/api-client-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { AdminSidebar } from "@/components/AdminSidebar";
 import { AdminFinancialSummary } from "@/components/AdminFinancialSummary";
@@ -24,6 +24,28 @@ import {
 } from "lucide-react";
 
 const PAGE_SIZES = [10, 25, 50];
+
+interface UserRow {
+  id:            number;
+  name:          string;
+  email:         string;
+  phone:         string | null;
+  role:          string;
+  isActive:      boolean;
+  createdAt:     string;
+  depositCode?:  string | null;
+  walletBalance?: number;
+}
+
+interface UsersStats { total: number; admins: number; agents: number; dealers: number; active: number; }
+interface UsersResponse { total: number; page: number; pageSize: number; stats: UsersStats; data: UserRow[]; }
+
+async function fetchUsers(params: Record<string, string>): Promise<UsersResponse> {
+  const qs = new URLSearchParams(params).toString();
+  const res = await fetch(`/api/admin/users?${qs}`, { credentials: "include" });
+  if (!res.ok) throw new Error("Failed to fetch users");
+  return res.json();
+}
 
 const fmtDate = (iso: string) =>
   new Date(iso).toLocaleDateString("en-GH", { day: "numeric", month: "short", year: "numeric" });
@@ -53,16 +75,47 @@ function AdminUsersContent() {
   const { toast }   = useToast();
   const queryClient = useQueryClient();
 
-  const { data: allUsers, isLoading, refetch } = useAdminListUsers({});
+  // Debounced search
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 350);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  // Reset to page 1 when filters change
+  useEffect(() => { setPage(1); }, [debouncedSearch, roleFilter, statusFilter, pageSize]);
+
+  const params = {
+    ...(debouncedSearch.trim() ? { search: debouncedSearch.trim() } : {}),
+    ...(roleFilter !== "all" ? { role: roleFilter } : {}),
+    ...(statusFilter !== "all" ? { status: statusFilter } : {}),
+    page: String(page),
+    pageSize: String(pageSize),
+  };
+
+  const { data, isLoading, refetch } = useQuery({
+    queryKey: ["admin-users", debouncedSearch, roleFilter, statusFilter, page, pageSize],
+    queryFn:  () => fetchUsers(params),
+    placeholderData: (prev) => prev,
+  });
+
   const updateUser = useAdminUpdateUser();
   const deleteUser = useAdminDeleteUser();
 
-  const invalidate = () => queryClient.invalidateQueries({ queryKey: getAdminListUsersQueryKey({}) });
+  const usersQueryKey = ["admin-users"] as const;
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: usersQueryKey });
+    queryClient.invalidateQueries({ queryKey: getAdminListUsersQueryKey({}) });
+  };
 
   const patchUser = (id: number, patch: Record<string, unknown>) =>
     queryClient.setQueryData(
-      getAdminListUsersQueryKey({}),
-      (old: unknown) => Array.isArray(old) ? old.map((u: { id: number }) => u.id === id ? { ...u, ...patch } : u) : old
+      ["admin-users", debouncedSearch, roleFilter, statusFilter, page, pageSize],
+      (old: unknown) => {
+        const o = old as UsersResponse | undefined;
+        if (!o || !Array.isArray(o.data)) return old;
+        return { ...o, data: o.data.map(u => u.id === id ? { ...u, ...patch } : u) };
+      }
     );
 
   const createUser = async () => {
@@ -122,43 +175,22 @@ function AdminUsersContent() {
     });
   };
 
-  // Counts
-  const counts = useMemo(() => {
-    const src = allUsers ?? [];
-    return {
-      total: src.length,
-      admins: src.filter(u => u.role === "admin").length,
-      agents: src.filter(u => u.role === "agent").length,
-      dealers: src.filter(u => u.role === "dealer").length,
-      active: src.filter(u => u.isActive).length,
-    };
-  }, [allUsers]);
+  // Global stats (unfiltered) from server response
+  const counts = data?.stats ?? { total: 0, admins: 0, agents: 0, dealers: 0, active: 0 };
 
-  // Filter
-  const filtered = useMemo(() => {
-    let src = allUsers ?? [];
-    if (roleFilter !== "all")   src = src.filter(u => u.role === roleFilter);
-    if (statusFilter === "active")   src = src.filter(u => u.isActive);
-    if (statusFilter === "inactive") src = src.filter(u => !u.isActive);
-    if (search.trim()) {
-      const q = search.trim().toLowerCase();
-      src = src.filter(u => u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q) || (u.phone ?? "").includes(q));
-    }
-    return src;
-  }, [allUsers, roleFilter, statusFilter, search]);
+  const paged      = data?.data ?? [];
+  const total      = data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
-  const paged      = useMemo(() => filtered.slice((page - 1) * pageSize, page * pageSize), [filtered, page, pageSize]);
-
-  const hasFilters = search || roleFilter !== "all" || statusFilter !== "all";
+  const hasFilters = !!search || roleFilter !== "all" || statusFilter !== "all";
   const clearFilters = () => { setSearch(""); setRoleFilter("all"); setStatusFilter("all"); setPage(1); };
 
   const handleExport = () => {
-    const rows = filtered.map(u => [u.id, fmtDate(u.createdAt), `"${u.name}"`, u.email, u.phone ?? "", u.role, u.isActive ? "Active" : "Inactive", `GH₵${((u as { walletBalance?: number }).walletBalance ?? 0).toFixed(2)}`]);
+    const rows = paged.map(u => [u.id, fmtDate(u.createdAt), `"${u.name}"`, u.email, u.phone ?? "", u.role, u.isActive ? "Active" : "Inactive", `GH₵${(u.walletBalance ?? 0).toFixed(2)}`]);
     const csv  = [["ID", "Joined", "Name", "Email", "Phone", "Role", "Status", "Balance"].join(","), ...rows.map(r => r.join(","))].join("\n");
     const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
     a.download = "users.csv"; a.click();
-    toast({ title: `Exported ${filtered.length} users` });
+    toast({ title: `Exported ${paged.length} users` });
   };
 
   return (
@@ -179,7 +211,7 @@ function AdminUsersContent() {
             <Button variant="outline" size="sm" onClick={() => refetch()} className="gap-1.5">
               <RefreshCw className="w-3.5 h-3.5" />
             </Button>
-            <Button variant="outline" size="sm" onClick={handleExport} disabled={!filtered.length} className="gap-1.5">
+            <Button variant="outline" size="sm" onClick={handleExport} disabled={!paged.length} className="gap-1.5">
               <Download className="w-3.5 h-3.5" /> Export
             </Button>
             <Button size="sm" onClick={() => setCreateOpen(true)} className="gap-1.5">
@@ -284,13 +316,13 @@ function AdminUsersContent() {
                   </thead>
                   <tbody className="divide-y divide-border">
                     {paged.map(u => {
-                      const walletBalance = (u as { walletBalance?: number }).walletBalance ?? 0;
+                      const walletBalance = u.walletBalance ?? 0;
                       return (
                         <tr key={u.id} className="hover:bg-muted/20 transition-colors" data-testid={`row-user-${u.id}`}>
                           <td className="hidden sm:table-cell px-3 py-2.5">
-                            {(u as { depositCode?: string | null }).depositCode ? (
+                            {u.depositCode ? (
                               <span className="text-xs font-mono font-bold text-primary bg-primary/10 border border-primary/20 px-2 py-0.5 rounded-md whitespace-nowrap">
-                                {(u as { depositCode?: string | null }).depositCode}
+                                {u.depositCode}
                               </span>
                             ) : (
                               <span className="text-xs text-muted-foreground">—</span>
@@ -377,9 +409,9 @@ function AdminUsersContent() {
             )}
 
             {/* Pagination */}
-            {filtered.length > 0 && (
+            {total > 0 && (
               <div className="flex items-center justify-between px-5 py-3 border-t border-border text-xs text-muted-foreground">
-                <span>Showing {Math.min((page - 1) * pageSize + 1, filtered.length)}–{Math.min(page * pageSize, filtered.length)} of {filtered.length}</span>
+                <span>Showing {Math.min((page - 1) * pageSize + 1, total)}–{Math.min(page * pageSize, total)} of {total}</span>
                 <div className="flex items-center gap-1">
                   <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} className="p-1.5 rounded-lg hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed">
                     <ChevronLeft className="w-4 h-4" />

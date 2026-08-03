@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
-import { eq, and, desc, isNull } from "drizzle-orm";
+import { eq, and, or, desc, isNull, ilike, gte, lte, count, type SQL } from "drizzle-orm";
 import { sql } from "drizzle-orm";
+import { parsePage, parseDateRange } from "../lib/pagination";
 import { z } from "zod";
 import { db, ordersTable, bundlesTable, walletsTable, walletLedgerTable, usersTable, topupghBatchesTable } from "@workspace/db";
 import {
@@ -32,18 +33,67 @@ function formatOrder(o: typeof ordersTable.$inferSelect, network?: string | null
 
 router.get("/orders", requireAuth, async (req, res): Promise<void> => {
   const userId = req.session.userId!;
-  const rows = await db
+  const q = req.query as Record<string, string>;
+
+  // Filters shared by the list query and the status-count aggregation
+  // (everything except the status/phase filter itself).
+  const scopeConds: SQL[] = [eq(ordersTable.userId, userId)];
+  if (q.phone && q.phone.trim()) {
+    scopeConds.push(ilike(ordersTable.phoneNumber, `%${q.phone.trim().replace(/\D/g, "")}%`));
+  }
+  const { from, to } = parseDateRange(q.dateFrom, q.dateTo);
+  if (from) scopeConds.push(gte(ordersTable.createdAt, from));
+  if (to)   scopeConds.push(lte(ordersTable.createdAt, to));
+
+  const conditions = [...scopeConds];
+  switch (q.status) {
+    case "pending":    conditions.push(eq(ordersTable.status, "paid"), isNull(ordersTable.delivered)); break;
+    case "processing": conditions.push(eq(ordersTable.status, "paid"), eq(ordersTable.delivered, "processing")); break;
+    case "completed":  conditions.push(eq(ordersTable.status, "paid"), eq(ordersTable.delivered, "delivered")); break;
+    case "failed":     conditions.push(or(eq(ordersTable.status, "failed"), eq(ordersTable.delivered, "failed"))!); break;
+    case "cancelled":  conditions.push(eq(ordersTable.status, "cancelled")); break;
+    case "refunded":   conditions.push(eq(ordersTable.status, "refunded")); break;
+  }
+
+  const { wantsPage, page, pageSize, offset } = parsePage(q);
+
+  const baseQuery = db
     .select({ order: ordersTable, network: bundlesTable.network, deliveryData: topupghBatchesTable.deliveryData })
     .from(ordersTable)
     .leftJoin(bundlesTable, eq(bundlesTable.id, ordersTable.bundleId))
     .leftJoin(topupghBatchesTable, eq(topupghBatchesTable.id, ordersTable.topupghBatchId))
-    .where(eq(ordersTable.userId, userId))
+    .where(and(...conditions))
     .orderBy(desc(ordersTable.createdAt));
 
-  res.json(rows.map(r => ({
+  const fmt = (r: Awaited<ReturnType<typeof baseQuery.execute>>[number]) => ({
     ...formatOrder(r.order, r.network),
     delivery: extractDeliveryInfo(r.deliveryData).get(r.order.phoneNumber) ?? null,
-  })));
+  });
+
+  if (!wantsPage) {
+    // Legacy shape: bounded plain array.
+    res.json((await baseQuery.limit(500)).map(fmt));
+    return;
+  }
+
+  const [[{ total }], rows, statusRows] = await Promise.all([
+    db.select({ total: count() }).from(ordersTable).where(and(...conditions)),
+    baseQuery.limit(pageSize).offset(offset),
+    // Raw (status, delivered) counts within the date/phone scope but ignoring
+    // the active status filter — the client maps these onto phase buckets.
+    db.select({ status: ordersTable.status, delivered: ordersTable.delivered, cnt: count() })
+      .from(ordersTable)
+      .where(and(...scopeConds))
+      .groupBy(ordersTable.status, ordersTable.delivered),
+  ]);
+
+  res.json({
+    total: Number(total),
+    page,
+    pageSize,
+    statusCounts: statusRows.map(r => ({ status: r.status, delivered: r.delivered, count: Number(r.cnt) })),
+    data: rows.map(fmt),
+  });
 });
 
 router.post("/orders", requireAdmin, async (req, res): Promise<void> => {

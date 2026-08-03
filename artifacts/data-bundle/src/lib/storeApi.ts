@@ -15,6 +15,8 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   return json as T;
 }
 
+export interface Paged<T> { total: number; page: number; pageSize: number; data: T[]; }
+
 export interface Store {
   id: number; userId: number; name: string; slug: string;
   description: string; colorTheme: string; isActive: boolean;
@@ -65,8 +67,22 @@ export const storeApi = {
     request<StoreBundle>("PUT", `/stores/my/bundles/${id}`, data),
   removeBundle: (id: number) => request<{ ok: boolean }>("DELETE", `/stores/my/bundles/${id}`),
   getOrders: () => request<StoreOrder[]>("GET", "/stores/my/orders"),
+  getOrdersPage: (params: { phone?: string; status?: string; dateFrom?: string; dateTo?: string; page: number; pageSize: number }) => {
+    const qs = new URLSearchParams();
+    if (params.phone) qs.set("phone", params.phone);
+    if (params.status && params.status !== "all") qs.set("status", params.status);
+    if (params.dateFrom) qs.set("dateFrom", params.dateFrom);
+    if (params.dateTo) qs.set("dateTo", params.dateTo);
+    qs.set("page", String(params.page));
+    qs.set("pageSize", String(params.pageSize));
+    return request<Paged<StoreOrder>>("GET", `/stores/my/orders?${qs.toString()}`);
+  },
   getStats: () => request<StoreStats>("GET", "/stores/my/stats"),
   getWithdrawals: () => request<StoreWithdrawal[]>("GET", "/stores/my/withdrawals"),
+  getWithdrawalsPage: (params: { page: number; pageSize: number }) => {
+    const qs = new URLSearchParams({ page: String(params.page), pageSize: String(params.pageSize) });
+    return request<Paged<StoreWithdrawal>>("GET", `/stores/my/withdrawals?${qs.toString()}`);
+  },
   withdraw: (data: { amount: number; method?: string; bankCode?: string; accountNumber: string; accountName?: string; note?: string }) =>
     request<StoreWithdrawal>("POST", "/stores/my/withdraw", data),
   saveMomoDetails: (data: { momoNetwork: string; momoNumber: string; momoName: string }) =>

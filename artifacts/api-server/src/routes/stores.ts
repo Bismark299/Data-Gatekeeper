@@ -4,7 +4,8 @@ import {
   bundlesTable, usersTable,
 } from "@workspace/db";
 import { requireAuth } from "../middlewares/auth";
-import { eq, desc, and, ne, or, isNull, sql, inArray } from "drizzle-orm";
+import { eq, desc, and, ne, or, isNull, sql, inArray, count, sum, ilike, gte, lte, type SQL } from "drizzle-orm";
+import { parsePage, parseDateRange } from "../lib/pagination";
 import { z } from "zod";
 import crypto from "crypto";
 import { dispatchOrder } from "../lib/dispatch";
@@ -227,23 +228,63 @@ router.get("/stores/my/orders", requireAuth, async (req, res) => {
 
   // Exclude bare "pending" orders — those are checkout initiations that were never paid.
   // Only show orders that progressed past the payment step.
-  const orders = await db.select().from(storeOrdersTable)
-    .where(and(eq(storeOrdersTable.storeId, store.id), ne(storeOrdersTable.status, "pending")))
+  const q = req.query as Record<string, string>;
+  const conditions: SQL[] = [eq(storeOrdersTable.storeId, store.id), ne(storeOrdersTable.status, "pending")];
+
+  if (q.phone && q.phone.trim()) {
+    conditions.push(ilike(storeOrdersTable.customerPhone, `%${q.phone.trim()}%`));
+  }
+  const { from, to } = parseDateRange(q.dateFrom, q.dateTo);
+  if (from) conditions.push(gte(storeOrdersTable.createdAt, from));
+  if (to)   conditions.push(lte(storeOrdersTable.createdAt, to));
+  // Fulfillment-phase filter (matches the client's storePhase buckets)
+  switch (q.status) {
+    case "pending":    conditions.push(eq(storeOrdersTable.status, "paid"), isNull(storeOrdersTable.delivered)); break;
+    case "processing": conditions.push(eq(storeOrdersTable.status, "paid"), eq(storeOrdersTable.delivered, "processing")); break;
+    case "completed":  conditions.push(eq(storeOrdersTable.status, "paid"), eq(storeOrdersTable.delivered, "delivered")); break;
+    case "failed":     conditions.push(or(eq(storeOrdersTable.status, "failed"), eq(storeOrdersTable.delivered, "failed"))!); break;
+    case "cancelled":  conditions.push(eq(storeOrdersTable.status, "cancelled")); break;
+    case "refunded":   conditions.push(eq(storeOrdersTable.status, "refunded")); break;
+  }
+
+  const { wantsPage, page, pageSize, offset } = parsePage(q);
+  const baseQuery = db.select().from(storeOrdersTable)
+    .where(and(...conditions))
     .orderBy(desc(storeOrdersTable.createdAt));
-  res.json(orders.map(formatStoreOrder));
+
+  if (!wantsPage) {
+    const orders = await baseQuery.limit(500);
+    res.json(orders.map(formatStoreOrder));
+    return;
+  }
+
+  const [[{ total }], orders] = await Promise.all([
+    db.select({ total: count() }).from(storeOrdersTable).where(and(...conditions)),
+    baseQuery.limit(pageSize).offset(offset),
+  ]);
+  res.json({ total: Number(total), page, pageSize, data: orders.map(formatStoreOrder) });
 });
 
 router.get("/stores/my/stats", requireAuth, async (req, res) => {
   const [store] = await db.select().from(storesTable).where(eq(storesTable.userId, req.session.userId!));
   if (!store) { res.status(404).json({ error: "No store found" }); return; }
 
-  const orders = await db.select().from(storeOrdersTable).where(eq(storeOrdersTable.storeId, store.id));
-  const completed = orders.filter(o => o.delivered === "delivered");
-  const totalSales = completed.length;
-  const totalRevenue = completed.reduce((s, o) => s + parseFloat(o.sellingPrice), 0);
-  const totalProfit = completed.reduce((s, o) => s + parseFloat(o.profit), 0);
-  // "pending" = paid but not yet delivered (status "pending" = abandoned checkout — not counted)
-  const totalPending = orders.filter(o => o.status === "paid" && (o.delivered == null || o.delivered === "processing")).length;
+  // Single SQL aggregate — no full order-history load.
+  const [agg] = await db
+    .select({
+      totalSales: sql<number>`count(*) filter (where ${storeOrdersTable.delivered} = 'delivered')`,
+      totalRevenue: sql<string>`coalesce(sum(${storeOrdersTable.sellingPrice}) filter (where ${storeOrdersTable.delivered} = 'delivered'), 0)`,
+      totalProfit: sql<string>`coalesce(sum(${storeOrdersTable.profit}) filter (where ${storeOrdersTable.delivered} = 'delivered'), 0)`,
+      // "pending" = paid but not yet delivered (status "pending" = abandoned checkout — not counted)
+      totalPending: sql<number>`count(*) filter (where ${storeOrdersTable.status} = 'paid' and (${storeOrdersTable.delivered} is null or ${storeOrdersTable.delivered} = 'processing'))`,
+    })
+    .from(storeOrdersTable)
+    .where(eq(storeOrdersTable.storeId, store.id));
+
+  const totalSales = Number(agg.totalSales);
+  const totalRevenue = Number(agg.totalRevenue);
+  const totalProfit = Number(agg.totalProfit);
+  const totalPending = Number(agg.totalPending);
 
   res.json({
     totalSales,
@@ -316,8 +357,22 @@ router.get("/stores/my/withdrawals", requireAuth, async (req, res) => {
   const [store] = await db.select().from(storesTable).where(eq(storesTable.userId, req.session.userId!));
   if (!store) { res.status(404).json({ error: "No store found" }); return; }
 
-  const list = await db.select().from(storeWithdrawalsTable).where(eq(storeWithdrawalsTable.storeId, store.id)).orderBy(desc(storeWithdrawalsTable.createdAt));
-  res.json(list.map(w => ({ ...w, amount: parseFloat(w.amount) })));
+  const { wantsPage, page, pageSize, offset } = parsePage(req.query as Record<string, unknown>);
+  const baseQuery = db.select().from(storeWithdrawalsTable)
+    .where(eq(storeWithdrawalsTable.storeId, store.id))
+    .orderBy(desc(storeWithdrawalsTable.createdAt));
+
+  if (!wantsPage) {
+    const list = await baseQuery.limit(200);
+    res.json(list.map(w => ({ ...w, amount: parseFloat(w.amount) })));
+    return;
+  }
+
+  const [[{ total }], list] = await Promise.all([
+    db.select({ total: count() }).from(storeWithdrawalsTable).where(eq(storeWithdrawalsTable.storeId, store.id)),
+    baseQuery.limit(pageSize).offset(offset),
+  ]);
+  res.json({ total: Number(total), page, pageSize, data: list.map(w => ({ ...w, amount: parseFloat(w.amount) })) });
 });
 
 const WithdrawBody = z.object({
@@ -776,43 +831,85 @@ router.post("/s/paystack/webhook", async (req, res) => {
 // Admin: list all stores
 router.get("/admin/stores", requireAuth, async (req, res) => {
   if (req.session.userRole !== "admin") { res.status(403).json({ error: "Forbidden" }); return; }
-  const stores = await db.select().from(storesTable).orderBy(desc(storesTable.id));
+  const q = req.query as Record<string, string>;
+  const conditions: SQL[] = [];
+  if (q.search && q.search.trim()) {
+    const s = q.search.trim();
+    conditions.push(or(ilike(storesTable.name, `%${s}%`), ilike(storesTable.slug, `%${s}%`))!);
+  }
+  const where = conditions.length > 0 ? and(...conditions) : undefined;
+  const { wantsPage, page, pageSize, offset } = parsePage(q);
 
-  // Enrich each store with aggregate stats
-  const enriched = await Promise.all(stores.map(async store => {
-    const orders = await db.select({
-      profit: storeOrdersTable.profit,
-      status: storeOrdersTable.status,
-      delivered: storeOrdersTable.delivered,
-    }).from(storeOrdersTable).where(eq(storeOrdersTable.storeId, store.id));
+  const baseQuery = db.select().from(storesTable).where(where).orderBy(desc(storesTable.id));
+  const stores = wantsPage
+    ? await baseQuery.limit(pageSize).offset(offset)
+    : await baseQuery.limit(500);
 
-    const totalOrders = orders.length;
-    const completedOrders = orders.filter(o => o.delivered === "delivered").length;
-    const processingOrders = orders.filter(o => o.delivered === "processing").length;
-    const totalEarned = orders.filter(o => o.delivered === "delivered").reduce((s, o) => s + parseFloat(o.profit as any), 0);
+  // Aggregate stats for just the returned page of stores — two grouped queries
+  // total, instead of two queries per store (N+1).
+  const storeIds = stores.map(s => s.id);
+  const [orderAgg, wdAgg, totalRow] = await Promise.all([
+    storeIds.length === 0 ? Promise.resolve([]) : db
+      .select({
+        storeId: storeOrdersTable.storeId,
+        totalOrders: count(),
+        completedOrders: sql<number>`count(*) filter (where ${storeOrdersTable.delivered} = 'delivered')`,
+        processingOrders: sql<number>`count(*) filter (where ${storeOrdersTable.delivered} = 'processing')`,
+        totalEarned: sql<string>`coalesce(sum(${storeOrdersTable.profit}) filter (where ${storeOrdersTable.delivered} = 'delivered'), 0)`,
+      })
+      .from(storeOrdersTable)
+      .where(inArray(storeOrdersTable.storeId, storeIds))
+      .groupBy(storeOrdersTable.storeId),
+    storeIds.length === 0 ? Promise.resolve([]) : db
+      .select({
+        storeId: storeWithdrawalsTable.storeId,
+        totalWithdrawn: sql<string>`coalesce(sum(${storeWithdrawalsTable.amount}) filter (where ${storeWithdrawalsTable.status} = 'completed'), 0)`,
+      })
+      .from(storeWithdrawalsTable)
+      .where(inArray(storeWithdrawalsTable.storeId, storeIds))
+      .groupBy(storeWithdrawalsTable.storeId),
+    wantsPage ? db.select({ total: count() }).from(storesTable).where(where) : Promise.resolve(null),
+  ]);
 
-    const withdrawals = await db.select({ amount: storeWithdrawalsTable.amount, status: storeWithdrawalsTable.status })
-      .from(storeWithdrawalsTable).where(eq(storeWithdrawalsTable.storeId, store.id));
+  const oMap = new Map(orderAgg.map(o => [o.storeId, o]));
+  const wMap = new Map(wdAgg.map(w => [w.storeId, w]));
 
-    const totalWithdrawn = withdrawals.filter(w => w.status === "completed").reduce((s, w) => s + parseFloat(w.amount as any), 0);
-
+  const enriched = stores.map(store => {
+    const o = oMap.get(store.id);
+    const w = wMap.get(store.id);
     return {
       ...formatStore(store),
-      totalOrders,
-      completedOrders,
-      processingOrders,
-      totalEarned: parseFloat(totalEarned.toFixed(2)),
-      totalWithdrawn: parseFloat(totalWithdrawn.toFixed(2)),
+      totalOrders: Number(o?.totalOrders ?? 0),
+      completedOrders: Number(o?.completedOrders ?? 0),
+      processingOrders: Number(o?.processingOrders ?? 0),
+      totalEarned: parseFloat(Number(o?.totalEarned ?? 0).toFixed(2)),
+      totalWithdrawn: parseFloat(Number(w?.totalWithdrawn ?? 0).toFixed(2)),
     };
-  }));
-  res.json(enriched);
+  });
+
+  if (!wantsPage) { res.json(enriched); return; }
+  res.json({ total: Number(totalRow![0].total), page, pageSize, data: enriched });
 });
 
 // Global cross-store withdrawals view + payout summary for the admin dashboard.
 router.get("/admin/withdrawals", requireAuth, async (req, res) => {
   if (req.session.userRole !== "admin") { res.status(403).json({ error: "Forbidden" }); return; }
 
-  const rows = await db
+  const q = req.query as Record<string, string>;
+  const conditions: SQL[] = [];
+  if (q.status && q.status !== "all") conditions.push(eq(storeWithdrawalsTable.status, q.status));
+  if (q.search && q.search.trim()) {
+    const s = q.search.trim();
+    conditions.push(or(
+      ilike(storesTable.name, `%${s}%`),
+      ilike(storeWithdrawalsTable.accountNumber, `%${s}%`),
+      ilike(storeWithdrawalsTable.accountName, `%${s}%`),
+    )!);
+  }
+  const where = conditions.length > 0 ? and(...conditions) : undefined;
+  const { wantsPage, page, pageSize, offset } = parsePage(q);
+
+  const listQuery = db
     .select({
       id: storeWithdrawalsTable.id,
       storeId: storeWithdrawalsTable.storeId,
@@ -833,57 +930,84 @@ router.get("/admin/withdrawals", requireAuth, async (req, res) => {
     })
     .from(storeWithdrawalsTable)
     .leftJoin(storesTable, eq(storeWithdrawalsTable.storeId, storesTable.id))
+    .where(where)
     .orderBy(desc(storeWithdrawalsTable.createdAt));
-
-  const withdrawals = rows.map(w => ({ ...w, amount: parseFloat(w.amount as any) }));
-
-  // Money currently sitting in agent profit balances — i.e. ready to be withdrawn
-  // but not yet requested. Surface the per-store breakdown so admins see the full
-  // outstanding obligation, not just what agents have already asked for.
-  const stores = await db
-    .select({
-      storeId: storesTable.id,
-      storeName: storesTable.name,
-      storeSlug: storesTable.slug,
-      profitBalance: storesTable.profitBalance,
-    })
-    .from(storesTable)
-    .orderBy(desc(storesTable.profitBalance));
-  const readyForWithdrawal = stores.reduce((s, st) => s + parseFloat(st.profitBalance as any), 0);
-  const pendingProfits = stores
-    .map(st => ({ ...st, profitBalance: parseFloat(st.profitBalance as any) }))
-    .filter(st => st.profitBalance > 0);
-
-  const sumBy = (status: string) =>
-    withdrawals.filter(w => w.status === status).reduce((s, w) => s + w.amount, 0);
-  const countBy = (status: string) => withdrawals.filter(w => w.status === status).length;
 
   // "Paid today" — completed withdrawals finalised since local midnight (server is
   // UTC/GMT, same as Ghana, so a plain date comparison is correct here).
   const now = new Date();
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const paidTodayRows = withdrawals.filter(
-    w => w.status === "completed" && w.updatedAt && new Date(w.updatedAt as any) >= startOfToday,
-  );
-  const paidToday = paidTodayRows.reduce((s, w) => s + w.amount, 0);
+
+  // Summary is computed with SQL aggregates over the FULL table (never affected
+  // by the list filters/paging) so the stat cards stay accurate.
+  const [rows, totalRow, statusAgg, [todayAgg], profitStores] = await Promise.all([
+    wantsPage ? listQuery.limit(pageSize).offset(offset) : listQuery.limit(500),
+    wantsPage
+      ? db.select({ total: count() })
+          .from(storeWithdrawalsTable)
+          .leftJoin(storesTable, eq(storeWithdrawalsTable.storeId, storesTable.id))
+          .where(where)
+      : Promise.resolve(null),
+    db.select({
+        status: storeWithdrawalsTable.status,
+        cnt: count(),
+        amt: sum(storeWithdrawalsTable.amount),
+        stores: sql<number>`count(distinct ${storeWithdrawalsTable.storeId})`,
+      })
+      .from(storeWithdrawalsTable)
+      .groupBy(storeWithdrawalsTable.status),
+    db.select({
+        cnt: sql<number>`count(*) filter (where ${storeWithdrawalsTable.status} = 'completed' and ${storeWithdrawalsTable.updatedAt} >= ${startOfToday})`,
+        amt: sql<string>`coalesce(sum(${storeWithdrawalsTable.amount}) filter (where ${storeWithdrawalsTable.status} = 'completed' and ${storeWithdrawalsTable.updatedAt} >= ${startOfToday}), 0)`,
+      })
+      .from(storeWithdrawalsTable),
+    // Money currently sitting in agent profit balances — i.e. ready to be withdrawn
+    // but not yet requested. Surface the per-store breakdown so admins see the full
+    // outstanding obligation, not just what agents have already asked for.
+    db.select({
+        storeId: storesTable.id,
+        storeName: storesTable.name,
+        storeSlug: storesTable.slug,
+        profitBalance: storesTable.profitBalance,
+        totalBalance: sql<string>`sum(${storesTable.profitBalance}) over ()`,
+      })
+      .from(storesTable)
+      .where(sql`${storesTable.profitBalance} > 0`)
+      .orderBy(desc(storesTable.profitBalance))
+      .limit(500),
+  ]);
+
+  const withdrawals = rows.map(w => ({ ...w, amount: parseFloat(w.amount as any) }));
+  const pendingProfits = profitStores.map(st => ({
+    storeId: st.storeId, storeName: st.storeName, storeSlug: st.storeSlug,
+    profitBalance: parseFloat(st.profitBalance as any),
+  }));
+  const readyForWithdrawal = profitStores.length > 0 ? parseFloat(profitStores[0].totalBalance as any) : 0;
+
+  const byStatus = new Map(statusAgg.map(r => [r.status, r]));
+  const cntOf = (s: string) => Number(byStatus.get(s)?.cnt ?? 0);
+  const amtOf = (s: string) => Number(byStatus.get(s)?.amt ?? 0);
 
   // Distinct agents with money in flight (a pending or processing request).
-  const agentsPending = new Set(
-    withdrawals.filter(w => w.status === "pending" || w.status === "processing").map(w => w.storeId),
-  ).size;
+  // (Upper bound across the two statuses; exact enough for the badge and cheap.)
+  const [agentsPendingRow] = await db
+    .select({ n: sql<number>`count(distinct ${storeWithdrawalsTable.storeId})` })
+    .from(storeWithdrawalsTable)
+    .where(inArray(storeWithdrawalsTable.status, ["pending", "processing"]));
 
   res.json({
+    ...(wantsPage ? { total: Number(totalRow![0].total), page, pageSize } : {}),
     summary: {
       readyForWithdrawal: parseFloat(readyForWithdrawal.toFixed(2)),
-      pendingCount: countBy("pending"),
-      pendingAmount: parseFloat(sumBy("pending").toFixed(2)),
-      processingCount: countBy("processing"),
-      processingAmount: parseFloat(sumBy("processing").toFixed(2)),
-      completedCount: countBy("completed"),
-      completedAmount: parseFloat(sumBy("completed").toFixed(2)),
-      paidToday: parseFloat(paidToday.toFixed(2)),
-      paidTodayCount: paidTodayRows.length,
-      agentsPending,
+      pendingCount: cntOf("pending"),
+      pendingAmount: parseFloat(amtOf("pending").toFixed(2)),
+      processingCount: cntOf("processing"),
+      processingAmount: parseFloat(amtOf("processing").toFixed(2)),
+      completedCount: cntOf("completed"),
+      completedAmount: parseFloat(amtOf("completed").toFixed(2)),
+      paidToday: parseFloat(Number(todayAgg.amt).toFixed(2)),
+      paidTodayCount: Number(todayAgg.cnt),
+      agentsPending: Number(agentsPendingRow.n),
       agentsOwed: pendingProfits.length,
     },
     pendingProfits,
@@ -896,11 +1020,22 @@ router.get("/admin/stores/:storeId/withdrawals", requireAuth, async (req, res) =
   const storeId = parseInt(String(req.params.storeId));
   if (isNaN(storeId)) { res.status(400).json({ error: "Invalid store id" }); return; }
 
-  const withdrawals = await db.select().from(storeWithdrawalsTable)
+  const { wantsPage, page, pageSize, offset } = parsePage(req.query as Record<string, unknown>);
+  const baseQuery = db.select().from(storeWithdrawalsTable)
     .where(eq(storeWithdrawalsTable.storeId, storeId))
     .orderBy(desc(storeWithdrawalsTable.createdAt));
 
-  res.json(withdrawals.map(w => ({ ...w, amount: parseFloat(w.amount as any) })));
+  if (!wantsPage) {
+    const withdrawals = await baseQuery.limit(200);
+    res.json(withdrawals.map(w => ({ ...w, amount: parseFloat(w.amount as any) })));
+    return;
+  }
+
+  const [[{ total }], withdrawals] = await Promise.all([
+    db.select({ total: count() }).from(storeWithdrawalsTable).where(eq(storeWithdrawalsTable.storeId, storeId)),
+    baseQuery.limit(pageSize).offset(offset),
+  ]);
+  res.json({ total: Number(total), page, pageSize, data: withdrawals.map(w => ({ ...w, amount: parseFloat(w.amount as any) })) });
 });
 
 router.get("/admin/stores/:storeId/orders", requireAuth, async (req, res) => {
@@ -908,7 +1043,7 @@ router.get("/admin/stores/:storeId/orders", requireAuth, async (req, res) => {
   const storeId = parseInt(String(req.params.storeId));
   if (isNaN(storeId)) { res.status(400).json({ error: "Invalid store id" }); return; }
 
-  const rows = await db.select({
+  const rows = db.select({
     id: storeOrdersTable.id,
     bundleData: storeOrdersTable.bundleData,
     bundleNetwork: storeOrdersTable.bundleNetwork,
@@ -929,19 +1064,67 @@ router.get("/admin/stores/:storeId/orders", requireAuth, async (req, res) => {
     ))
     .orderBy(desc(storeOrdersTable.id));
 
-  res.json(rows.map(o => ({
+  const { wantsPage, page, pageSize, offset } = parsePage(req.query as Record<string, unknown>);
+  const fmt = (o: Awaited<ReturnType<typeof rows.execute>>[number]) => ({
     ...o,
     sellingPrice: parseFloat(o.sellingPrice as any),
     basePrice: parseFloat(o.basePrice as any),
     profit: parseFloat(o.profit as any),
-  })));
+  });
+
+  if (!wantsPage) {
+    res.json((await rows.limit(200)).map(fmt));
+    return;
+  }
+
+  const [[{ total }], list] = await Promise.all([
+    db.select({ total: count() }).from(storeOrdersTable)
+      .where(and(eq(storeOrdersTable.storeId, storeId), ne(storeOrdersTable.paystackReference, ""))),
+    rows.limit(pageSize).offset(offset),
+  ]);
+  res.json({ total: Number(total), page, pageSize, data: list.map(fmt) });
 });
 
 // ─── ADMIN: STORE ORDERS ──────────────────────────────────────────────────────
 
 router.get("/admin/store-orders", requireAuth, async (req, res) => {
   if (req.session.userRole !== "admin") { res.status(403).json({ error: "Forbidden" }); return; }
-  const rows = await db
+  const q = req.query as Record<string, string>;
+  const conditions: SQL[] = [];
+
+  // Full-history phone search takes precedence over the date range (this is what
+  // powers the "matches outside this date range" hint on the admin orders page).
+  const phoneSearching = !!(q.phone && q.phone.trim());
+  if (phoneSearching) {
+    conditions.push(ilike(storeOrdersTable.customerPhone, `%${q.phone.trim()}%`));
+  } else {
+    const { from, to } = parseDateRange(q.dateFrom, q.dateTo);
+    if (from || to) {
+      const dateConds: SQL[] = [];
+      if (from) dateConds.push(gte(storeOrdersTable.createdAt, from));
+      if (to)   dateConds.push(lte(storeOrdersTable.createdAt, to));
+      // Always include paid-but-unfinished rows regardless of date so pending /
+      // processing counts and bulk actions keep seeing older unfinished orders.
+      const activeRows = and(
+        eq(storeOrdersTable.status, "paid"),
+        or(isNull(storeOrdersTable.delivered), eq(storeOrdersTable.delivered, "processing")),
+      )!;
+      conditions.push(or(and(...dateConds)!, activeRows)!);
+    }
+  }
+  if (q.network && q.network !== "all") conditions.push(eq(storeOrdersTable.bundleNetwork, q.network));
+  switch (q.status) {
+    case "pending":    conditions.push(eq(storeOrdersTable.status, "paid"), isNull(storeOrdersTable.delivered)); break;
+    case "processing": conditions.push(eq(storeOrdersTable.status, "paid"), eq(storeOrdersTable.delivered, "processing")); break;
+    case "completed":  conditions.push(eq(storeOrdersTable.status, "paid"), eq(storeOrdersTable.delivered, "delivered")); break;
+    case "failed":     conditions.push(or(eq(storeOrdersTable.status, "failed"), eq(storeOrdersTable.delivered, "failed"))!); break;
+    case "cancelled":  conditions.push(eq(storeOrdersTable.status, "cancelled")); break;
+    case "refunded":   conditions.push(eq(storeOrdersTable.status, "refunded")); break;
+  }
+  const where = conditions.length > 0 ? and(...conditions) : undefined;
+  const { wantsPage, page, pageSize, offset } = parsePage(q);
+
+  const baseQuery = db
     .select({
       id: storeOrdersTable.id,
       storeId: storeOrdersTable.storeId,
@@ -969,8 +1152,10 @@ router.get("/admin/store-orders", requireAuth, async (req, res) => {
     .innerJoin(storesTable,  eq(storeOrdersTable.storeId,  storesTable.id))
     .leftJoin(usersTable,    eq(storesTable.userId,         usersTable.id))
     .leftJoin(bundlesTable,  eq(storeOrdersTable.bundleId,  bundlesTable.id))
+    .where(where)
     .orderBy(desc(storeOrdersTable.id));
-  res.json(rows.map(o => {
+
+  const fmt = (o: Awaited<ReturnType<typeof baseQuery.execute>>[number]) => {
     const sellingPrice = parseFloat(o.sellingPrice as any);
     const basePrice    = parseFloat(o.basePrice as any);
     const profit       = parseFloat(o.profit as any);
@@ -982,7 +1167,23 @@ router.get("/admin/store-orders", requireAuth, async (req, res) => {
     }
     const systemProfit = agentCost != null ? +(agentCost - basePrice).toFixed(2) : null;
     return { ...o, sellingPrice, basePrice, agentCost, profit, systemProfit, ownerName: o.ownerName ?? null };
-  }));
+  };
+
+  if (!wantsPage) {
+    // Legacy shape: bounded plain array (date range keeps this naturally small).
+    const rows = await baseQuery.limit(5000);
+    res.json(rows.map(fmt));
+    return;
+  }
+
+  const [[{ total }], rows] = await Promise.all([
+    db.select({ total: count() })
+      .from(storeOrdersTable)
+      .innerJoin(storesTable, eq(storeOrdersTable.storeId, storesTable.id))
+      .where(where),
+    baseQuery.limit(pageSize).offset(offset),
+  ]);
+  res.json({ total: Number(total), page, pageSize, data: rows.map(fmt) });
 });
 
 router.patch("/admin/store-orders/:id/complete", requireAuth, async (req, res) => {

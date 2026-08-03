@@ -1,9 +1,8 @@
 import { useState, useMemo, useCallback, useEffect } from "react";
 import {
-  useAdminListOrders,
   useAdminUpdateOrderStatus,
-  getAdminListOrdersQueryKey,
 } from "@workspace/api-client-react";
+import type { Order } from "@workspace/api-client-react";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { AdminSidebar } from "@/components/AdminSidebar";
@@ -106,21 +105,47 @@ function AdminOrdersContent() {
     const t = setTimeout(() => setDebouncedSearch(searchTerm), 300);
     return () => clearTimeout(t);
   }, [searchTerm]);
-  const listParams = useMemo(() => (debouncedSearch ? { search: debouncedSearch } : {}), [debouncedSearch]);
 
-  const { data: allOrders, isLoading, refetch } = useAdminListOrders(listParams);
+  // Server-side query params for /api/admin/orders. When searching, dates are
+  // IGNORED server-side (full-history search — powers the widen-dates hint), so
+  // we only send `search`. When NOT searching we bound the result set with the
+  // page's date range (+ network) so we never load the full order history.
+  // No `page` param is sent → the server returns the legacy array response so
+  // all existing client-side logic (status tabs, stat cards, network pending
+  // counts, CSV export, client paging/sorting) keeps working over the bounded
+  // set.
+  const listParams = useMemo<Record<string, string>>(() => {
+    if (debouncedSearch) return { search: debouncedSearch };
+    const p: Record<string, string> = {};
+    if (dateFrom) p.dateFrom = dateFrom;
+    if (dateTo) p.dateTo = dateTo;
+    if (networkFilter !== "all") p.network = networkFilter;
+    return p;
+  }, [debouncedSearch, dateFrom, dateTo, networkFilter]);
+
+  const ordersQueryKey = useMemo(() => ["adminOrders", listParams] as const, [listParams]);
+
+  const { data: allOrders, isLoading, refetch } = useQuery<Order[]>({
+    queryKey: ordersQueryKey,
+    queryFn: () => {
+      const qs = new URLSearchParams(listParams).toString();
+      return fetch(`/api/admin/orders${qs ? `?${qs}` : ""}`, { credentials: "include" })
+        .then(r => { if (!r.ok) throw new Error("Failed to fetch orders"); return r.json(); });
+    },
+    placeholderData: (prev) => prev,
+  });
   const updateStatus = useAdminUpdateOrderStatus();
 
   const patchOrder = useCallback((orderId: number, patch: Record<string, unknown>) => {
     queryClient.setQueryData(
-      getAdminListOrdersQueryKey(listParams),
+      ordersQueryKey,
       (old: unknown) => Array.isArray(old) ? old.map((o: { id: number }) => o.id === orderId ? { ...o, ...patch } : o) : old
     );
-  }, [queryClient, listParams]);
+  }, [queryClient, ordersQueryKey]);
 
   const invalidate = useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: getAdminListOrdersQueryKey(listParams) });
-  }, [queryClient, listParams]);
+    queryClient.invalidateQueries({ queryKey: ["adminOrders"] });
+  }, [queryClient]);
 
   const handleStatusChange = (orderId: number, status: string) => {
     updateStatus.mutate({ id: orderId, data: { status } }, {
@@ -179,15 +204,41 @@ function AdminOrdersContent() {
     }
   };
 
-  // ── Store Orders (always fetched so network pending counts include them) ──
-  const { data: storeOrders, isLoading: storeOrdersLoading, refetch: refetchStoreOrders } = useQuery<any[]>({
-    queryKey: ["adminStoreOrders"],
-    queryFn: () => fetch("/api/admin/store-orders", { credentials: "include" }).then(r => r.json()),
-  });
-
   const [actioningId, setActioningId] = useState<number | null>(null);
   const [storeStatusFilter, setStoreStatusFilter] = useState<string>("all");
   const [storePhoneSearch, setStorePhoneSearch] = useState("");
+
+  // Debounce the store phone search — when non-empty it drives a full-history
+  // server-side phone lookup (so the "widen dates" hint keeps working); when
+  // empty the query is bounded by the page's date range instead.
+  const [debouncedStorePhone, setDebouncedStorePhone] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedStorePhone(storePhoneSearch.trim()), 300);
+    return () => clearTimeout(t);
+  }, [storePhoneSearch]);
+
+  // ── Store Orders (always fetched so network pending counts include them) ──
+  // Bounded server-side: a non-empty (debounced) phone search takes precedence
+  // and returns full-history matches; otherwise the date range bounds the set.
+  // Network/status stay client-side filters (counts need multiple statuses),
+  // and `page` is omitted so the legacy array response is returned.
+  const storeListParams = useMemo<Record<string, string>>(() => {
+    if (debouncedStorePhone) return { phone: debouncedStorePhone };
+    const p: Record<string, string> = {};
+    if (dateFrom) p.dateFrom = dateFrom;
+    if (dateTo) p.dateTo = dateTo;
+    return p;
+  }, [debouncedStorePhone, dateFrom, dateTo]);
+
+  const { data: storeOrders, isLoading: storeOrdersLoading, refetch: refetchStoreOrders } = useQuery<any[]>({
+    queryKey: ["adminStoreOrders", storeListParams],
+    queryFn: () => {
+      const qs = new URLSearchParams(storeListParams).toString();
+      return fetch(`/api/admin/store-orders${qs ? `?${qs}` : ""}`, { credentials: "include" })
+        .then(r => { if (!r.ok) throw new Error("Failed to fetch store orders"); return r.json(); });
+    },
+    placeholderData: (prev) => prev,
+  });
 
   // Store orders share the SAME date range + network filter as platform orders
   // (one filter bar for the whole page — no duplicate controls).
@@ -203,9 +254,9 @@ function AdminOrdersContent() {
 
   // Mirror of the platform "widen dates" affordance for store orders: when a
   // phone search finds nothing inside the current date range but matches exist
-  // outside it, surface a one-click fix. /api/admin/store-orders returns the
-  // full history (no limit), so the loaded set is authoritative — no extra
-  // server round-trip is needed.
+  // outside it, surface a one-click fix. During an active phone search the
+  // server ignores dates and returns the full-history matches for that phone,
+  // so the loaded set is authoritative — no extra server round-trip is needed.
   const storeOutsideRangeMatches = useMemo(() => {
     if (!storePhoneSearch.trim() || filteredStoreOrders.length > 0) return null;
     let src = Array.isArray(storeOrders) ? storeOrders : [];
@@ -934,7 +985,7 @@ function AdminOrdersContent() {
                                 <OrderDeliveryCheckButton
                                   orderId={order.id}
                                   scope="admin"
-                                  invalidateKeys={[getAdminListOrdersQueryKey({})]}
+                                  invalidateKeys={[["adminOrders"]]}
                                 />
                               )}
                               <button

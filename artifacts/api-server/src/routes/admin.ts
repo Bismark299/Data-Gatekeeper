@@ -30,15 +30,9 @@ import {
 import { requireAdmin } from "../middlewares/auth";
 import { z } from "zod";
 
+import { parsePage, parseDateRange } from "../lib/pagination";
+
 const router: IRouter = Router();
-
-// ── Pagination helper ─────────────────────────────────────────────────────────
-
-function parsePage(query: Record<string, unknown>) {
-  const page = Math.max(1, parseInt(String(query.page ?? "1")));
-  const pageSize = Math.min(200, Math.max(1, parseInt(String(query.pageSize ?? "50"))));
-  return { page, pageSize, offset: (page - 1) * pageSize };
-}
 
 // ── Formatters ────────────────────────────────────────────────────────────────
 
@@ -83,20 +77,69 @@ router.get("/admin/users", requireAdmin, async (req, res): Promise<void> => {
   }
 
   const { search, role } = params.data;
+  const q = req.query as Record<string, string>;
   const conditions: SQL[] = [isNull(usersTable.deletedAt)];
 
-  if (search) conditions.push(ilike(usersTable.name, `%${search}%`));
-  if (role)   conditions.push(eq(usersTable.role, role));
+  if (search && search.trim()) {
+    const s = search.trim();
+    const searchConds: SQL[] = [
+      ilike(usersTable.name, `%${s}%`),
+      ilike(usersTable.email, `%${s}%`),
+      ilike(usersTable.phone, `%${s}%`),
+      ilike(usersTable.depositCode, `%${s}%`),
+    ];
+    const asId = Number(s);
+    if (Number.isInteger(asId) && asId > 0) searchConds.push(eq(usersTable.id, asId));
+    conditions.push(or(...searchConds)!);
+  }
+  if (role) conditions.push(eq(usersTable.role, role));
+  if (q.status === "active")   conditions.push(eq(usersTable.isActive, true));
+  if (q.status === "inactive") conditions.push(eq(usersTable.isActive, false));
 
-  const rows = await db
+  const { wantsPage, page, pageSize, offset } = parsePage(q);
+
+  const baseQuery = db
     .select({ user: usersTable, balance: walletsTable.balance })
     .from(usersTable)
     .leftJoin(walletsTable, eq(walletsTable.userId, usersTable.id))
     .where(and(...conditions))
-    .orderBy(desc(usersTable.createdAt))
-    .limit(500);
+    .orderBy(desc(usersTable.createdAt));
 
-  res.json(rows.map(r => ({ ...formatUser(r.user), walletBalance: Number(r.balance ?? 0) })));
+  if (!wantsPage) {
+    // Legacy shape: bounded plain array.
+    const rows = await baseQuery.limit(500);
+    res.json(rows.map(r => ({ ...formatUser(r.user), walletBalance: Number(r.balance ?? 0) })));
+    return;
+  }
+
+  const [[{ total }], statRows, rows] = await Promise.all([
+    db.select({ total: count() }).from(usersTable).where(and(...conditions)),
+    // Global stats (unfiltered, non-deleted) so the stat cards stay accurate
+    // regardless of the active filters/page.
+    db.select({ role: usersTable.role, isActive: usersTable.isActive, cnt: count() })
+      .from(usersTable)
+      .where(isNull(usersTable.deletedAt))
+      .groupBy(usersTable.role, usersTable.isActive),
+    baseQuery.limit(pageSize).offset(offset),
+  ]);
+
+  const stats = { total: 0, admins: 0, agents: 0, dealers: 0, active: 0 };
+  for (const r of statRows) {
+    const n = Number(r.cnt);
+    stats.total += n;
+    if (r.role === "admin") stats.admins += n;
+    if (r.role === "agent") stats.agents += n;
+    if (r.role === "dealer") stats.dealers += n;
+    if (r.isActive) stats.active += n;
+  }
+
+  res.json({
+    total: Number(total),
+    page,
+    pageSize,
+    stats,
+    data: rows.map(r => ({ ...formatUser(r.user), walletBalance: Number(r.balance ?? 0) })),
+  });
 });
 
 router.get("/admin/users/deleted", requireAdmin, async (req, res): Promise<void> => {
@@ -246,6 +289,7 @@ router.get("/admin/orders", requireAdmin, async (req, res): Promise<void> => {
   }
 
   const { status, userId, search } = params.data;
+  const q = req.query as Record<string, string>;
   const conditions: SQL[] = [];
   // Filter values map onto the split model: payment values filter `status`,
   // fulfillment values filter `delivered`. "pending" = paid but not dispatched.
@@ -267,6 +311,7 @@ router.get("/admin/orders", requireAdmin, async (req, res): Promise<void> => {
     else conditions.push(eq(ordersTable.status, status));
   }
   if (userId !== undefined) conditions.push(eq(ordersTable.userId, userId));
+  const searching = !!(search && search.trim());
   if (search && search.trim()) {
     const s = search.trim();
     const searchConds: SQL[] = [ilike(ordersTable.phoneNumber, `%${s}%`)];
@@ -274,6 +319,28 @@ router.get("/admin/orders", requireAdmin, async (req, res): Promise<void> => {
     if (Number.isInteger(asId) && asId > 0) searchConds.push(eq(ordersTable.id, asId));
     conditions.push(or(...searchConds)!);
   }
+
+  // Server-side date range + network filters so the page never has to load full
+  // history. When a date range is active (and we're not doing a full-history
+  // search), rows still awaiting dispatch or in-flight (paid + not delivered)
+  // are ALWAYS included regardless of date so the "Pending by Network" copy
+  // buttons and processing counts keep seeing older unfinished orders.
+  if (!searching) {
+    const { from, to } = parseDateRange(q.dateFrom, q.dateTo);
+    if (from || to) {
+      const dateConds: SQL[] = [];
+      if (from) dateConds.push(gte(ordersTable.createdAt, from));
+      if (to)   dateConds.push(lte(ordersTable.createdAt, to));
+      const activeRows = and(
+        eq(ordersTable.status, "paid"),
+        or(isNull(ordersTable.delivered), eq(ordersTable.delivered, "processing")),
+      )!;
+      conditions.push(or(and(...dateConds)!, activeRows)!);
+    }
+  }
+  if (q.network && q.network !== "all") conditions.push(eq(bundlesTable.network, q.network));
+
+  const { wantsPage, page, pageSize, offset } = parsePage(q);
 
   const baseQuery = db
     .select({
@@ -287,14 +354,37 @@ router.get("/admin/orders", requireAdmin, async (req, res): Promise<void> => {
     .leftJoin(usersTable, eq(usersTable.id, ordersTable.userId))
     .leftJoin(topupghBatchesTable, eq(topupghBatchesTable.id, ordersTable.topupghBatchId));
 
-  const rows = conditions.length > 0
-    ? await baseQuery.where(and(...conditions)).orderBy(desc(ordersTable.id)).limit(2000)
-    : await baseQuery.orderBy(desc(ordersTable.id)).limit(2000);
+  const whered = conditions.length > 0 ? baseQuery.where(and(...conditions)) : baseQuery;
 
-  res.json(rows.map(r => ({
-    ...formatOrder(r.order, r.network, r.userName),
-    delivery: extractDeliveryInfo(r.deliveryData).get(r.order.phoneNumber) ?? null,
-  })));
+  if (!wantsPage) {
+    // Legacy shape: bounded plain array. With a date range the set is naturally
+    // bounded; keep a generous safety cap either way.
+    const rows = await whered.orderBy(desc(ordersTable.id)).limit(5000);
+    res.json(rows.map(r => ({
+      ...formatOrder(r.order, r.network, r.userName),
+      delivery: extractDeliveryInfo(r.deliveryData).get(r.order.phoneNumber) ?? null,
+    })));
+    return;
+  }
+
+  const countQuery = db
+    .select({ total: count() })
+    .from(ordersTable)
+    .leftJoin(bundlesTable, eq(bundlesTable.id, ordersTable.bundleId));
+  const [[{ total }], rows] = await Promise.all([
+    conditions.length > 0 ? countQuery.where(and(...conditions)) : countQuery,
+    whered.orderBy(desc(ordersTable.id)).limit(pageSize).offset(offset),
+  ]);
+
+  res.json({
+    total: Number(total),
+    page,
+    pageSize,
+    data: rows.map(r => ({
+      ...formatOrder(r.order, r.network, r.userName),
+      delivery: extractDeliveryInfo(r.deliveryData).get(r.order.phoneNumber) ?? null,
+    })),
+  });
 });
 
 // Live per-order delivery check (admin manual trigger). Resolves the order's TopUpGH batch
@@ -914,7 +1004,48 @@ router.post("/admin/users/:id/reset-password", requireAdmin, async (req, res): P
 // ── Wallets ───────────────────────────────────────────────────────────────────
 
 router.get("/admin/wallets", requireAdmin, async (req, res): Promise<void> => {
-  const rows = await db
+  const q = req.query as Record<string, string>;
+  const { wantsPage, page, pageSize, offset } = parsePage(q);
+
+  // Per-user aggregates as subqueries so filtering, sorting AND paging all
+  // happen in one SQL round-trip (no N+1, no full-table load).
+  const dep = db
+    .select({ userId: depositsTable.userId, depTotal: sum(depositsTable.amount).as("dep_total") })
+    .from(depositsTable)
+    .where(eq(depositsTable.status, "completed"))
+    .groupBy(depositsTable.userId)
+    .as("dep");
+  const ord = db
+    .select({ userId: ordersTable.userId, ordTotal: sum(ordersTable.price).as("ord_total") })
+    .from(ordersTable)
+    .groupBy(ordersTable.userId)
+    .as("ord");
+
+  const conditions: SQL[] = [];
+  if (q.search && q.search.trim()) {
+    const s = q.search.trim();
+    const searchConds: SQL[] = [
+      ilike(usersTable.name, `%${s}%`),
+      ilike(usersTable.email, `%${s}%`),
+      ilike(usersTable.phone, `%${s}%`),
+      ilike(usersTable.depositCode, `%${s}%`),
+    ];
+    const asId = Number(s);
+    if (Number.isInteger(asId) && asId > 0) searchConds.push(eq(walletsTable.userId, asId));
+    conditions.push(or(...searchConds)!);
+  }
+
+  const sortMap: Record<string, SQL> = {
+    balance:     sql`${walletsTable.balance}`,
+    name:        sql`${usersTable.name}`,
+    updated:     sql`${walletsTable.updatedAt}`,
+    totalLoaded: sql`coalesce(${dep.depTotal}, 0)`,
+    totalOrders: sql`coalesce(${ord.ordTotal}, 0)`,
+  };
+  const sortExpr = sortMap[q.sort ?? "balance"] ?? sortMap.balance;
+  const orderExpr = q.dir === "asc" ? sql`${sortExpr} asc nulls first` : sql`${sortExpr} desc nulls last`;
+
+  const baseQuery = db
     .select({
       id: walletsTable.id,
       userId: walletsTable.userId,
@@ -925,27 +1056,17 @@ router.get("/admin/wallets", requireAdmin, async (req, res): Promise<void> => {
       userPhone: usersTable.phone,
       userRole: usersTable.role,
       userDepositCode: usersTable.depositCode,
+      totalLoaded: dep.depTotal,
+      totalOrders: ord.ordTotal,
     })
     .from(walletsTable)
     .leftJoin(usersTable, eq(walletsTable.userId, usersTable.id))
-    .orderBy(desc(walletsTable.balance))
-    .limit(500);
+    .leftJoin(dep, eq(dep.userId, walletsTable.userId))
+    .leftJoin(ord, eq(ord.userId, walletsTable.userId))
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(orderExpr);
 
-  const depositTotals = await db
-    .select({ userId: depositsTable.userId, total: sum(depositsTable.amount) })
-    .from(depositsTable)
-    .where(eq(depositsTable.status, "completed"))
-    .groupBy(depositsTable.userId);
-
-  const orderTotals = await db
-    .select({ userId: ordersTable.userId, total: sum(ordersTable.price) })
-    .from(ordersTable)
-    .groupBy(ordersTable.userId);
-
-  const depMap = new Map(depositTotals.map(d => [d.userId, Number(d.total ?? 0)]));
-  const ordMap = new Map(orderTotals.map(o => [o.userId, Number(o.total ?? 0)]));
-
-  res.json(rows.map(w => ({
+  const fmt = (w: Awaited<ReturnType<typeof baseQuery.execute>>[number]) => ({
     id: w.id,
     userId: w.userId,
     balance: Number(w.balance),
@@ -955,9 +1076,48 @@ router.get("/admin/wallets", requireAdmin, async (req, res): Promise<void> => {
     userPhone: w.userPhone ?? null,
     userRole: w.userRole ?? "user",
     userDepositCode: w.userDepositCode ?? null,
-    totalLoaded: depMap.get(w.userId!) ?? 0,
-    totalOrders: ordMap.get(w.userId!) ?? 0,
-  })));
+    totalLoaded: Number(w.totalLoaded ?? 0),
+    totalOrders: Number(w.totalOrders ?? 0),
+  });
+
+  if (!wantsPage) {
+    const rows = await baseQuery.limit(500);
+    res.json(rows.map(fmt));
+    return;
+  }
+
+  const countQuery = db
+    .select({ total: count() })
+    .from(walletsTable)
+    .leftJoin(usersTable, eq(walletsTable.userId, usersTable.id))
+    .where(conditions.length > 0 ? and(...conditions) : undefined);
+
+  const [[{ total }], rows, [balAgg], [depAgg], [ordAgg]] = await Promise.all([
+    countQuery,
+    baseQuery.limit(pageSize).offset(offset),
+    // Global stat-card aggregates (unfiltered) computed in SQL.
+    db.select({
+      totalUsers: count(),
+      totalBalance: sum(walletsTable.balance),
+      funded: sql<number>`count(*) filter (where ${walletsTable.balance} > 0)`,
+    }).from(walletsTable),
+    db.select({ total: sum(depositsTable.amount) }).from(depositsTable).where(eq(depositsTable.status, "completed")),
+    db.select({ total: sum(ordersTable.price) }).from(ordersTable),
+  ]);
+
+  res.json({
+    total: Number(total),
+    page,
+    pageSize,
+    stats: {
+      totalUsers: Number(balAgg.totalUsers),
+      totalBalance: Number(balAgg.totalBalance ?? 0),
+      funded: Number(balAgg.funded),
+      totalLoaded: Number(depAgg.total ?? 0),
+      totalOrders: Number(ordAgg.total ?? 0),
+    },
+    data: rows.map(fmt),
+  });
 });
 
 router.post("/admin/wallets/:userId/topup", requireAdmin, async (req, res): Promise<void> => {
@@ -1052,28 +1212,53 @@ router.get("/admin/wallets/:userId/deposits", requireAdmin, async (req, res): Pr
   const userId = Number(req.params.userId);
   if (isNaN(userId)) { res.status(400).json({ error: "Invalid user ID" }); return; }
 
-  const deposits = await db
+  const { wantsPage, page, pageSize, offset } = parsePage(req.query as Record<string, unknown>);
+
+  const baseQuery = db
     .select()
     .from(depositsTable)
     .where(eq(depositsTable.userId, userId))
     .orderBy(desc(depositsTable.createdAt));
 
-  res.json(deposits.map(d => ({
+  const fmt = (d: typeof depositsTable.$inferSelect) => ({
     id: d.id,
     amount: Number(d.amount),
     method: d.method,
     reference: d.reference,
     status: d.status,
     createdAt: d.createdAt.toISOString(),
-  })));
+  });
+
+  if (!wantsPage) {
+    const deposits = await baseQuery.limit(200);
+    res.json(deposits.map(fmt));
+    return;
+  }
+
+  const [[{ total }], deposits] = await Promise.all([
+    db.select({ total: count() }).from(depositsTable).where(eq(depositsTable.userId, userId)),
+    baseQuery.limit(pageSize).offset(offset),
+  ]);
+  res.json({ total: Number(total), page, pageSize, data: deposits.map(fmt) });
 });
 
 // ── Deposits ──────────────────────────────────────────────────────────────────
 
 router.get("/admin/deposits", requireAdmin, async (req, res): Promise<void> => {
-  const { status } = req.query as { status?: string };
+  const q = req.query as Record<string, string>;
+  const { status, search } = q;
   const conditions: SQL[] = [];
-  if (status) conditions.push(eq(depositsTable.status, status));
+  if (status && status !== "all") conditions.push(eq(depositsTable.status, status));
+  if (search && search.trim()) {
+    const s = search.trim();
+    conditions.push(or(
+      ilike(usersTable.name, `%${s}%`),
+      ilike(usersTable.email, `%${s}%`),
+      ilike(depositsTable.reference, `%${s}%`),
+    )!);
+  }
+
+  const { wantsPage, page, pageSize, offset } = parsePage(q);
 
   const baseQuery = db
     .select({
@@ -1089,13 +1274,45 @@ router.get("/admin/deposits", requireAdmin, async (req, res): Promise<void> => {
       createdAt: depositsTable.createdAt,
     })
     .from(depositsTable)
-    .leftJoin(usersTable, eq(depositsTable.userId, usersTable.id));
+    .leftJoin(usersTable, eq(depositsTable.userId, usersTable.id))
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(depositsTable.createdAt));
 
-  const rows = conditions.length > 0
-    ? await baseQuery.where(and(...conditions)).orderBy(desc(depositsTable.createdAt)).limit(500)
-    : await baseQuery.orderBy(desc(depositsTable.createdAt)).limit(500);
+  if (!wantsPage) {
+    const rows = await baseQuery.limit(500);
+    res.json(rows.map(d => ({ ...d, amount: parseFloat(d.amount) })));
+    return;
+  }
 
-  res.json(rows.map(d => ({ ...d, amount: parseFloat(d.amount) })));
+  const countQuery = db
+    .select({ total: count() })
+    .from(depositsTable)
+    .leftJoin(usersTable, eq(depositsTable.userId, usersTable.id))
+    .where(conditions.length > 0 ? and(...conditions) : undefined);
+
+  const [[{ total }], rows, statusRows] = await Promise.all([
+    countQuery,
+    baseQuery.limit(pageSize).offset(offset),
+    // Per-status counts for the tab badges — global (unfiltered by status/search).
+    db.select({ status: depositsTable.status, cnt: count() })
+      .from(depositsTable)
+      .groupBy(depositsTable.status),
+  ]);
+
+  const counts: Record<string, number> = { all: 0 };
+  for (const r of statusRows) {
+    const n = Number(r.cnt);
+    counts.all += n;
+    counts[r.status] = (counts[r.status] ?? 0) + n;
+  }
+
+  res.json({
+    total: Number(total),
+    page,
+    pageSize,
+    counts,
+    data: rows.map(d => ({ ...d, amount: parseFloat(d.amount) })),
+  });
 });
 
 router.post("/admin/deposits/:id/approve", requireAdmin, async (req, res): Promise<void> => {
@@ -2174,8 +2391,12 @@ router.get("/admin/api-clients/all-users", requireAdmin, async (_req, res) => {
   });
 });
 
-router.get("/admin/api-clients", requireAdmin, async (_req, res) => {
-  const users = await db
+router.get("/admin/api-clients", requireAdmin, async (req, res) => {
+  const q = req.query as Record<string, string>;
+  const { wantsPage, page, pageSize, offset } = parsePage(q);
+  const where = and(isNotNull(usersTable.apiKeyHash), isNull(usersTable.deletedAt));
+
+  const baseQuery = db
     .select({
       id:         usersTable.id,
       name:       usersTable.name,
@@ -2187,10 +2408,16 @@ router.get("/admin/api-clients", requireAdmin, async (_req, res) => {
       createdAt:  usersTable.createdAt,
     })
     .from(usersTable)
-    .where(and(isNotNull(usersTable.apiKeyHash), isNull(usersTable.deletedAt)))
+    .where(where)
     .orderBy(desc(usersTable.createdAt));
 
+  const [users, totalRow] = await Promise.all([
+    wantsPage ? baseQuery.limit(pageSize).offset(offset) : baseQuery.limit(500),
+    wantsPage ? db.select({ total: count() }).from(usersTable).where(where) : Promise.resolve(null),
+  ]);
+
   res.json({
+    ...(wantsPage ? { total: Number(totalRow![0].total), page, pageSize } : {}),
     users: users.map(u => ({
       id:         u.id,
       name:       u.name,

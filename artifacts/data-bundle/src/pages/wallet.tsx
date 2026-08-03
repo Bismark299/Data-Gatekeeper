@@ -1,8 +1,6 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   useGetWalletBalance,
-  useListDeposits,
-  useGetWalletLedger,
   useInitializePaystackDeposit,
   useClaimMomoDeposit,
   useGetMomoInfo,
@@ -10,8 +8,10 @@ import {
   getListDepositsQueryKey,
   getGetWalletLedgerQueryKey,
   verifyPaystackDeposit,
+  type Deposit,
+  type WalletLedgerEntry,
 } from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { Navbar } from "@/components/Navbar";
 import { Button } from "@/components/ui/button";
@@ -29,6 +29,22 @@ import {
 const QUICK_AMOUNTS = [5, 10, 20, 50, 100, 200];
 const PAGE_SIZE_OPTIONS = [5, 10, 25, 50];
 
+interface DepositsPage { total: number; page: number; pageSize: number; data: Deposit[]; }
+interface LedgerPage { total: number; page: number; pageSize: number; data: WalletLedgerEntry[]; }
+
+async function fetchDepositsPage(page: number, pageSize: number): Promise<DepositsPage> {
+  const qs = new URLSearchParams({ page: String(page), pageSize: String(pageSize) }).toString();
+  const res = await fetch(`/api/deposits?${qs}`, { credentials: "include" });
+  if (!res.ok) throw new Error("Failed to fetch deposits");
+  return res.json();
+}
+async function fetchLedgerPage(page: number, pageSize: number): Promise<LedgerPage> {
+  const qs = new URLSearchParams({ page: String(page), pageSize: String(pageSize) }).toString();
+  const res = await fetch(`/api/ledger?${qs}`, { credentials: "include" });
+  if (!res.ok) throw new Error("Failed to fetch ledger");
+  return res.json();
+}
+
 export default function WalletPage() {
   return (
     <ProtectedRoute>
@@ -45,7 +61,11 @@ function WalletContent() {
   const [autoVerifying, setAutoVerifying]   = useState(false);
   const [manualVerifying, setManualVerifying] = useState(false);
 
-  // Pagination
+  // Transaction history tabs: "activity" = full wallet ledger (deposits,
+  // purchases, refunds), "deposits" = deposit records incl. pending/rejected.
+  const [historyTab, setHistoryTab] = useState<"activity" | "deposits">("activity");
+
+  // Pagination (server-driven, per tab)
   const [page, setPage]         = useState(1);
   const [pageSize, setPageSize] = useState(10);
 
@@ -55,11 +75,24 @@ function WalletContent() {
   const { data: wallet, isLoading: balanceLoading } = useGetWalletBalance(
     { query: { refetchInterval: 12_000 } } as any,
   );
-  const { data: deposits } = useListDeposits({ query: { refetchInterval: 15_000 } } as any);
-  const { data: ledger }    = useGetWalletLedger({ query: { refetchInterval: 15_000 } } as any);
   const { data: momoInfo }  = useGetMomoInfo();
   const initPaystack        = useInitializePaystackDeposit();
   const claimMomo           = useClaimMomoDeposit();
+
+  const depositsQuery = useQuery({
+    queryKey: [...getListDepositsQueryKey(), page, pageSize],
+    queryFn: () => fetchDepositsPage(page, pageSize),
+    enabled: historyTab === "deposits",
+    placeholderData: (prev) => prev,
+    refetchInterval: 15_000,
+  });
+  const ledgerQuery = useQuery({
+    queryKey: [...getGetWalletLedgerQueryKey(), page, pageSize],
+    queryFn: () => fetchLedgerPage(page, pageSize),
+    enabled: historyTab === "activity",
+    placeholderData: (prev) => prev,
+    refetchInterval: 15_000,
+  });
 
   const invalidate = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: getGetWalletBalanceQueryKey() });
@@ -173,23 +206,11 @@ function WalletContent() {
     navigator.clipboard.writeText(text).then(() => toast({ title: `${label} copied!` }));
   };
 
-  // Transaction history tabs: "activity" = full wallet ledger (deposits,
-  // purchases, refunds), "deposits" = deposit records incl. pending/rejected.
-  const [historyTab, setHistoryTab] = useState<"activity" | "deposits">("activity");
-
-  // Pagination logic (shared across both tabs)
-  const totalRows  = (historyTab === "activity" ? ledger?.length : deposits?.length) ?? 0;
+  // Pagination logic (server-driven, per tab)
+  const pagedDeposits = historyTab === "deposits" ? (depositsQuery.data?.data ?? []) : [];
+  const pagedLedger   = historyTab === "activity" ? (ledgerQuery.data?.data ?? []) : [];
+  const totalRows  = (historyTab === "activity" ? ledgerQuery.data?.total : depositsQuery.data?.total) ?? 0;
   const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
-  const pagedDeposits = useMemo(() => {
-    if (historyTab !== "deposits") return [];
-    const start = (page - 1) * pageSize;
-    return (deposits ?? []).slice(start, start + pageSize);
-  }, [deposits, page, pageSize, historyTab]);
-  const pagedLedger = useMemo(() => {
-    if (historyTab !== "activity") return [];
-    const start = (page - 1) * pageSize;
-    return (ledger ?? []).slice(start, start + pageSize);
-  }, [ledger, page, pageSize, historyTab]);
 
   const ledgerLabel = (source: string, type: string) => {
     switch (source) {

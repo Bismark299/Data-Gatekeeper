@@ -1,5 +1,5 @@
-import { useState, useMemo } from "react";
-import { useListMyOrders } from "@workspace/api-client-react";
+import { useState, useMemo, useEffect } from "react";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { Navbar } from "@/components/Navbar";
 import { Link } from "wouter";
@@ -55,6 +55,45 @@ const NETWORK_COLORS: Record<string, string> = {
 
 const todayStr = new Date().toISOString().slice(0, 10);
 
+const PAGE_SIZE = 50;
+
+type MyOrder = {
+  id: number;
+  status: string;
+  delivered?: string | null;
+  price: number;
+  phoneNumber: string;
+  network?: string | null;
+  createdAt: string;
+  bundleData?: string;
+  delivery?: { status?: string; date?: string; time?: string } | null;
+};
+
+interface StatusCount { status: string; delivered: string | null; count: number; }
+
+interface OrdersPage {
+  total: number;
+  page: number;
+  pageSize: number;
+  statusCounts: StatusCount[];
+  data: MyOrder[];
+}
+
+async function fetchOrdersPage(params: {
+  status: string; phone: string; dateFrom: string; dateTo: string; page: number;
+}): Promise<OrdersPage> {
+  const qs = new URLSearchParams();
+  if (params.status && params.status !== "all") qs.set("status", params.status);
+  if (params.phone) qs.set("phone", params.phone);
+  if (params.dateFrom) qs.set("dateFrom", params.dateFrom);
+  if (params.dateTo) qs.set("dateTo", params.dateTo);
+  qs.set("page", String(params.page));
+  qs.set("pageSize", String(PAGE_SIZE));
+  const res = await fetch(`/api/orders?${qs.toString()}`, { credentials: "include" });
+  if (!res.ok) throw new Error("Failed to fetch orders");
+  return res.json();
+}
+
 export default function Orders() {
   return (
     <ProtectedRoute>
@@ -64,63 +103,62 @@ export default function Orders() {
 }
 
 function OrdersContent() {
-  const { data: orders, isLoading } = useListMyOrders({ refetchInterval: 10000, staleTime: 0 } as any);
-
   const [activeStatus, setActiveStatus] = useState<StatusKey>("all");
   const [phoneSearch, setPhoneSearch] = useState("");
   const [dateFrom, setDateFrom]       = useState(todayStr);
   const [dateTo, setDateTo]           = useState(todayStr);
 
-  // counts apply date filter but NOT status filter, so badges reflect the selected period
+  // Debounce the phone search (server ilike) — 300ms like admin/orders.tsx
+  const [debouncedPhone, setDebouncedPhone] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedPhone(phoneSearch.trim()), 300);
+    return () => clearTimeout(t);
+  }, [phoneSearch]);
+
+  const queryParams = useMemo(
+    () => ({ status: activeStatus, phone: debouncedPhone, dateFrom, dateTo }),
+    [activeStatus, debouncedPhone, dateFrom, dateTo],
+  );
+
+  const {
+    data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage,
+  } = useInfiniteQuery({
+    queryKey: ["my-orders", queryParams],
+    queryFn: ({ pageParam }) => fetchOrdersPage({ ...queryParams, page: pageParam }),
+    initialPageParam: 1,
+    getNextPageParam: (lastPage) =>
+      lastPage.page * lastPage.pageSize < lastPage.total ? lastPage.page + 1 : undefined,
+    placeholderData: (prev) => prev,
+    // Poll to keep the list fresh; refetches all loaded pages.
+    refetchInterval: 10_000,
+    staleTime: 0,
+  });
+
+  // Accumulate all loaded pages into one flat list.
+  const filtered = useMemo<MyOrder[]>(
+    () => (data?.pages ?? []).flatMap(p => p.data),
+    [data],
+  );
+
+  const total = data?.pages[0]?.total ?? 0;
+
+  // statusCounts is scoped to date/phone but ignores the status filter, so the
+  // badges reflect the selected period. Map raw (status, delivered) pairs onto
+  // the page's phase buckets (mirrors platformPhase in @/lib/orderPhase).
   const counts = useMemo(() => {
-    let list = orders ?? [];
-    if (dateFrom) {
-      const from = new Date(dateFrom); from.setHours(0, 0, 0, 0);
-      list = list.filter(o => new Date(o.createdAt) >= from);
+    const raw = data?.pages[0]?.statusCounts ?? [];
+    const c = { all: 0, pending: 0, processing: 0, completed: 0, failed: 0, refunded: 0 };
+    for (const { status, delivered, count } of raw) {
+      const phase = platformPhase({ status, delivered });
+      c.all += count;
+      c[phase] += count;
     }
-    if (dateTo) {
-      const to = new Date(dateTo); to.setHours(23, 59, 59, 999);
-      list = list.filter(o => new Date(o.createdAt) <= to);
-    }
-    return {
-      all:        list.length,
-      pending:    list.filter(o => platformPhase(o as any) === "pending").length,
-      processing: list.filter(o => platformPhase(o as any) === "processing").length,
-      completed:  list.filter(o => platformPhase(o as any) === "completed").length,
-      failed:     list.filter(o => platformPhase(o as any) === "failed").length,
-      refunded:   list.filter(o => platformPhase(o as any) === "refunded").length,
-    };
-  }, [orders, dateFrom, dateTo]);
+    return c;
+  }, [data]);
 
-  const filtered = useMemo(() => {
-    let list = orders ?? [];
-
-    if (activeStatus !== "all") {
-      list = list.filter(o => platformPhase(o as any) === activeStatus);
-    }
-
-    if (phoneSearch.trim()) {
-      const q = phoneSearch.trim().toLowerCase();
-      list = list.filter(o => o.phoneNumber?.toLowerCase().includes(q));
-    }
-
-    if (dateFrom) {
-      const from = new Date(dateFrom);
-      from.setHours(0, 0, 0, 0);
-      list = list.filter(o => new Date(o.createdAt) >= from);
-    }
-
-    if (dateTo) {
-      const to = new Date(dateTo);
-      to.setHours(23, 59, 59, 999);
-      list = list.filter(o => new Date(o.createdAt) <= to);
-    }
-
-    return list;
-  }, [orders, activeStatus, phoneSearch, dateFrom, dateTo]);
-
+  // totalSpent over loaded completed rows (approximate under pagination).
   const totalSpent = useMemo(
-    () => filtered.filter(o => platformPhase(o as any) === "completed").reduce((s, o) => s + o.price, 0),
+    () => filtered.filter(o => platformPhase(o) === "completed").reduce((s, o) => s + o.price, 0),
     [filtered]
   );
 
@@ -146,7 +184,7 @@ function OrdersContent() {
           <div>
             <h1 className="text-2xl font-bold text-foreground">My Orders</h1>
             <p className="text-muted-foreground text-sm mt-0.5">
-              {filtered.length} order{filtered.length !== 1 ? "s" : ""} · GH₵{totalSpent.toFixed(2)} spent
+              {total} order{total !== 1 ? "s" : ""} · GH₵{totalSpent.toFixed(2)} spent
             </p>
           </div>
           <Link href="/bundles">
@@ -229,8 +267,8 @@ function OrdersContent() {
           <div className="flex items-center justify-between pt-1">
             <span className="text-xs text-muted-foreground">
               {dateFrom === dateTo
-                ? `Showing ${filtered.length} order${filtered.length !== 1 ? "s" : ""} for ${dateFrom === todayStr ? "today" : dateFrom}`
-                : `Showing ${filtered.length} order${filtered.length !== 1 ? "s" : ""} — ${dateFrom} to ${dateTo}`}
+                ? `Showing ${total} order${total !== 1 ? "s" : ""} for ${dateFrom === todayStr ? "today" : dateFrom}`
+                : `Showing ${total} order${total !== 1 ? "s" : ""} — ${dateFrom} to ${dateTo}`}
             </span>
             {hasActiveFilters && (
               <button
@@ -252,7 +290,7 @@ function OrdersContent() {
           ) : filtered.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
               <ShoppingCart className="w-10 h-10 mb-3 opacity-20" />
-              {(orders?.length ?? 0) === 0 ? (
+              {!hasActiveFilters && total === 0 ? (
                 <>
                   <p className="text-sm font-medium mb-1">No orders yet</p>
                   <p className="text-xs mb-4">Purchase your first data bundle to get started</p>
@@ -299,7 +337,7 @@ function OrdersContent() {
                   {filtered.map(order => {
                     const netColor = NETWORK_COLORS[order.network ?? ""] ?? "bg-muted text-foreground";
                     const netLabel = NETWORK_LABELS[order.network ?? ""] ?? (order.network ?? "—");
-                    const del = (order as { delivery?: { status?: string; date?: string; time?: string } | null }).delivery ?? null;
+                    const del = order.delivery ?? null;
                     return (
                       <tr
                         key={order.id}
@@ -313,7 +351,7 @@ function OrdersContent() {
                         </td>
                         <td className="px-5 py-3.5 text-muted-foreground text-xs font-mono">#{order.id}</td>
                         <td className="px-5 py-3.5 text-foreground font-mono text-xs">{order.phoneNumber}</td>
-                        <td className="px-5 py-3.5 font-semibold text-foreground text-xs">{(order as { bundleData?: string }).bundleData ?? "—"}</td>
+                        <td className="px-5 py-3.5 font-semibold text-foreground text-xs">{order.bundleData ?? "—"}</td>
                         <td className="px-5 py-3.5">
                           <span className={`inline-block px-2 py-0.5 rounded-md text-xs font-extrabold ${netColor}`}>
                             {netLabel}
@@ -322,11 +360,11 @@ function OrdersContent() {
                         <td className="px-5 py-3.5 font-bold text-foreground">GH₵{order.price}</td>
                         <td className="px-5 py-3.5">
                           <span
-                            className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold capitalize ${STATUS_COLORS[platformPhase(order as any)]}`}
+                            className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold capitalize ${STATUS_COLORS[platformPhase(order)]}`}
                             data-testid={`status-order-${order.id}`}
                           >
-                            {STATUS_ICONS[platformPhase(order as any)]}
-                            {platformPhase(order as any)}
+                            {STATUS_ICONS[platformPhase(order)]}
+                            {platformPhase(order)}
                           </span>
                         </td>
                         <td className="px-5 py-3.5">
@@ -344,6 +382,24 @@ function OrdersContent() {
                   })}
                 </tbody>
               </table>
+            </div>
+          )}
+
+          {/* Load more footer */}
+          {filtered.length > 0 && (
+            <div className="flex items-center justify-between px-5 py-3 border-t border-border text-xs text-muted-foreground">
+              <span>Showing {filtered.length} of {total}</span>
+              {hasNextPage && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => fetchNextPage()}
+                  disabled={isFetchingNextPage}
+                  data-testid="button-load-more"
+                >
+                  {isFetchingNextPage ? "Loading…" : "Load more"}
+                </Button>
+              )}
             </div>
           )}
         </div>
