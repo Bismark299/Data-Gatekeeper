@@ -248,13 +248,13 @@ function AdminDashboardContent() {
 
   const handleNetworkCopy = async (network: typeof networkPendingCounts[number]) => {
     if (network.count === 0) return;
-    const addGB = (s: string) => {
-      const m = s.match(/^([\d.]+)\s*(GB|MB|TB)?$/i);
-      if (!m) return s;
-      const unit = (m[2] ?? "GB").toUpperCase();
-      return `${m[1]}${unit === "GB" ? "GB" : unit}`;
+    const numericDataSize = (s: string) => {
+      const m = s.trim().match(/^(\d+(?:\.\d+)?)\s*(?:GB|MB|TB)?$/i);
+      return m?.[1] ?? s.trim();
     };
-    const text = network.orders.map(o => `${o.phoneNumber}\t${addGB(o.bundleData ?? "")}`).join("\n");
+    const text = network.orders
+      .map(o => `${o.phoneNumber}\t${numericDataSize(o.bundleData ?? "")}`)
+      .join("\n");
     try {
       await navigator.clipboard.writeText(text);
       toast({ title: `Copied ${network.count} ${network.label} pending orders` });
