@@ -146,10 +146,15 @@ function AdminDashboardContent() {
   // so the pending-fulfillment counts / stat cards stay on the operational set.
   const searchTerm = phoneSearch.trim() || orderIdSearch.trim();
   const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [debouncedStorePhone, setDebouncedStorePhone] = useState("");
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(searchTerm), 300);
     return () => clearTimeout(t);
   }, [searchTerm]);
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedStorePhone(phoneSearch.trim()), 300);
+    return () => clearTimeout(t);
+  }, [phoneSearch]);
   const { data: searchResults } = useAdminListOrders(
     debouncedSearch ? { search: debouncedSearch } : {},
     { query: { enabled: !!debouncedSearch } } as any,
@@ -172,6 +177,25 @@ function AdminDashboardContent() {
     // the operational list ({}) and the active search list ({ search }) queries.
     queryClient.invalidateQueries({ queryKey: getAdminListOrdersQueryKey() });
   }, [queryClient]);
+
+  const {
+    data: storePhoneResults,
+    isFetching: storePhoneFetching,
+    isError: storePhoneError,
+  } = useQuery<any[]>({
+    queryKey: ["adminStoreOrdersDash", "phone", debouncedStorePhone],
+    queryFn: async () => {
+      const params = new URLSearchParams({ phone: debouncedStorePhone });
+      const r = await fetch(`/api/admin/store-orders?${params}`, { credentials: "include" });
+      if (!r.ok) throw new Error("Could not search store orders");
+      const data = await r.json();
+      if (!Array.isArray(data)) throw new Error("Invalid store orders response");
+      return data;
+    },
+    enabled: pageView === "store" && !!debouncedStorePhone,
+    refetchInterval: 5000,
+    staleTime: 0,
+  });
 
   const handleStatusChange = (orderId: number, status: string) => {
     updateStatus.mutate({ id: orderId, data: { status } }, {
@@ -322,6 +346,41 @@ function AdminDashboardContent() {
     if (dateTo) { const to = new Date(dateTo); to.setHours(23, 59, 59, 999); src = src.filter((o: any) => new Date(o.createdAt) <= to); }
     return src;
   }, [storeOrders, networkFilter, dateFrom, dateTo]);
+
+  // Search separately from the operational list used by stats and bulk actions.
+  const storeSearchMatches = useMemo(() => {
+    let src = phoneSearch.trim() ? (storePhoneResults ?? []) : (storeOrders ?? []);
+    if (networkFilter !== "all") src = src.filter(o => o.bundleNetwork === networkFilter);
+    if (phoneSearch.trim()) src = src.filter(o => String(o.customerPhone ?? "").includes(phoneSearch.trim()));
+    if (orderIdSearch.trim()) src = src.filter(o => String(o.id).includes(orderIdSearch.trim()));
+    return src;
+  }, [storeOrders, storePhoneResults, phoneSearch, orderIdSearch, networkFilter]);
+
+  const filteredStoreOrders = useMemo(() => {
+    let src = storeSearchMatches;
+    if (dateFrom) src = src.filter(o => new Date(o.createdAt) >= new Date(dateFrom));
+    if (dateTo) {
+      const to = new Date(dateTo);
+      to.setHours(23, 59, 59, 999);
+      src = src.filter(o => new Date(o.createdAt) <= to);
+    }
+    return src;
+  }, [storeSearchMatches, dateFrom, dateTo]);
+
+  const storeSearchLoading = !!phoneSearch.trim() &&
+    (debouncedStorePhone !== phoneSearch.trim() || storePhoneFetching);
+  const storeMatchesOutsideDates = !!phoneSearch.trim() && !storeSearchLoading &&
+    !storePhoneError && filteredStoreOrders.length === 0 && storeSearchMatches.length > 0;
+
+  const widenStoreDates = () => {
+    const dates = storeSearchMatches.map(o => new Date(o.createdAt).getTime());
+    if (!dates.length) return;
+    const from = new Date(Math.min(...dates)).toISOString().slice(0, 10);
+    const to = new Date(Math.max(...dates)).toISOString().slice(0, 10);
+    setDateFrom(prev => prev && prev < from ? prev : from);
+    setDateTo(prev => prev && prev > to ? prev : to);
+    setPage(1);
+  };
 
   const totalOrderCount = dayOrders.length + dayStoreOrders.length;
   const totalCompleted  = dayCompleted.length + dayStoreOrders.filter((o: any) => storePhase(o) === "completed").length;
@@ -511,7 +570,7 @@ function AdminDashboardContent() {
                 <div className="flex-1">
                   <h2 className="font-bold text-foreground">Orders</h2>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    {pageView === "platform" ? `${filteredOrders.length} platform order${filteredOrders.length !== 1 ? "s" : ""}` : `${dayStoreOrders.length} store order${dayStoreOrders.length !== 1 ? "s" : ""}`}
+                    {pageView === "platform" ? `${filteredOrders.length} platform order${filteredOrders.length !== 1 ? "s" : ""}` : `${filteredStoreOrders.length} store order${filteredStoreOrders.length !== 1 ? "s" : ""}`}
                     {" "}for {dateFrom === dateTo ? dateFrom : `${dateFrom} → ${dateTo}`}
                   </p>
                 </div>
@@ -591,10 +650,28 @@ function AdminDashboardContent() {
 
             {/* ── Store Orders View ── */}
             {pageView === "store" && (
-              dayStoreOrders.length === 0 ? (
+              phoneSearch.trim() && storePhoneError ? (
+                <div role="alert" className="py-16 text-center text-sm text-destructive">
+                  Could not search store orders. Please try again.
+                </div>
+              ) : storeSearchLoading && filteredStoreOrders.length === 0 ? (
+                <div role="status" className="py-16 text-center text-sm text-muted-foreground">
+                  Searching store orders…
+                </div>
+              ) : filteredStoreOrders.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-16 gap-3">
                   <Store className="w-10 h-10 text-muted-foreground" />
-                  <p className="text-sm text-muted-foreground">No store orders for this period</p>
+                  <p className="text-sm text-muted-foreground">No store orders match these filters</p>
+                  {storeMatchesOutsideDates && (
+                    <>
+                      <p className="text-sm text-muted-foreground">
+                        {storeSearchMatches.length} matching store order{storeSearchMatches.length !== 1 ? "s" : ""} outside this date range
+                      </p>
+                      <Button variant="outline" size="sm" onClick={widenStoreDates}>
+                        Widen dates to show matches
+                      </Button>
+                    </>
+                  )}
                 </div>
               ) : (
                 <div className="overflow-x-auto">
@@ -607,7 +684,7 @@ function AdminDashboardContent() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border">
-                      {dayStoreOrders.map((o: any) => {
+                      {filteredStoreOrders.map((o: any) => {
                         const phase = storePhase(o);
                         const statusColor = STATUS_COLORS[phase] ?? "bg-gray-100 text-gray-700";
                         const isActioning = storeActionId === o.id;
