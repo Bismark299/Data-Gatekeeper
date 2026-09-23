@@ -23,6 +23,7 @@ import {
   DollarSign, TrendingUp,
 } from "lucide-react";
 import { platformPhase, storePhase, awaitingDispatch } from "@/lib/orderPhase";
+import { fetchExportOrders, buildAdminOrderExport } from "@/lib/adminOrderExport";
 
 // ─── constants ────────────────────────────────────────────────────────────────
 const STATUS_COLORS: Record<string, string> = {
@@ -93,6 +94,7 @@ function AdminOrdersContent() {
   const [sortDir, setSortDir]         = useState<SortDir>("desc");
   const [refundingId, setRefundingId] = useState<number | null>(null);
   const [completing, setCompleting]   = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   const { toast }   = useToast();
   const queryClient = useQueryClient();
@@ -112,7 +114,7 @@ function AdminOrdersContent() {
   // page's date range (+ network) so we never load the full order history.
   // No `page` param is sent → the server returns the legacy array response so
   // all existing client-side logic (status tabs, stat cards, network pending
-  // counts, CSV export, client paging/sorting) keeps working over the bounded
+  // counts and client paging/sorting) keeps working over the bounded
   // set.
   const listParams = useMemo<Record<string, string>>(() => {
     if (debouncedSearch) return { search: debouncedSearch };
@@ -495,28 +497,52 @@ function AdminOrdersContent() {
 
   const changeTab = (t: typeof ORDER_STATUSES[number]) => { setStatusTab(t); setPage(1); };
 
-  // ── CSV export — columns mirror the on-screen table exactly (same rows,
-  // same filters, same sort) ──
-  const handleExport = () => {
-    const headers = ["Date", "Agent", "Order ID", "Phone", "Data", "Amount (GHS)", "Status", "Delivered"];
-    const esc = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`;
-    const rows = processedOrders.map(o => [
-      esc(fmtDate(o.createdAt)),
-      esc((o as any).userName ?? ""),
-      o.id,
-      esc(o.phoneNumber),
-      esc(o.bundleData ?? ""),
-      Number(o.price).toFixed(2),
-      o.status,
-      (o as any).delivered ?? "",
-    ]);
-    const csv = [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
-    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement("a");
-    a.href = url; a.download = `orders-${dateFrom || new Date().toISOString().slice(0, 10)}.csv`;
-    a.click(); URL.revokeObjectURL(url);
-    toast({ title: `Exported ${processedOrders.length} orders` });
+  // Export both sources, fetching every page and applying the active tab's filters.
+  const handleExport = async () => {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const phone = (pageView === "store" ? storePhoneSearch : phoneSearch).trim();
+      const orderId = pageView === "platform" ? orderIdSearch.trim() : "";
+      const status = pageView === "store" ? storeStatusFilter : statusTab;
+      const filters: Record<string, string> = {};
+      if (dateFrom) filters.dateFrom = dateFrom;
+      if (dateTo) filters.dateTo = dateTo;
+      if (networkFilter !== "all") filters.network = networkFilter;
+      const [platform, store] = await Promise.all([
+        fetchExportOrders("/api/admin/orders", { ...filters, ...(phone || orderId ? { search: phone || orderId } : {}) }),
+        fetchExportOrders("/api/admin/store-orders", { ...filters, ...(phone ? { phone } : {}) }),
+      ]);
+      const matchesStatus = (o: { status: string; delivered?: string | null }, isStore: boolean) => {
+        if (status === "all") return true;
+        const phase = isStore ? storePhase(o) : platformPhase(o);
+        if (pageView === "platform" && status === "pending" && isStore) {
+          return phase === "pending" || phase === "paid";
+        }
+        return phase === status;
+      };
+      const { csv, count } = buildAdminOrderExport(
+        platform.filter(o => matchesStatus(o, false)),
+        store.filter(o => matchesStatus(o, true)), {
+        dateFrom, dateTo, phone, orderId, sortField, sortDir, formatDate: fmtDate,
+      });
+      if (!count) {
+        toast({ title: "No orders match the selected filters" });
+        return;
+      }
+      const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `orders-${dateFrom || new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast({ title: `Exported ${count} platform and store orders` });
+    } catch (error) {
+      toast({ title: error instanceof Error ? error.message : "Export failed", variant: "destructive" });
+    } finally {
+      setExporting(false);
+    }
   };
 
   return (
@@ -663,9 +689,6 @@ function AdminOrdersContent() {
                 <Button variant="outline" size="sm" onClick={() => refetch()} className="gap-1.5">
                   <RefreshCw className="w-3.5 h-3.5" /> Refresh
                 </Button>
-                <Button variant="outline" size="sm" onClick={handleExport} disabled={processedOrders.length === 0} className="gap-1.5" data-testid="button-export-csv">
-                  <Download className="w-3.5 h-3.5" /> Export CSV
-                </Button>
                 <BulkCancelRefundDialog onDone={() => { invalidate(); refetch(); }} />
                 {hasFilters && (
                   <button className="text-xs text-primary font-semibold hover:underline" onClick={clearFilters} data-testid="button-clear-filters">
@@ -678,6 +701,10 @@ function AdminOrdersContent() {
                 <RefreshCw className="w-3.5 h-3.5" /> Refresh
               </Button>
             )}
+            <Button variant="outline" size="sm" onClick={handleExport} disabled={exporting} className="gap-1.5" data-testid="button-export-csv">
+              {exporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+              {exporting ? "Exporting…" : "Export All Orders CSV"}
+            </Button>
           </div>
 
           {/* ─── STORE ORDERS VIEW ─── */}
