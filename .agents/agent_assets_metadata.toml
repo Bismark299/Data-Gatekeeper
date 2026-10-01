@@ -6,3 +6,18 @@ id = "FgTtKQBVl9QhmrtCvikHW"
 uri = "file://docs/agent-store-page.md"
 type = "text"
 title = "Agent Store Page — Documentation"
+logical_id = "28762b90-0bf6-4458-99a7-b330e6d3ddb2"
+
+[[outputs]]
+id = "-wc8ZvYccz5fChrWlTPl_"
+uri = "file://attached_assets/download-mcbis-checker.html"
+type = "html"
+title = "Download McBIS background checker"
+description = "Open this page and click Download ZIP to get the existing checker, scheduler, and database update code."
+logical_id = "d9c4d439-6e46-49ed-bc49-0f038324e225"
+content_hash = "sha256:f28f0a4a9c51564a4acbf2247218365e121fb2b24a002cd58453f89900e9ad61"
+size = 39069
+mtime_ms = 1790814835462
+storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:f0f7e07b-5f53-4098-a06e-a22fe9e6edb8/d9c4d439-6e46-49ed-bc49-0f038324e225/455aebb2-1c96-4542-a7a4-7c862c6cb488"
+storage_version_token = "1790814840218666"
+content_type = "text/html"
