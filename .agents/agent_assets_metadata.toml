@@ -21,3 +21,17 @@ mtime_ms = 1790814835462
 storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:f0f7e07b-5f53-4098-a06e-a22fe9e6edb8/d9c4d439-6e46-49ed-bc49-0f038324e225/455aebb2-1c96-4542-a7a4-7c862c6cb488"
 storage_version_token = "1790814840218666"
 content_type = "text/html"
+
+[[outputs]]
+id = "Y3n6zx0_x3c9X-1NHp9mo"
+uri = "file://attached_assets/mcbis-existing-background-checker.zip"
+type = "unspecified"
+title = "McBIS background checker — ZIP download"
+description = "Existing checker, scheduler, database status updates, refund helpers, and schema files. Download this attachment directly; no HTML page needed."
+logical_id = "c6e72b8a-544e-4208-89f8-82e5431a3f6f"
+content_hash = "sha256:b86e3246b4be6431501189dd9a68a0aefaf3b51d342fc80a350ee2bc58eb93d1"
+size = 28444
+mtime_ms = 1790814723229
+storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:f0f7e07b-5f53-4098-a06e-a22fe9e6edb8/c6e72b8a-544e-4208-89f8-82e5431a3f6f/073abb6b-b79c-4a66-8946-122a9470772d"
+storage_version_token = "1790814966068810"
+content_type = "application/octet-stream"
