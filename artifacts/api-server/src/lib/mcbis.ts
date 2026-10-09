@@ -64,7 +64,7 @@ const MCBIS_BASE = process.env.DATAHUB_API_URL ?? "https://datahub.mcbissolution
 
 // Maps internal network slugs → McbisSolution network keys
 const NETWORK_MAP: Record<string, string> = {
-  mtn:          "mtn",
+  mtn:          "MTN",
   telecel:      "telecel",
   "at-bigtime": "atbigtime",
   "at-ishare":  "atpremium",
@@ -213,7 +213,7 @@ export async function dispatchToMcbis(opts: {
 
   // Only MTN is currently connected
   const mcbisNetwork = mapToMcbisNetwork(opts.network);
-  if (mcbisNetwork !== "mtn") return { dispatched: false, reason: "wrong_network" };
+  if (mcbisNetwork !== "MTN") return { dispatched: false, reason: "wrong_network" };
 
   const amountGb = parseGb(opts.bundleData);
   if (amountGb <= 0) return { dispatched: false, reason: "bad_data" };
