@@ -146,8 +146,9 @@ export async function mcbisPlaceOrder(opts: {
   receiver: string;
   amountGb: number;
 }): Promise<{ accepted: boolean; status: string; message: string }> {
-  const { data, status: httpStatus } = await apiRequest(() =>
-    mcbisAxios.post<Record<string, unknown>>(
+  // Never retry a purchase POST: a missing response does not mean rejection.
+  // Disable redirects too: a 307/308 can otherwise repeat this POST.
+  const { data, status: httpStatus } = await mcbisAxios.post<Record<string, unknown>>(
       `${MCBIS_BASE}/placeOrder`,
       {
         network:   opts.network,
@@ -155,9 +156,8 @@ export async function mcbisPlaceOrder(opts: {
         receiver:  opts.receiver,
         amount:    opts.amountGb,
       },
-      { headers: { Authorization: `Bearer ${opts.apiKey}` } },
-    )
-  );
+      { headers: { Authorization: `Bearer ${opts.apiKey}` }, maxRedirects: 0 },
+    );
 
   const inner   = data.data as Record<string, unknown> | undefined;
   const status  = String(inner?.status ?? data.status ?? "");
@@ -187,7 +187,7 @@ export async function mcbisCheckStatus(apiKey: string, reference: string): Promi
 
 export type DispatchOutcome =
   | { dispatched: true;  reference: string }
-  | { dispatched: false; reason: "disabled" | "wrong_network" | "bad_data" | "api_error" | "already_dispatched" | "insufficient_funds" };
+  | { dispatched: false; reason: "disabled" | "wrong_network" | "bad_data" | "api_error" | "already_dispatched" | "insufficient_funds" | "awaiting_confirmation" };
 
 /**
  * Attempt to dispatch one order to McbisSolution.
@@ -197,9 +197,9 @@ export type DispatchOutcome =
  *  - Order must not already have a mcbisReference (not yet sent)
  *
  * Returns `{ dispatched: true, reference }` if McbisSolution accepted the order.
- * Returns `{ dispatched: false, reason: "insufficient_funds" }` when McbisSolution
- *   wallet is empty — order stays undispatched so it can be retried later.
- * Returns `{ dispatched: false }` for all other non-dispatch cases.
+ * Persist the real reference and processing state BEFORE the single POST.
+ * Any non-acceptance retains that claim for status checks / manual review.
+ * Never infer permission to resend from an error message or a failed lookup.
  */
 export async function dispatchToMcbis(opts: {
   orderId: number;
@@ -219,16 +219,15 @@ export async function dispatchToMcbis(opts: {
   if (amountGb <= 0) return { dispatched: false, reason: "bad_data" };
 
   const prefix   = opts.isStoreOrder ? "SO" : "PO";
-  const lockRef  = `LOCK-${prefix}-${opts.orderId}`;
   const finalRef = `${prefix}-${opts.orderId}-${Date.now()}`;
 
-  // ── Atomic lock: write a temp ref before calling API ────────────────────────
+  // ── Durable atomic claim before calling API ────────────────────────────────
   // Two concurrent callers (poller + admin) race on a single UPDATE.
   // The loser gets 0 rows back and returns immediately — no double-send.
   let locked = false;
   if (opts.isStoreOrder) {
     const rows = await db.update(storeOrdersTable)
-      .set({ mcbisReference: lockRef })
+      .set({ mcbisReference: finalRef, delivered: "processing" })
       .where(and(
         eq(storeOrdersTable.id, opts.orderId),
         isNull(storeOrdersTable.mcbisReference),
@@ -240,7 +239,7 @@ export async function dispatchToMcbis(opts: {
     locked = rows.length > 0;
   } else {
     const rows = await db.update(ordersTable)
-      .set({ mcbisReference: lockRef })
+      .set({ mcbisReference: finalRef, delivered: "processing" })
       .where(and(
         eq(ordersTable.id, opts.orderId),
         isNull(ordersTable.mcbisReference),
@@ -253,15 +252,6 @@ export async function dispatchToMcbis(opts: {
   }
   if (!locked) return { dispatched: false, reason: "already_dispatched" };
 
-  // Helper to release lock on this order
-  const releaseLock = async () => {
-    if (opts.isStoreOrder) {
-      await db.update(storeOrdersTable).set({ mcbisReference: null }).where(eq(storeOrdersTable.id, opts.orderId));
-    } else {
-      await db.update(ordersTable).set({ mcbisReference: null }).where(eq(ordersTable.id, opts.orderId));
-    }
-  };
-
   try {
     const result = await mcbisPlaceOrder({
       apiKey,
@@ -272,18 +262,20 @@ export async function dispatchToMcbis(opts: {
     });
 
     if (!result.accepted) {
-      await releaseLock();
-      const msg = result.message.toLowerCase();
-      if (msg.includes("insufficient") || msg.includes("balance") || msg.includes("fund") || msg.includes("wallet")) {
-        return { dispatched: false, reason: "insufficient_funds" };
-      }
-      return { dispatched: false, reason: "api_error" };
+      logger.warn({ orderId: opts.orderId, isStoreOrder: !!opts.isStoreOrder, reference: finalRef },
+        "McBIS dispatch: acceptance unconfirmed; claim retained for tracking / review, no resend");
+      return { dispatched: false, reason: "awaiting_confirmation" };
     }
 
     return { dispatched: true, reference: finalRef };
-  } catch {
-    await releaseLock();
-    return { dispatched: false, reason: "api_error" };
+  } catch (err) {
+    // Do not log the Axios error object: it contains the Authorization header.
+    logger.warn({
+      orderId: opts.orderId, isStoreOrder: !!opts.isStoreOrder, reference: finalRef,
+      code: axios.isAxiosError(err) ? err.code : undefined,
+      httpStatus: axios.isAxiosError(err) ? err.response?.status : undefined,
+    }, "McBIS dispatch: response uncertain; claim retained for tracking / review, no resend");
+    return { dispatched: false, reason: "awaiting_confirmation" };
   }
 }
 
@@ -300,8 +292,8 @@ let _pollRunning   = false; // prevents overlapping cycles if a cycle takes long
  *  2. autoSync toggle in DB (mcbis_auto_sync = "false" → zero requests sent)
  *  3. Status checks: max 30 per cycle, 100 ms between each call
  *  4. Retry dispatch: max 5 per cycle, 500 ms between each call, 5-min grace period
- *  5. 45-second request timeout + 2 retries with back-off (in apiRequest())
- *  6. Atomic lock in dispatchToMcbis() prevents concurrent double-send
+ *  5. 15-second request timeout; only reads retry, never purchase POSTs
+ *  6. Durable claim in dispatchToMcbis() prevents concurrent and later re-sends
  *  7. Status checks round-robin by updatedAt so orders stuck "processing" at
  *     McBIS indefinitely cannot starve newer orders out of the per-cycle cap
  */
@@ -523,11 +515,9 @@ export function startMcbisPoller(): void {
             phone:      o.phone,
             bundleData: o.bundleData,
           });
-          if (outcome.dispatched) {
-            await db.update(ordersTable)
-              .set({ delivered: "processing", mcbisReference: outcome.reference })
-              .where(eq(ordersTable.id, o.id));
-          } else if (outcome.reason === "insufficient_funds") {
+          // The dispatcher already persisted processing before sending.
+          // Do not overwrite a concurrent settlement/refund after the POST.
+          if (!outcome.dispatched && outcome.reason === "insufficient_funds") {
             break; // wallet empty — no point trying more this cycle
           }
         } catch { /* retry next cycle */ }
@@ -563,11 +553,7 @@ export function startMcbisPoller(): void {
             bundleData:   o.bundleData,
             isStoreOrder: true,
           });
-          if (outcome.dispatched) {
-            await db.update(storeOrdersTable)
-              .set({ delivered: "processing", mcbisReference: outcome.reference })
-              .where(eq(storeOrdersTable.id, o.id));
-          } else if (outcome.reason === "insufficient_funds") {
+          if (!outcome.dispatched && outcome.reason === "insufficient_funds") {
             break;
           }
         } catch { /* retry next cycle */ }

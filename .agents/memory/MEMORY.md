@@ -18,3 +18,4 @@
 - [List pagination contract](list-pagination-contract.md) — `page` param opts into `{total,page,pageSize,data}` envelope; no param = legacy capped array; date range still returns unfinished orders; search ignores dates.
 - [Typecheck needs lib rebuild](typecheck-stale-lib-dist.md) — frontend typecheck reads api-client-react's compiled dist; rebuild it (tsc -b) first or stale dist yields phantom type errors.
 - [McBIS poller status matching](mcbis-poller-status.md) — stuck orders = head-of-line blocking; round-robin by updatedAt + bump; reconcile must key off createdAt since updatedAt now means "last polled".
+- [McBIS send safety](mcbis-send-safety.md) — unconfirmed purchase responses retain the claim; no POST retries or automatic resend without verified provider reconciliation.
