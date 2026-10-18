@@ -25,7 +25,10 @@ const statusTone: Record<Verification["status"], string> = {
   verified: "bg-[#e2f3eb] text-[#28634a]",
   rejected: "bg-[#fbe9e4] text-[#a24734]",
 };
-const normalizeNumbers = (value: string) => [...new Set(value.split(/[\n,;\t ]+/).map(n => n.trim()).filter(Boolean))];
+const normalizeNumbers = (value: string) => [...new Set(value
+  .split(/[\n,;\t]+/)
+  .map(item => item.replace(/\D/g, ""))
+  .filter(number => /^\d{10,15}$/.test(number)))];
 
 export default function VerifyNumbersPage() {
   const { user } = useAuth();
