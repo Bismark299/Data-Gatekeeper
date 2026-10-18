@@ -49,3 +49,17 @@ mtime_ms = 1792325552476
 storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:f0f7e07b-5f53-4098-a06e-a22fe9e6edb8/d3fdacb4-aac4-41b1-a7ee-167e42d6fbba/888eee6f-6bac-46e2-b6b5-17f45fc367a9"
 storage_version_token = "1792325558558439"
 content_type = "text/csv"
+
+[[outputs]]
+id = "PyYhkvD9UW1s4CMr4_KAM"
+uri = "file://attached_assets/42-orders-missing-from-mcbis.csv"
+type = "table"
+title = "42 orders missing from McBIS"
+description = "30 platform orders and 12 store orders. Includes order IDs, phone numbers, data sizes, dates, and comparison notes."
+logical_id = "5e98370b-38c1-4bd3-87e3-1e2a4e560548"
+content_hash = "sha256:88cbffb6f862cd175d1ae8268f229ca82363338725df15e2689a452110731628"
+size = 6263
+mtime_ms = 1792325699697
+storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:f0f7e07b-5f53-4098-a06e-a22fe9e6edb8/5e98370b-38c1-4bd3-87e3-1e2a4e560548/729f1530-7e24-4a86-9dd3-93a85e2b13ce"
+storage_version_token = "1792325703795263"
+content_type = "text/csv"
