@@ -42,7 +42,7 @@ const bundled = await build({
 });
 
 function setup({ store = false, response = "accepted", initial = {}, balance = "100" } = {}) {
-  const row = { id: 1, status: "paid", delivered: null, mcbisReference: null, topupghBatchId: null, ...initial };
+  const row = { id: 1, status: "paid", delivered: null, mcbisReference: null, mcbisAcceptedReference: null, topupghBatchId: null, ...initial };
   let posts = 0;
   const fixture = {
     db: {
@@ -72,7 +72,9 @@ function setup({ store = false, response = "accepted", initial = {}, balance = "
             response: response === "http500" ? { status: 500 } : undefined };
         }
         if (response === "malformed") return { status: 200, data: null };
-        return { status: 200, data: { status: response === "accepted" ? "success" : "error",
+        return { status: 200, data: { data: {
+          reference: response === "missing-reference" ? undefined : response === "wrong-reference" ? "different" : body.reference,
+          status: ["accepted", "missing-reference", "wrong-reference"].includes(response) ? "pending" : "error" },
           message: response === "rejected" ? "Insufficient balance" : "" } };
       },
       get: async url => {
@@ -81,7 +83,7 @@ function setup({ store = false, response = "accepted", initial = {}, balance = "
           return { data: { data: { walletBalance: balance } } };
         }
         assert.ok(url.endsWith(encodeURIComponent(row.mcbisReference)));
-        return { data: { data: { order: { status: "success" } } } };
+        return { data: { data: { order: { status: "success", reference: row.mcbisReference } } } };
       },
     },
   };
@@ -97,7 +99,7 @@ function setup({ store = false, response = "accepted", initial = {}, balance = "
 }
 
 for (const store of [false, true]) {
-  for (const response of ["accepted", "timeout", "reset", "http500", "malformed", "rejected"]) {
+  for (const response of ["accepted", "timeout", "reset", "http500", "malformed", "rejected", "missing-reference", "wrong-reference"]) {
     test(`${store ? "store" : "platform"}: ${response} keeps one durable send`, async () => {
       const f = setup({ store, response });
       const results = await Promise.all([f.send(), f.send()]);
@@ -109,10 +111,12 @@ for (const store of [false, true]) {
       assert.equal((await f.send()).reason, "already_dispatched", "later retry must also skip");
       assert.equal(f.row.mcbisReference, ref);
       assert.equal(f.row.delivered, response === "accepted" ? "processing" : null);
+      assert.equal(f.row.mcbisAcceptedReference, response === "accepted" ? ref : null);
       assert.equal(f.posts(), 1);
       assert.equal(await f.api.mcbisCheckStatus("test-only", ref), "success");
       await f.api.confirmMcbisAcceptance(1, ref, store);
       assert.equal(f.row.delivered, "processing", "verified provider order enables processing");
+      assert.equal(f.row.mcbisAcceptedReference, ref);
     });
   }
   for (const initial of [

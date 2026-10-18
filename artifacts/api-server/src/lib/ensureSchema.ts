@@ -13,6 +13,9 @@ import { logger } from "./logger";
  * connects to. Each statement is idempotent and safe to run on every start.
  */
 export async function ensureSchema(): Promise<void> {
+  // Required for acceptance tracking; fail startup rather than run without it.
+  await db.execute(sql`ALTER TABLE orders ADD COLUMN IF NOT EXISTS mcbis_accepted_reference text`);
+  await db.execute(sql`ALTER TABLE store_orders ADD COLUMN IF NOT EXISTS mcbis_accepted_reference text`);
   const statements = [
     sql`ALTER TABLE store_orders ADD COLUMN IF NOT EXISTS topupgh_batch_id integer`,
   ];

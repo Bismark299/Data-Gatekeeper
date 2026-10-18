@@ -47,6 +47,7 @@ export const storeOrdersTable = pgTable("store_orders", {
   profit: numeric("profit", { precision: 10, scale: 2 }).notNull(),
   paystackReference: text("paystack_reference").notNull().default(""),
   mcbisReference: text("mcbis_reference"),
+  mcbisAcceptedReference: text("mcbis_accepted_reference"),
   ckgodswayReference: text("ckgodsway_reference"),
   topupghBatchId: integer("topupgh_batch_id"),
   // Payment status only: pending | paid | failed | cancelled | refunded

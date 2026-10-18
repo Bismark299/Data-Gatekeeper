@@ -149,7 +149,7 @@ export async function mcbisPlaceOrder(opts: {
   reference: string;
   receiver: string;
   amountGb: number;
-}): Promise<{ accepted: boolean; status: string; message: string }> {
+}): Promise<{ accepted: boolean; reference: string | null; status: string; message: string }> {
   // Never retry a purchase POST: a missing response does not mean rejection.
   // Disable redirects too: a 307/308 can otherwise repeat this POST.
   const { data, status: httpStatus } = await mcbisAxios.post<Record<string, unknown>>(
@@ -166,9 +166,11 @@ export async function mcbisPlaceOrder(opts: {
   const inner   = data.data as Record<string, unknown> | undefined;
   const status  = String(inner?.status ?? data.status ?? "");
   const message = String(data.message ?? data.error ?? "");
+  const reference = typeof inner?.reference === "string" ? inner.reference : null;
 
   return {
-    accepted: httpStatus < 300 && (status === "success" || status === "pending"),
+    accepted: httpStatus < 300 && reference === opts.reference && (status === "success" || status === "pending"),
+    reference,
     status,
     message,
   };
@@ -179,12 +181,15 @@ export async function mcbisCheckStatus(apiKey: string, reference: string): Promi
   // data.status is the API response status (always "success" if request worked).
   // data.order.status is the actual fulfillment status we need.
   const { data } = await apiRequest(() =>
-    mcbisAxios.get<{ data: { order?: { status?: string } } }>(
+    mcbisAxios.get<{ data: { order?: { status?: string; reference?: string } } }>(
       `${MCBIS_BASE}/checkOrderStatus/${encodeURIComponent(reference)}`,
       { headers: { Authorization: `Bearer ${apiKey}` } },
     )
   );
-  return String(data.data?.order?.status ?? "");
+  if (data.data?.order?.reference !== reference) {
+    throw new Error("McBIS status response did not confirm the requested reference");
+  }
+  return String(data.data.order.status ?? "");
 }
 
 // ─── High-level dispatch ──────────────────────────────────────────────────────
@@ -281,8 +286,8 @@ export async function dispatchToMcbis(opts: {
       return { dispatched: false, reason: "awaiting_confirmation" };
     }
 
-    await confirmMcbisAcceptance(opts.orderId, finalRef, !!opts.isStoreOrder);
-    return { dispatched: true, reference: finalRef };
+    await confirmMcbisAcceptance(opts.orderId, result.reference!, !!opts.isStoreOrder);
+    return { dispatched: true, reference: result.reference! };
   } catch (err) {
     // Do not log the Axios error object: it contains the Authorization header.
     logger.warn({
@@ -298,9 +303,10 @@ export async function dispatchToMcbis(opts: {
 // A concurrent refund, cancellation or settlement must never be overwritten.
 export async function confirmMcbisAcceptance(orderId: number, reference: string, store: boolean): Promise<void> {
   const table = store ? storeOrdersTable : ordersTable;
-  await db.update(table).set({ delivered: "processing" }).where(and(
+  await db.update(table).set({ delivered: "processing", mcbisAcceptedReference: reference }).where(and(
     eq(table.id, orderId), eq(table.mcbisReference, reference),
-    eq(table.status, "paid"), isNull(table.delivered),
+    eq(table.status, "paid"),
+    or(isNull(table.delivered), eq(table.delivered, "processing")),
   )).returning({ id: table.id });
 }
 
