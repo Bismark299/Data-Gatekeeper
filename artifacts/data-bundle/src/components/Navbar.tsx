@@ -5,7 +5,7 @@ import { useCart } from "@/context/CartContext";
 import { useGetWalletBalance, getGetWalletBalanceQueryKey } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
 import {
-  Menu, X, Wifi, LogOut, ShieldCheck, ShoppingCart, Wallet, UserCircle, Store, ArrowLeftRight,
+  Menu, X, Wifi, LogOut, ShieldCheck, ShoppingCart, Wallet, UserCircle, Store, ArrowLeftRight, BadgeCheck,
 } from "lucide-react";
 import {
   Tooltip, TooltipContent, TooltipTrigger,
@@ -56,6 +56,13 @@ export function Navbar() {
               </Link>
             )}
             {isAuthenticated && !isAdmin && (
+              <Link href="/verify-numbers">
+                <Button variant={location === "/verify-numbers" ? "secondary" : "ghost"} size="sm" className="gap-1.5">
+                  <BadgeCheck className="w-4 h-4" /> Verify numbers
+                </Button>
+              </Link>
+            )}
+            {isAuthenticated && !isAdmin && (
               <Link href="/store-manager">
                 <Button variant={location.startsWith("/store-manager") ? "secondary" : "ghost"} size="sm" className="gap-1.5">
                   <Store className="w-3.5 h-3.5" /> My Store
@@ -73,6 +80,13 @@ export function Navbar() {
               <Link href="/mtn-transfer">
                 <Button variant={location.startsWith("/mtn-transfer") ? "secondary" : "ghost"} size="sm" className="gap-1.5">
                   <ArrowLeftRight className="w-3.5 h-3.5" /> MTN Transfer
+                </Button>
+              </Link>
+            )}
+            {isAdmin && (
+              <Link href="/admin/number-verifications">
+                <Button variant={location.startsWith("/admin/number-verifications") ? "secondary" : "ghost"} size="sm" className="gap-1.5">
+                  <BadgeCheck className="w-4 h-4" /> Number checks
                 </Button>
               </Link>
             )}
@@ -202,6 +216,9 @@ export function Navbar() {
                 <Link href="/orders" onClick={() => setMenuOpen(false)}>
                   <Button variant="ghost" className="w-full justify-start">My Orders</Button>
                 </Link>
+                <Link href="/verify-numbers" onClick={() => setMenuOpen(false)}>
+                  <Button variant="ghost" className="w-full justify-start"><BadgeCheck className="w-4 h-4 mr-2" /> Verify numbers</Button>
+                </Link>
                 <Link href="/wallet" onClick={() => setMenuOpen(false)}>
                   <Button variant="ghost" className="w-full justify-start">
                     <Wallet className="w-4 h-4 mr-2" />
@@ -225,6 +242,11 @@ export function Navbar() {
                 <Button variant="ghost" className="w-full justify-start">
                   <ShieldCheck className="w-4 h-4 mr-2" /> Admin Panel
                 </Button>
+              </Link>
+            )}
+            {isAdmin && (
+              <Link href="/admin/number-verifications" onClick={() => setMenuOpen(false)}>
+                <Button variant="ghost" className="w-full justify-start"><BadgeCheck className="w-4 h-4 mr-2" /> Number verifications</Button>
               </Link>
             )}
             {isAuthenticated ? (

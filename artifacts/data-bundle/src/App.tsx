@@ -24,6 +24,7 @@ const Shop           = lazy(() => import("@/pages/shop"));
 const StoreManager   = lazy(() => import("@/pages/store-manager"));
 const PublicStore    = lazy(() => import("@/pages/public-store"));
 const MtnTransfer    = lazy(() => import("@/pages/mtn-transfer"));
+const VerifyNumbers = lazy(() => import("@/pages/verify-numbers"));
 
 const AdminDashboard  = lazy(() => import("@/pages/admin/index"));
 const AdminBundles    = lazy(() => import("@/pages/admin/bundles"));
@@ -39,6 +40,7 @@ const AdminSettings   = lazy(() => import("@/pages/admin/settings"));
 const AdminMomo       = lazy(() => import("@/pages/admin/momo"));
 const AdminTopupgh    = lazy(() => import("@/pages/admin/topupgh"));
 const AdminApiClients = lazy(() => import("@/pages/admin/api-clients"));
+const AdminNumberVerifications = lazy(() => import("@/pages/admin/number-verifications"));
 
 // ── Minimal page-level loading indicator ────────────────────────────────────────
 function PageLoader() {
@@ -93,6 +95,8 @@ function Router() {
         <Route path="/shop">{() => <ProtectedRoute><Shop /></ProtectedRoute>}</Route>
         <Route path="/store-manager">{() => <ProtectedRoute><StoreManager /></ProtectedRoute>}</Route>
         <Route path="/mtn-transfer">{() => <ProtectedRoute adminOnly><MtnTransfer /></ProtectedRoute>}</Route>
+        <Route path="/verify-numbers">{() => <ProtectedRoute><VerifyNumbers /></ProtectedRoute>}</Route>
+        <Route path="/admin/number-verifications">{() => <ProtectedRoute adminOnly><AdminNumberVerifications /></ProtectedRoute>}</Route>
         <Route path="/s/:slug" component={PublicStore} />
         <Route component={NotFound} />
       </Switch>

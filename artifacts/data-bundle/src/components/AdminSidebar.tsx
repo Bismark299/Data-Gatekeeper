@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   LayoutDashboard, Package, Users, ShoppingCart, LogOut, Wifi, ChevronRight, X,
   Wallet, ArrowDownCircle, BarChart3, Store, Settings, Zap, Loader2, Smartphone,
-  Package2, KeyRound, FileText,
+  Package2, KeyRound, FileText, BadgeCheck,
 } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
 
@@ -14,6 +14,7 @@ const navItems = [
   { href: "/admin/bundles",      icon: Package,         label: "Bundles" },
   { href: "/admin/users",        icon: Users,           label: "Users" },
   { href: "/admin/orders",       icon: ShoppingCart,    label: "Orders" },
+  { href: "/admin/number-verifications", icon: BadgeCheck, label: "Number verifications" },
   { href: "/admin/stores",       icon: Store,           label: "Stores" },
   { href: "/admin/wallets",      icon: Wallet,          label: "Wallets" },
   { href: "/admin/deposits",     icon: ArrowDownCircle, label: "Deposits" },

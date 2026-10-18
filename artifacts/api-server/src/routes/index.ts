@@ -12,6 +12,7 @@ import { topupghRouter } from "./topupgh";
 import { ckgodswayRouter } from "./ckgodsway";
 import { mtnRouter } from "./mtn";
 import { publicApiRouter } from "./publicApi";
+import numberVerificationsRouter from "./numberVerifications";
 import crypto from "crypto";
 
 const router: IRouter = Router();
@@ -65,5 +66,6 @@ router.use(topupghRouter);
 router.use(ckgodswayRouter);
 router.use("/mtn", mtnRouter);
 router.use("/v1", publicApiRouter);
+router.use(numberVerificationsRouter);
 
 export default router;

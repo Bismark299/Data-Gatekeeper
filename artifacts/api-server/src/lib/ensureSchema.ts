@@ -18,6 +18,7 @@ export async function ensureSchema(): Promise<void> {
   await db.execute(sql`ALTER TABLE store_orders ADD COLUMN IF NOT EXISTS mcbis_accepted_reference text`);
   const statements = [
     sql`ALTER TABLE store_orders ADD COLUMN IF NOT EXISTS topupgh_batch_id integer`,
+    sql`CREATE TABLE IF NOT EXISTS number_verifications (id serial PRIMARY KEY, user_id integer NOT NULL REFERENCES users(id), phone_number text NOT NULL, status text NOT NULL DEFAULT 'pending', admin_note text, reviewed_by integer REFERENCES users(id), created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`,
   ];
 
   for (const stmt of statements) {
