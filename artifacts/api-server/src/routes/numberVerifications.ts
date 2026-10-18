@@ -9,7 +9,10 @@ const normalize = (v: string) => v.replace(/\D/g, "");
 router.post("/number-verifications", requireAuth, async (req, res): Promise<void> => {
   const userId = req.session.userId!;
   const [user] = await db.select({ role: usersTable.role }).from(usersTable).where(eq(usersTable.id, userId));
-  if (!user || !["agent", "admin"].includes(user.role)) { res.status(403).json({ error: "Agent account required" }); return; }
+  if (!user || !["agent", "dealer", "admin"].includes(user.role)) {
+    res.status(403).json({ error: "Agent or dealer account required" });
+    return;
+  }
   const input = req.body?.numbers;
   if (!Array.isArray(input) || input.length < 1 || input.length > 500 || input.some(x => typeof x !== "string")) {
     res.status(400).json({ error: "Submit between 1 and 500 phone numbers." }); return;
