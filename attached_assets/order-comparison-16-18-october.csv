@@ -1,0 +1,149 @@
+﻿Source,Local order ID,Phone,Data,Local date,Local delivery status,Comparison,McBIS order ID,McBIS date,McBIS status,Note
+Platform,12154,0246680679,1GB,"18 Oct 2026, 11:50 am",processing,Matched,513839,18th Oct 2026 at 11:50,Pending,
+Platform,12153,0556969343,2GB,"18 Oct 2026, 11:50 am",processing,Matched,513837,18th Oct 2026 at 11:50,Pending,
+Platform,12152,0599776588,3GB,"18 Oct 2026, 11:10 am",processing,No corresponding purchase,,,,No phone + size match in supplied McBIS export
+Platform,12151,0536516894,2GB,"18 Oct 2026, 11:02 am",processing,No corresponding purchase,,,,No phone + size match in supplied McBIS export
+Platform,12150,0597909115,3GB,"18 Oct 2026, 10:48 am",processing,No corresponding purchase,,,,No phone + size match in supplied McBIS export
+Store,1844,0534973873,2GB,"18 Oct 2026, 10:47 am",processing,No corresponding purchase,,,,No phone + size match in supplied McBIS export
+Store,1843,0559488890,2GB,"18 Oct 2026, 10:36 am",processing,No corresponding purchase,,,,No phone + size match in supplied McBIS export
+Platform,12149,0248402987,2GB,"18 Oct 2026, 10:22 am",processing,No corresponding purchase,,,,Same phone and size exists for a different purchase time; not counted as this order
+Store,1842,0553978384,2GB,"18 Oct 2026, 10:14 am",processing,No corresponding purchase,,,,Same phone and size exists for a different purchase time; not counted as this order
+Platform,12148,0544626549,1GB,"18 Oct 2026, 10:09 am",processing,No corresponding purchase,,,,Same phone and size exists for a different purchase time; not counted as this order
+Store,1841,0241189585,1GB,"18 Oct 2026, 09:58 am",processing,No corresponding purchase,,,,Same phone and size exists for a different purchase time; not counted as this order
+Store,1840,0257508437,3GB,"18 Oct 2026, 09:46 am",processing,No corresponding purchase,,,,No phone + size match in supplied McBIS export
+Platform,12147,0534810943,5GB,"18 Oct 2026, 09:23 am",processing,No corresponding purchase,,,,No phone + size match in supplied McBIS export
+Platform,12146,0599254667,1GB,"18 Oct 2026, 09:11 am",processing,Matched,513648,18th Oct 2026 at 09:11,Processing,
+Store,1839,0553903510,6GB,"18 Oct 2026, 08:05 am",processing,No corresponding purchase,,,,No phone + size match in supplied McBIS export
+Platform,12145,0555541003,2GB,"18 Oct 2026, 07:21 am",processing,No corresponding purchase,,,,Same phone and size exists for a different purchase time; not counted as this order
+Platform,12144,0242007121,4GB,"18 Oct 2026, 07:02 am",processing,No corresponding purchase,,,,No phone + size match in supplied McBIS export
+Store,1838,0594706755,3GB,"18 Oct 2026, 06:50 am",processing,No corresponding purchase,,,,No phone + size match in supplied McBIS export
+Platform,12143,0540874989,2GB,"18 Oct 2026, 06:44 am",processing,No corresponding purchase,,,,No phone + size match in supplied McBIS export
+Platform,12142,0248153002,4GB,"18 Oct 2026, 06:42 am",processing,No corresponding purchase,,,,No phone + size match in supplied McBIS export
+Platform,12141,0598161488,5GB,"18 Oct 2026, 05:43 am",processing,No corresponding purchase,,,,No phone + size match in supplied McBIS export
+Platform,12140,0597630601,1GB,"18 Oct 2026, 04:05 am",processing,No corresponding purchase,,,,No phone + size match in supplied McBIS export
+Platform,12139,0552505806,2GB,"18 Oct 2026, 12:47 am",processing,No corresponding purchase,,,,No phone + size match in supplied McBIS export
+Store,1837,0549122019,3GB,"18 Oct 2026, 12:27 am",processing,No corresponding purchase,,,,Same phone and size exists for a different purchase time; not counted as this order
+Platform,12138,0550787207,5GB,"17 Oct 2026, 10:41 pm",processing,No corresponding purchase,,,,No phone + size match in supplied McBIS export
+Platform,12137,0597230740,1GB,"17 Oct 2026, 10:36 pm",processing,No corresponding purchase,,,,No phone + size match in supplied McBIS export
+Store,1836,0256842074,2GB,"17 Oct 2026, 10:25 pm",processing,No corresponding purchase,,,,No phone + size match in supplied McBIS export
+Platform,12136,0240799635,1GB,"17 Oct 2026, 10:12 pm",processing,No corresponding purchase,,,,No phone + size match in supplied McBIS export
+Platform,12135,0256244007,8GB,"17 Oct 2026, 09:47 pm",processing,No corresponding purchase,,,,No phone + size match in supplied McBIS export
+Store,1835,0543704887,1GB,"17 Oct 2026, 09:18 pm",processing,No corresponding purchase,,,,No phone + size match in supplied McBIS export
+Store,1834,0533552855,5GB,"17 Oct 2026, 09:08 pm",processing,No corresponding purchase,,,,No phone + size match in supplied McBIS export
+Platform,12134,0592485968,1GB,"17 Oct 2026, 08:56 pm",processing,No corresponding purchase,,,,No phone + size match in supplied McBIS export
+Store,1833,0559514365,1GB,"17 Oct 2026, 08:51 pm",delivered,Matched,513295,17th Oct 2026 at 20:51,Completed,
+Platform,12133,0593741158,1GB,"17 Oct 2026, 08:50 pm",failed,Matched,513292,17th Oct 2026 at 20:50,Canceled,
+Platform,12132,0544855238,6GB,"17 Oct 2026, 08:14 pm",processing,No corresponding purchase,,,,No phone + size match in supplied McBIS export
+Platform,12131,0549690196,10GB,"17 Oct 2026, 08:12 pm",delivered,Matched,513241,17th Oct 2026 at 20:12,Completed,
+Platform,12130,0543628232,1GB,"17 Oct 2026, 08:11 pm",delivered,Matched,513237,17th Oct 2026 at 20:11,Completed,
+Platform,12129,0544249254,2GB,"17 Oct 2026, 07:08 pm",delivered,Matched,513137,17th Oct 2026 at 19:09,Completed,
+Platform,12128,0545073016,2GB,"17 Oct 2026, 06:24 pm",delivered,Matched,513076,17th Oct 2026 at 18:24,Completed,
+Platform,12127,0535399339,3GB,"17 Oct 2026, 06:14 pm",delivered,Matched,513062,17th Oct 2026 at 18:14,Completed,
+Platform,12126,0549687228,2GB,"17 Oct 2026, 06:13 pm",delivered,Matched,513057,17th Oct 2026 at 18:13,Completed,
+Platform,12125,0552596108,1GB,"17 Oct 2026, 06:12 pm",delivered,Matched,513054,17th Oct 2026 at 18:12,Completed,
+Store,1832,0593741158,1GB,"17 Oct 2026, 06:01 pm",failed,Matched,513043,17th Oct 2026 at 18:01,Canceled,
+Platform,12124,0599729521,1GB,"17 Oct 2026, 05:56 pm",delivered,Matched,513031,17th Oct 2026 at 17:56,Completed,
+Store,1831,0257080592,6GB,"17 Oct 2026, 05:55 pm",delivered,Matched,513027,17th Oct 2026 at 17:55,Completed,
+Store,1830,0551400277,5GB,"17 Oct 2026, 05:11 pm",delivered,Matched,512976,17th Oct 2026 at 17:11,Completed,
+Platform,12123,0551040417,2GB,"17 Oct 2026, 05:09 pm",delivered,Matched,512972,17th Oct 2026 at 17:09,Completed,
+Platform,12122,0558357838,2GB,"17 Oct 2026, 05:06 pm",delivered,Matched,512963,17th Oct 2026 at 17:06,Completed,
+Platform,12121,0241917331,1GB,"17 Oct 2026, 04:45 pm",delivered,Matched,512938,17th Oct 2026 at 16:45,Completed,
+Platform,12120,0246098005,2GB,"17 Oct 2026, 04:23 pm",delivered,Matched,512910,17th Oct 2026 at 16:23,Completed,
+Platform,12119,0530267058,4GB,"17 Oct 2026, 04:23 pm",delivered,Matched,512909,17th Oct 2026 at 16:23,Completed,
+Platform,12118,0533206701,1GB,"17 Oct 2026, 03:39 pm",delivered,Matched,512857,17th Oct 2026 at 15:39,Completed,
+Platform,12117,0504380329,10GB,"17 Oct 2026, 03:27 pm",pending,No corresponding purchase,,,,No phone + size match in supplied McBIS export
+Platform,12116,0246680679,2GB,"17 Oct 2026, 01:18 pm",delivered,Matched,512564,17th Oct 2026 at 13:18,Completed,
+Platform,12115,0594081983,4GB,"17 Oct 2026, 01:09 pm",delivered,Matched,512549,17th Oct 2026 at 13:09,Completed,
+Store,1829,0549122019,3GB,"17 Oct 2026, 01:09 pm",delivered,Matched,512548,17th Oct 2026 at 13:09,Completed,
+Platform,12114,0541361587,2GB,"17 Oct 2026, 12:55 pm",delivered,Matched,512524,17th Oct 2026 at 12:55,Completed,
+Platform,12113,0558357838,1GB,"17 Oct 2026, 12:23 pm",delivered,Matched,512501,17th Oct 2026 at 12:23,Completed,
+Store,1828,0551569065,5GB,"17 Oct 2026, 11:53 am",delivered,Matched,512474,17th Oct 2026 at 11:53,Completed,
+Store,1827,0243007119,4GB,"17 Oct 2026, 11:47 am",delivered,Matched,512469,17th Oct 2026 at 11:47,Completed,
+Store,1826,0534608606,4GB,"17 Oct 2026, 11:44 am",delivered,Matched,512464,17th Oct 2026 at 11:44,Completed,
+Platform,12112,0548994635,1GB,"17 Oct 2026, 11:04 am",delivered,Matched,512425,17th Oct 2026 at 11:04,Completed,
+Platform,12111,0551409160,2GB,"17 Oct 2026, 10:55 am",delivered,Matched,512420,17th Oct 2026 at 10:55,Completed,
+Store,1825,0241189585,1GB,"17 Oct 2026, 10:48 am",delivered,Matched,512413,17th Oct 2026 at 10:48,Completed,
+Platform,12110,0555541003,2GB,"17 Oct 2026, 09:48 am",delivered,Matched,512359,17th Oct 2026 at 09:48,Completed,
+Store,1824,0537861395,4GB,"17 Oct 2026, 09:27 am",processing,No corresponding purchase,,,,No phone + size match in supplied McBIS export
+Platform,12109,0552096744,1GB,"17 Oct 2026, 09:13 am",processing,No corresponding purchase,,,,No phone + size match in supplied McBIS export
+Platform,12108,0530074457,1GB,"17 Oct 2026, 09:04 am",processing,No corresponding purchase,,,,No phone + size match in supplied McBIS export
+Platform,12107,0555499857,1GB,"17 Oct 2026, 09:03 am",processing,No corresponding purchase,,,,No phone + size match in supplied McBIS export
+Platform,12106,0539495344,5GB,"17 Oct 2026, 09:03 am",processing,No corresponding purchase,,,,No phone + size match in supplied McBIS export
+Platform,12105,0546283298,5GB,"17 Oct 2026, 08:32 am",processing,No corresponding purchase,,,,No phone + size match in supplied McBIS export
+Platform,12104,0247957378,2GB,"17 Oct 2026, 08:28 am",processing,No corresponding purchase,,,,No phone + size match in supplied McBIS export
+Platform,12103,0597878962,1GB,"17 Oct 2026, 08:02 am",processing,No corresponding purchase,,,,No phone + size match in supplied McBIS export
+Platform,12102,0547716368,5GB,"17 Oct 2026, 07:33 am",processing,No corresponding purchase,,,,No phone + size match in supplied McBIS export
+Platform,12101,0599763088,1GB,"17 Oct 2026, 06:15 am",processing,No corresponding purchase,,,,No phone + size match in supplied McBIS export
+Platform,12100,0591047860,3GB,"17 Oct 2026, 03:58 am",processing,No corresponding purchase,,,,No phone + size match in supplied McBIS export
+Platform,12099,0599254667,2GB,"17 Oct 2026, 02:31 am",delivered,Matched,512356,17th Oct 2026 at 02:31,Completed,
+Platform,12098,0593816171,2GB,"17 Oct 2026, 02:12 am",delivered,Matched,512355,17th Oct 2026 at 02:12,Completed,
+Store,1823,0244607540,1GB,"17 Oct 2026, 01:39 am",delivered,Matched,512351,17th Oct 2026 at 01:39,Completed,
+Platform,12097,0544258590,15GB,"17 Oct 2026, 01:05 am",delivered,Matched,512344,17th Oct 2026 at 01:05,Completed,
+Platform,12096,0242791982,4GB,"16 Oct 2026, 11:53 pm",delivered,Matched,512336,16th Oct 2026 at 23:53,Completed,
+Platform,12095,0552342197,2GB,"16 Oct 2026, 10:42 pm",delivered,Matched,512317,16th Oct 2026 at 22:42,Completed,
+Platform,12094,0553219581,3GB,"16 Oct 2026, 10:37 pm",delivered,Matched,512314,16th Oct 2026 at 22:37,Completed,
+Platform,12093,0248402987,2GB,"16 Oct 2026, 10:33 pm",delivered,Matched,512309,16th Oct 2026 at 22:33,Completed,
+Platform,12092,0246680679,2GB,"16 Oct 2026, 09:22 pm",delivered,Matched,512265,16th Oct 2026 at 21:22,Completed,
+Platform,12091,0256423437,1GB,"16 Oct 2026, 09:10 pm",delivered,Matched,512255,16th Oct 2026 at 21:10,Completed,
+Store,1822,0595813139,5GB,"16 Oct 2026, 08:53 pm",delivered,Matched,512242,16th Oct 2026 at 20:53,Completed,
+Platform,12090,0245239903,2GB,"16 Oct 2026, 08:31 pm",delivered,Matched,512226,16th Oct 2026 at 20:31,Completed,
+Platform,12089,0549400292,3GB,"16 Oct 2026, 08:30 pm",delivered,Matched,512224,16th Oct 2026 at 20:30,Completed,
+Store,1821,0595184198,6GB,"16 Oct 2026, 08:30 pm",delivered,Matched,512223,16th Oct 2026 at 20:30,Completed,
+Store,1820,0246673510,2GB,"16 Oct 2026, 07:54 pm",delivered,Matched,512192,16th Oct 2026 at 19:54,Completed,
+Store,1819,0534519229,2GB,"16 Oct 2026, 07:50 pm",delivered,Matched,512187,16th Oct 2026 at 19:50,Completed,
+Platform,12088,0506921765,10GB,"16 Oct 2026, 07:45 pm",delivered,No corresponding purchase,,,,No phone + size match in supplied McBIS export
+Platform,12087,0544626549,1GB,"16 Oct 2026, 07:44 pm",delivered,Matched,512184,16th Oct 2026 at 19:44,Completed,
+Platform,12086,0543061389,4GB,"16 Oct 2026, 07:43 pm",delivered,Matched,512179,16th Oct 2026 at 19:43,Completed,
+Store,1818,0531654735,2GB,"16 Oct 2026, 07:20 pm",delivered,Matched,512156,16th Oct 2026 at 19:20,Completed,
+Platform,12085,0547168650,10GB,"16 Oct 2026, 06:43 pm",delivered,Matched,512108,16th Oct 2026 at 18:43,Completed,
+Store,1817,0553300120,2GB,"16 Oct 2026, 06:39 pm",delivered,Matched,512105,16th Oct 2026 at 18:39,Completed,
+Store,1816,0244640858,3GB,"16 Oct 2026, 06:37 pm",delivered,Matched,512102,16th Oct 2026 at 18:37,Completed,
+Platform,12084,0550787207,4GB,"16 Oct 2026, 06:33 pm",delivered,Matched,512100,16th Oct 2026 at 18:33,Completed,
+Platform,12083,0548670278,2GB,"16 Oct 2026, 05:49 pm",delivered,Matched,512059,16th Oct 2026 at 17:49,Completed,
+Store,1815,0257084441,10GB,"16 Oct 2026, 05:41 pm",delivered,Matched,512052,16th Oct 2026 at 17:41,Completed,
+Store,1814,0558158117,1GB,"16 Oct 2026, 05:18 pm",delivered,Matched,512030,16th Oct 2026 at 17:18,Completed,
+Platform,12082,0599776588,1GB,"16 Oct 2026, 05:08 pm",delivered,Matched,512021,16th Oct 2026 at 17:08,Completed,
+Platform,12081,0552505806,3GB,"16 Oct 2026, 05:02 pm",delivered,Matched,512017,16th Oct 2026 at 17:02,Completed,
+Store,1813,0549122019,2GB,"16 Oct 2026, 04:48 pm",delivered,Matched,512008,16th Oct 2026 at 16:48,Completed,
+Platform,12080,0248928991,6GB,"16 Oct 2026, 04:25 pm",delivered,Matched,511986,16th Oct 2026 at 16:25,Completed,
+Platform,12079,0547920527,2GB,"16 Oct 2026, 03:34 pm",delivered,Matched,511953,16th Oct 2026 at 15:34,Completed,
+Store,1812,0552924223,5GB,"16 Oct 2026, 03:31 pm",delivered,Matched,511952,16th Oct 2026 at 15:31,Completed,
+Store,1811,0531911772,5GB,"16 Oct 2026, 03:25 pm",delivered,Matched,511948,16th Oct 2026 at 15:25,Completed,
+Platform,12078,0599977623,2GB,"16 Oct 2026, 03:09 pm",delivered,Matched,511930,16th Oct 2026 at 15:09,Completed,
+Store,1810,0544495145,2GB,"16 Oct 2026, 03:02 pm",delivered,Matched,511928,16th Oct 2026 at 15:02,Completed,
+Store,1809,0594706755,5GB,"16 Oct 2026, 02:56 pm",delivered,Matched,511922,16th Oct 2026 at 14:56,Completed,
+Platform,12077,0248601758,10GB,"16 Oct 2026, 02:34 pm",delivered,Matched,511909,16th Oct 2026 at 14:34,Completed,
+Platform,12076,0241474709,1GB,"16 Oct 2026, 02:25 pm",failed,Matched,511906,16th Oct 2026 at 14:25,Canceled,
+Platform,12075,0544249254,2GB,"16 Oct 2026, 02:06 pm",delivered,Matched,511893,16th Oct 2026 at 14:06,Completed,
+Store,1808,0553903510,10GB,"16 Oct 2026, 02:01 pm",delivered,Matched,511889,16th Oct 2026 at 14:01,Completed,
+Platform,12074,0530331422,5GB,"16 Oct 2026, 01:39 pm",delivered,Matched,511874,16th Oct 2026 at 13:39,Completed,
+Platform,12073,0550018300,1GB,"16 Oct 2026, 12:45 pm",delivered,Matched,511840,16th Oct 2026 at 12:45,Completed,
+Store,1807,0595824298,1GB,"16 Oct 2026, 12:25 pm",delivered,Matched,511829,16th Oct 2026 at 12:25,Completed,
+Store,1806,0257508437,4GB,"16 Oct 2026, 12:05 pm",delivered,Matched,511814,16th Oct 2026 at 12:05,Completed,
+Platform,12072,0547973860,1GB,"16 Oct 2026, 11:54 am",delivered,Matched,511805,16th Oct 2026 at 11:54,Completed,
+Platform,12071,0553953443,1GB,"16 Oct 2026, 11:52 am",delivered,Matched,511804,16th Oct 2026 at 11:52,Completed,
+Platform,12070,0596063026,4GB,"16 Oct 2026, 11:52 am",delivered,Matched,511802,16th Oct 2026 at 11:52,Completed,
+Platform,12069,0551409160,2GB,"16 Oct 2026, 11:35 am",delivered,Matched,511784,16th Oct 2026 at 11:35,Completed,
+Platform,12068,0243823102,3GB,"16 Oct 2026, 11:19 am",delivered,Matched,511767,16th Oct 2026 at 11:19,Completed,
+Store,1805,0536740986,1GB,"16 Oct 2026, 10:48 am",delivered,Matched,511743,16th Oct 2026 at 10:48,Completed,
+Platform,12067,0558357838,6GB,"16 Oct 2026, 10:20 am",delivered,Matched,511724,16th Oct 2026 at 10:20,Completed,
+Store,1804,0247754872,5GB,"16 Oct 2026, 09:59 am",delivered,Matched,511704,16th Oct 2026 at 09:59,Completed,
+Store,1803,0257826937,2GB,"16 Oct 2026, 09:47 am",delivered,Matched,511697,16th Oct 2026 at 09:47,Completed,
+Platform,12066,0530074457,2GB,"16 Oct 2026, 09:18 am",delivered,Matched,511673,16th Oct 2026 at 09:18,Completed,
+Platform,12065,0256507075,2GB,"16 Oct 2026, 08:57 am",processing,No corresponding purchase,,,,No phone + size match in supplied McBIS export
+Platform,12064,0256991438,2GB,"16 Oct 2026, 08:46 am",delivered,Matched,511641,16th Oct 2026 at 08:46,Completed,
+Platform,12063,0540874989,5GB,"16 Oct 2026, 08:43 am",delivered,Matched,511638,16th Oct 2026 at 08:43,Completed,
+Platform,12062,0268184686,10GB,"16 Oct 2026, 08:35 am",delivered,Matched,511632,16th Oct 2026 at 08:35,Completed,
+Store,1802,0553978384,2GB,"16 Oct 2026, 08:33 am",delivered,Matched,511630,16th Oct 2026 at 08:33,Completed,
+Platform,12061,0245541680,3GB,"16 Oct 2026, 08:22 am",delivered,Matched,511617,16th Oct 2026 at 08:22,Completed,
+Store,1801,0546346988,1GB,"16 Oct 2026, 08:15 am",delivered,Matched,511613,16th Oct 2026 at 08:15,Completed,
+Platform,12060,0544626549,1GB,"16 Oct 2026, 08:08 am",delivered,Matched,511606,16th Oct 2026 at 08:08,Completed,
+Platform,12059,0554314004,5GB,"16 Oct 2026, 07:33 am",delivered,Matched,511571,16th Oct 2026 at 07:33,Completed,
+Platform,12058,0592484650,15GB,"16 Oct 2026, 07:33 am",delivered,Matched,511570,16th Oct 2026 at 07:33,Completed,
+Platform,12057,0246680679,1GB,"16 Oct 2026, 07:11 am",delivered,Matched,511556,16th Oct 2026 at 07:11,Completed,
+Store,1800,0550580438,1GB,"16 Oct 2026, 06:59 am",delivered,Matched,511546,16th Oct 2026 at 06:59,Completed,
+Platform,12056,0595933228,3GB,"16 Oct 2026, 06:43 am",delivered,Matched,511538,16th Oct 2026 at 06:43,Completed,
+Platform,12055,0549635642,6GB,"16 Oct 2026, 06:26 am",delivered,Matched,511518,16th Oct 2026 at 06:26,Completed,
+Store,1799,0243441270,6GB,"16 Oct 2026, 05:43 am",delivered,Matched,511502,16th Oct 2026 at 05:43,Completed,
+Platform,12054,0542551548,4GB,"16 Oct 2026, 04:11 am",delivered,Matched,511483,16th Oct 2026 at 04:11,Completed,
+Platform,12053,0599254667,2GB,"16 Oct 2026, 01:27 am",delivered,Matched,511471,16th Oct 2026 at 01:27,Completed,

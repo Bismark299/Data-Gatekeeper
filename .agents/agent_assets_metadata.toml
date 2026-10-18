@@ -35,3 +35,17 @@ mtime_ms = 1790814723229
 storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:f0f7e07b-5f53-4098-a06e-a22fe9e6edb8/c6e72b8a-544e-4208-89f8-82e5431a3f6f/073abb6b-b79c-4a66-8946-122a9470772d"
 storage_version_token = "1790814966068810"
 content_type = "application/octet-stream"
+
+[[outputs]]
+id = "cEI5G0048b3LLXk2j8XC8"
+uri = "file://attached_assets/order-comparison-16-18-october.csv"
+type = "table"
+title = "Order comparison — 16–18 October"
+description = "All 148 local orders compared with 104 McBIS purchases by phone number, data size, and purchase time. Includes matched orders, missing purchases, and older same-number matches."
+logical_id = "d3fdacb4-aac4-41b1-a7ee-167e42d6fbba"
+content_hash = "sha256:cdf9c06c7b5bffe03ab4345a458b94b9d3421025d2bd3a79369e9ed5caa90764"
+size = 18261
+mtime_ms = 1792325552476
+storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:f0f7e07b-5f53-4098-a06e-a22fe9e6edb8/d3fdacb4-aac4-41b1-a7ee-167e42d6fbba/888eee6f-6bac-46e2-b6b5-17f45fc367a9"
+storage_version_token = "1792325558558439"
+content_type = "text/csv"
