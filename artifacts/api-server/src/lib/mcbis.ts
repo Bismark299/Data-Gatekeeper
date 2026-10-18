@@ -17,7 +17,7 @@
  *   DATAHUB_API_URL   — Base URL for McbisSolution API (default: https://datahub.mcbissolution.com/api/v1)
  */
 
-import { eq, and, isNotNull, isNull } from "drizzle-orm";
+import { eq, and, or, isNotNull, isNull } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import axios from "axios";
 import { db, settingsTable, ordersTable, storeOrdersTable, bundlesTable, storesTable } from "@workspace/db";
@@ -104,7 +104,11 @@ export async function mcbisGetBalance(apiKey: string): Promise<number> {
       { headers: { Authorization: `Bearer ${apiKey}` } },
     )
   );
-  return parseFloat(data.data.walletBalance);
+  const balance = Number(data.data.walletBalance);
+  if (data.data.walletBalance == null || data.data.walletBalance === "" || !Number.isFinite(balance)) {
+    throw new Error("McBIS returned an invalid wallet balance");
+  }
+  return balance;
 }
 
 // ─── Balance cache ──────────────────────────────────────────────────────────
@@ -197,7 +201,7 @@ export type DispatchOutcome =
  *  - Order must not already have a mcbisReference (not yet sent)
  *
  * Returns `{ dispatched: true, reference }` if McbisSolution accepted the order.
- * Persist the real reference and processing state BEFORE the single POST.
+ * Persist the real reference BEFORE the single POST, processing only on acceptance.
  * Any non-acceptance retains that claim for status checks / manual review.
  * Never infer permission to resend from an error message or a failed lookup.
  */
@@ -218,6 +222,16 @@ export async function dispatchToMcbis(opts: {
   const amountGb = parseGb(opts.bundleData);
   if (amountGb <= 0) return { dispatched: false, reason: "bad_data" };
 
+  // Fresh balance only. Never send using the dashboard's stale-cache fallback.
+  // A positive balance isn't a guarantee of affordability; McBIS still decides
+  // whether this purchase is accepted. Failed checks leave orders untouched.
+  try {
+    const balance = await mcbisGetBalance(apiKey);
+    if (balance <= 0) return { dispatched: false, reason: "insufficient_funds" };
+  } catch {
+    return { dispatched: false, reason: "api_error" };
+  }
+
   const prefix   = opts.isStoreOrder ? "SO" : "PO";
   const finalRef = `${prefix}-${opts.orderId}-${Date.now()}`;
 
@@ -227,7 +241,7 @@ export async function dispatchToMcbis(opts: {
   let locked = false;
   if (opts.isStoreOrder) {
     const rows = await db.update(storeOrdersTable)
-      .set({ mcbisReference: finalRef, delivered: "processing" })
+      .set({ mcbisReference: finalRef })
       .where(and(
         eq(storeOrdersTable.id, opts.orderId),
         isNull(storeOrdersTable.mcbisReference),
@@ -239,7 +253,7 @@ export async function dispatchToMcbis(opts: {
     locked = rows.length > 0;
   } else {
     const rows = await db.update(ordersTable)
-      .set({ mcbisReference: finalRef, delivered: "processing" })
+      .set({ mcbisReference: finalRef })
       .where(and(
         eq(ordersTable.id, opts.orderId),
         isNull(ordersTable.mcbisReference),
@@ -267,6 +281,7 @@ export async function dispatchToMcbis(opts: {
       return { dispatched: false, reason: "awaiting_confirmation" };
     }
 
+    await confirmMcbisAcceptance(opts.orderId, finalRef, !!opts.isStoreOrder);
     return { dispatched: true, reference: finalRef };
   } catch (err) {
     // Do not log the Axios error object: it contains the Authorization header.
@@ -277,6 +292,16 @@ export async function dispatchToMcbis(opts: {
     }, "McBIS dispatch: response uncertain; claim retained for tracking / review, no resend");
     return { dispatched: false, reason: "awaiting_confirmation" };
   }
+}
+
+// Also used when a lookup confirms acceptance after an uncertain POST.
+// A concurrent refund, cancellation or settlement must never be overwritten.
+export async function confirmMcbisAcceptance(orderId: number, reference: string, store: boolean): Promise<void> {
+  const table = store ? storeOrdersTable : ordersTable;
+  await db.update(table).set({ delivered: "processing" }).where(and(
+    eq(table.id, orderId), eq(table.mcbisReference, reference),
+    eq(table.status, "paid"), isNull(table.delivered),
+  )).returning({ id: table.id });
 }
 
 // ─── Background poller ────────────────────────────────────────────────────────
@@ -320,7 +345,7 @@ export function startMcbisPoller(): void {
         .from(ordersTable)
         .where(and(
           eq(ordersTable.status, "paid"),
-          eq(ordersTable.delivered, "processing"),
+          or(eq(ordersTable.delivered, "processing"), isNull(ordersTable.delivered)),
           isNotNull(ordersTable.mcbisReference),
         ))
         // Round-robin by updatedAt (bumped on every check below): a batch of
@@ -340,6 +365,9 @@ export function startMcbisPoller(): void {
           // Normalize: McBIS status words are compared case-insensitively so a
           // "Success"/"COMPLETED"/"Delivered" response still settles the order.
           const s = (await mcbisCheckStatus(apiKey, o.ref)).trim().toLowerCase();
+          if (["pending", "processing", "success", "completed", "delivered", "failed", "cancelled", "canceled"].includes(s)) {
+            await confirmMcbisAcceptance(o.id, o.ref, false);
+          }
           // Guard on status='paid' AND delivered='processing': an admin bulk-refund
           // can commit during the network call above (flipping status to refunded).
           // Without the dual-column guard this write would mark a refunded order
@@ -398,7 +426,7 @@ export function startMcbisPoller(): void {
         .from(storeOrdersTable)
         .where(and(
           eq(storeOrdersTable.status, "paid"),
-          eq(storeOrdersTable.delivered, "processing"),
+          or(eq(storeOrdersTable.delivered, "processing"), isNull(storeOrdersTable.delivered)),
           isNotNull(storeOrdersTable.mcbisReference),
         ))
         // Round-robin by updatedAt — see platform loop above.
@@ -411,6 +439,9 @@ export function startMcbisPoller(): void {
         let settled = false;
         try {
           const s = (await mcbisCheckStatus(apiKey, o.ref)).trim().toLowerCase();
+          if (["pending", "processing", "success", "completed", "delivered", "failed", "cancelled", "canceled"].includes(s)) {
+            await confirmMcbisAcceptance(o.id, o.ref, true);
+          }
           if (s === "success" || s === "completed" || s === "delivered") {
             await db.transaction(async (tx) => {
               const [row] = await tx
@@ -515,7 +546,7 @@ export function startMcbisPoller(): void {
             phone:      o.phone,
             bundleData: o.bundleData,
           });
-          // The dispatcher already persisted processing before sending.
+          // The dispatcher persists processing only after acceptance.
           // Do not overwrite a concurrent settlement/refund after the POST.
           if (!outcome.dispatched && outcome.reason === "insufficient_funds") {
             break; // wallet empty — no point trying more this cycle

@@ -18,6 +18,7 @@ const mocks = {
     export const isNull=k=>r=>r[k]==null;
     export const isNotNull=k=>r=>r[k]!=null;
     export const and=(...checks)=>r=>checks.every(c=>c(r));
+    export const or=(...checks)=>r=>checks.some(c=>c(r));
     export const sql=()=>{};
   `,
   "axios": `export default {
@@ -40,7 +41,7 @@ const bundled = await build({
   }],
 });
 
-function setup({ store = false, response = "accepted", initial = {} } = {}) {
+function setup({ store = false, response = "accepted", initial = {}, balance = "100" } = {}) {
   const row = { id: 1, status: "paid", delivered: null, mcbisReference: null, topupghBatchId: null, ...initial };
   let posts = 0;
   const fixture = {
@@ -63,7 +64,7 @@ function setup({ store = false, response = "accepted", initial = {} } = {}) {
       post: async (_url, body, config) => {
         posts++;
         assert.equal(body.reference, row.mcbisReference, "reference must be durable before POST");
-        assert.equal(row.delivered, "processing", "tracking must be enabled before POST");
+        assert.equal(row.delivered, null, "processing must wait for provider acceptance");
         assert.equal(body.network, "MTN");
         assert.equal(config.maxRedirects, 0);
         if (response === "timeout" || response === "reset" || response === "http500") {
@@ -75,6 +76,10 @@ function setup({ store = false, response = "accepted", initial = {} } = {}) {
           message: response === "rejected" ? "Insufficient balance" : "" } };
       },
       get: async url => {
+        if (url.endsWith("/walletBalance")) {
+          if (balance === "unavailable") throw new Error("Balance unavailable");
+          return { data: { data: { walletBalance: balance } } };
+        }
         assert.ok(url.endsWith(encodeURIComponent(row.mcbisReference)));
         return { data: { data: { order: { status: "success" } } } };
       },
@@ -103,9 +108,11 @@ for (const store of [false, true]) {
       const ref = f.row.mcbisReference;
       assert.equal((await f.send()).reason, "already_dispatched", "later retry must also skip");
       assert.equal(f.row.mcbisReference, ref);
-      assert.equal(f.row.delivered, "processing");
+      assert.equal(f.row.delivered, response === "accepted" ? "processing" : null);
       assert.equal(f.posts(), 1);
       assert.equal(await f.api.mcbisCheckStatus("test-only", ref), "success");
+      await f.api.confirmMcbisAcceptance(1, ref, store);
+      assert.equal(f.row.delivered, "processing", "verified provider order enables processing");
     });
   }
   for (const initial of [
@@ -118,4 +125,18 @@ for (const store of [false, true]) {
       assert.equal(f.posts(), 0);
     });
   }
+  for (const balance of ["0", "-1", "invalid", "", null, "unavailable"]) {
+    test(`${store ? "store" : "platform"}: balance ${balance} blocks sending without claiming`, async () => {
+      const f = setup({ store, balance });
+      assert.equal((await f.send()).dispatched, false);
+      assert.equal(f.posts(), 0);
+      assert.equal(f.row.delivered, null);
+      assert.equal(f.row.mcbisReference, null);
+    });
+  }
+  test(`${store ? "store" : "platform"}: confirmation does not resurrect refunded order`, async () => {
+    const f = setup({ store, initial: { status: "refunded", mcbisReference: "ref" } });
+    await f.api.confirmMcbisAcceptance(1, "ref", store);
+    assert.equal(f.row.delivered, null);
+  });
 }
