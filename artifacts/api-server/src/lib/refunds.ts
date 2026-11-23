@@ -49,7 +49,7 @@ export async function refundOrderInTx(
   if (
     opts?.requireNoProviderRef &&
     locked.delivered == null &&
-    (locked.mcbisReference || locked.ckgodswayReference || locked.topupghBatchId != null)
+    (locked.mcbisReference || locked.mcbisAttemptReference || locked.ckgodswayReference || locked.topupghBatchId != null)
   ) {
     throw Object.assign(new Error("Order is already dispatched/in-flight; cancel individually after a delivery check"), { status: 400 });
   }

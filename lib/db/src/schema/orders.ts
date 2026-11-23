@@ -19,6 +19,7 @@ export const ordersTable = pgTable("orders", {
   delivered: text("delivered"),
   phoneNumber: text("phone_number").notNull(),
   mcbisReference: text("mcbis_reference"),
+  mcbisAttemptReference: text("mcbis_attempt_reference"),
   mcbisAcceptedReference: text("mcbis_accepted_reference"),
   ckgodswayReference: text("ckgodsway_reference"),
   topupghBatchId: integer("topupgh_batch_id"),

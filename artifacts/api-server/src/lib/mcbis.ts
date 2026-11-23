@@ -149,7 +149,7 @@ export async function mcbisPlaceOrder(opts: {
   reference: string;
   receiver: string;
   amountGb: number;
-}): Promise<{ accepted: boolean; reference: string | null; status: string; message: string }> {
+}): Promise<{ accepted: boolean; insufficientFunds: boolean; reference: string | null; status: string; message: string }> {
   // Never retry a purchase POST: a missing response does not mean rejection.
   // Disable redirects too: a 307/308 can otherwise repeat this POST.
   const { data, status: httpStatus } = await mcbisAxios.post<Record<string, unknown>>(
@@ -160,17 +160,25 @@ export async function mcbisPlaceOrder(opts: {
         receiver:  opts.receiver,
         amount:    opts.amountGb,
       },
-      { headers: { Authorization: `Bearer ${opts.apiKey}` }, maxRedirects: 0 },
+      { headers: { Authorization: `Bearer ${opts.apiKey}` }, maxRedirects: 0, validateStatus: () => true },
     );
 
-  const inner   = data.data as Record<string, unknown> | undefined;
-  const status  = String(inner?.status ?? data.status ?? "");
-  const message = String(data.message ?? data.error ?? "");
+  const inner   = data?.data as Record<string, unknown> | undefined;
+  const status  = String(inner?.status ?? data?.status ?? "").toLowerCase();
+  const message = String(data?.message ?? data?.error ?? "");
   const reference = typeof inner?.reference === "string" ? inner.reference : null;
+  // Only explicit no-funds rejection shapes may release a claim. Never match
+  // generic "wallet"/"balance" text, a 5xx, or a response carrying an order ref.
+  const insufficientFunds = [200, 400, 402, 422].includes(httpStatus)
+    && !reference && !inner?.order
+    && !["success", "pending", "processing", "completed", "delivered"].includes(status)
+    && ["insufficient balance", "insufficient wallet balance", "insufficient funds"]
+      .includes(message.trim().toLowerCase().replace(/[.!]$/, ""));
 
   return {
     accepted: httpStatus < 300 && reference === opts.reference && (status === "success" || status === "pending"),
     reference,
+    insufficientFunds,
     status,
     message,
   };
@@ -203,12 +211,12 @@ export type DispatchOutcome =
  *
  * Guards (checked against DB before calling the API):
  *  - Order must be paid and not yet dispatched (status "paid", delivered NULL)
- *  - Order must not already have a mcbisReference (not yet sent)
+ *  - Order must not have a confirmed reference or unresolved attempt
  *
  * Returns `{ dispatched: true, reference }` if McbisSolution accepted the order.
- * Persist the real reference BEFORE the single POST, processing only on acceptance.
- * Any non-acceptance retains that claim for status checks / manual review.
- * Never infer permission to resend from an error message or a failed lookup.
+ * Save an attempt reference BEFORE the single POST, confirmed ref only on acceptance.
+ * Explicit insufficient-funds rejections release that attempt; all uncertain
+ * responses retain it for verification. A failed lookup never authorizes resend.
  */
 export async function dispatchToMcbis(opts: {
   orderId: number;
@@ -246,10 +254,12 @@ export async function dispatchToMcbis(opts: {
   let locked = false;
   if (opts.isStoreOrder) {
     const rows = await db.update(storeOrdersTable)
-      .set({ mcbisReference: finalRef })
+      .set({ mcbisAttemptReference: finalRef })
       .where(and(
         eq(storeOrdersTable.id, opts.orderId),
         isNull(storeOrdersTable.mcbisReference),
+        isNull(storeOrdersTable.mcbisAttemptReference),
+        isNull(storeOrdersTable.mcbisAcceptedReference),
         isNull(storeOrdersTable.topupghBatchId),
         eq(storeOrdersTable.status, "paid"),
         isNull(storeOrdersTable.delivered),
@@ -258,10 +268,12 @@ export async function dispatchToMcbis(opts: {
     locked = rows.length > 0;
   } else {
     const rows = await db.update(ordersTable)
-      .set({ mcbisReference: finalRef })
+      .set({ mcbisAttemptReference: finalRef })
       .where(and(
         eq(ordersTable.id, opts.orderId),
         isNull(ordersTable.mcbisReference),
+        isNull(ordersTable.mcbisAttemptReference),
+        isNull(ordersTable.mcbisAcceptedReference),
         isNull(ordersTable.topupghBatchId),
         eq(ordersTable.status, "paid"),
         isNull(ordersTable.delivered),
@@ -280,6 +292,17 @@ export async function dispatchToMcbis(opts: {
       amountGb,
     });
 
+    if (result.insufficientFunds) {
+      const table = opts.isStoreOrder ? storeOrdersTable : ordersTable;
+      await db.update(table).set({ mcbisAttemptReference: null }).where(and(
+        eq(table.id, opts.orderId), eq(table.mcbisAttemptReference, finalRef),
+        isNull(table.mcbisReference), isNull(table.mcbisAcceptedReference),
+        eq(table.status, "paid"), isNull(table.delivered),
+      )).returning({ id: table.id });
+      logger.info({ orderId: opts.orderId, isStoreOrder: !!opts.isStoreOrder },
+        "McBIS rejected purchase for insufficient funds; pending order eligible for funded retry");
+      return { dispatched: false, reason: "insufficient_funds" };
+    }
     if (!result.accepted) {
       logger.warn({ orderId: opts.orderId, isStoreOrder: !!opts.isStoreOrder, reference: finalRef },
         "McBIS dispatch: acceptance unconfirmed; claim retained for tracking / review, no resend");
@@ -303,8 +326,8 @@ export async function dispatchToMcbis(opts: {
 // A concurrent refund, cancellation or settlement must never be overwritten.
 export async function confirmMcbisAcceptance(orderId: number, reference: string, store: boolean): Promise<void> {
   const table = store ? storeOrdersTable : ordersTable;
-  await db.update(table).set({ delivered: "processing", mcbisAcceptedReference: reference }).where(and(
-    eq(table.id, orderId), eq(table.mcbisReference, reference),
+  await db.update(table).set({ delivered: "processing", mcbisReference: reference, mcbisAcceptedReference: reference, mcbisAttemptReference: null }).where(and(
+    eq(table.id, orderId), or(eq(table.mcbisReference, reference), eq(table.mcbisAttemptReference, reference)),
     eq(table.status, "paid"),
     or(isNull(table.delivered), eq(table.delivered, "processing")),
   )).returning({ id: table.id });
@@ -347,12 +370,12 @@ export function startMcbisPoller(): void {
 
       // ── 1. Check delivery of processing platform orders (cap 30, 100 ms apart) ──
       const platformProcessing = await db
-        .select({ id: ordersTable.id, ref: ordersTable.mcbisReference })
+        .select({ id: ordersTable.id, ref: sql<string>`coalesce(${ordersTable.mcbisReference}, ${ordersTable.mcbisAttemptReference})` })
         .from(ordersTable)
         .where(and(
           eq(ordersTable.status, "paid"),
           or(eq(ordersTable.delivered, "processing"), isNull(ordersTable.delivered)),
-          isNotNull(ordersTable.mcbisReference),
+          or(isNotNull(ordersTable.mcbisReference), isNotNull(ordersTable.mcbisAttemptReference)),
         ))
         // Round-robin by updatedAt (bumped on every check below): a batch of
         // permanently-"processing" orders at McBIS would otherwise monopolize the
@@ -428,12 +451,12 @@ export function startMcbisPoller(): void {
 
       // ── 2. Check delivery of processing store orders (cap 30, 100 ms apart) ──
       const storeProcessing = await db
-        .select({ id: storeOrdersTable.id, ref: storeOrdersTable.mcbisReference })
+        .select({ id: storeOrdersTable.id, ref: sql<string>`coalesce(${storeOrdersTable.mcbisReference}, ${storeOrdersTable.mcbisAttemptReference})` })
         .from(storeOrdersTable)
         .where(and(
           eq(storeOrdersTable.status, "paid"),
           or(eq(storeOrdersTable.delivered, "processing"), isNull(storeOrdersTable.delivered)),
-          isNotNull(storeOrdersTable.mcbisReference),
+          or(isNotNull(storeOrdersTable.mcbisReference), isNotNull(storeOrdersTable.mcbisAttemptReference)),
         ))
         // Round-robin by updatedAt — see platform loop above.
         .orderBy(storeOrdersTable.updatedAt)
@@ -537,6 +560,8 @@ export function startMcbisPoller(): void {
           eq(ordersTable.status, "paid"),
           isNull(ordersTable.delivered),
           isNull(ordersTable.mcbisReference),
+          isNull(ordersTable.mcbisAttemptReference),
+          isNull(ordersTable.mcbisAcceptedReference),
           isNull(ordersTable.topupghBatchId),
           eq(bundlesTable.network, "mtn"),
         ))
@@ -575,6 +600,8 @@ export function startMcbisPoller(): void {
           eq(storeOrdersTable.status, "paid"),
           isNull(storeOrdersTable.delivered),
           isNull(storeOrdersTable.mcbisReference),
+          isNull(storeOrdersTable.mcbisAttemptReference),
+          isNull(storeOrdersTable.mcbisAcceptedReference),
           isNull(storeOrdersTable.topupghBatchId),
           eq(storeOrdersTable.bundleNetwork, "mtn"),
         ))

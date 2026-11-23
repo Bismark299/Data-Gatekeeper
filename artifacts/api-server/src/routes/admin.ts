@@ -583,6 +583,7 @@ router.post("/admin/orders/bulk-refund-preview", requireAdmin, async (req, res):
       delivered: ordersTable.delivered,
       createdAt: ordersTable.createdAt,
       mcbisReference: ordersTable.mcbisReference,
+      mcbisAttemptReference: ordersTable.mcbisAttemptReference,
       ckgodswayReference: ordersTable.ckgodswayReference,
       topupghBatchId: ordersTable.topupghBatchId,
     })
@@ -592,7 +593,7 @@ router.post("/admin/orders/bulk-refund-preview", requireAdmin, async (req, res):
     .limit(5000);
 
   const hasProviderRef = (r: (typeof rows)[number]) =>
-    !!r.mcbisReference || !!r.ckgodswayReference || r.topupghBatchId != null;
+    !!r.mcbisReference || !!r.mcbisAttemptReference || !!r.ckgodswayReference || r.topupghBatchId != null;
   // Refundable: paid orders not yet delivered.
   //   • delivered IS NULL → only if NOT already provider-locked (a LOCK-* ref can be set
   //     before `delivered` flips to processing, so the column alone can't rule out an
@@ -2298,6 +2299,10 @@ router.post("/admin/mcbis/dispatch/:orderId", requireAdmin, async (req, res): Pr
   if (!row) { res.status(404).json({ error: "Order not found" }); return; }
 
   // Guard: prevent double-dispatch — already sent to McbisSolution
+  if (row.order.mcbisAttemptReference) {
+    res.status(409).json({ error: "McBIS submission is awaiting confirmation; do not resend" });
+    return;
+  }
   if (row.order.mcbisReference) {
     res.status(409).json({ error: "Order already dispatched to McbisSolution", reference: row.order.mcbisReference, status: row.order.status });
     return;
@@ -2337,6 +2342,10 @@ router.post("/admin/mcbis/dispatch-store/:orderId", requireAdmin, async (req, re
   if (!storeOrder) { res.status(404).json({ error: "Store order not found" }); return; }
 
   // Guard: prevent double-dispatch — already sent to McbisSolution
+  if (storeOrder.mcbisAttemptReference) {
+    res.status(409).json({ error: "McBIS submission is awaiting confirmation; do not resend" });
+    return;
+  }
   if (storeOrder.mcbisReference) {
     res.status(409).json({ error: "Order already dispatched to McbisSolution", reference: storeOrder.mcbisReference, status: storeOrder.status });
     return;

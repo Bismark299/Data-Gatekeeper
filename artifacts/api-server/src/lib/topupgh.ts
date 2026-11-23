@@ -374,6 +374,7 @@ async function dispatchPendingQueueLocked(forceDispatch = false): Promise<Dispat
       isNull(ordersTable.delivered),
       isNull(ordersTable.topupghBatchId),
       isNull(ordersTable.mcbisReference),
+      isNull(ordersTable.mcbisAttemptReference),
       eq(bundlesTable.network, "mtn"),
       lt(ordersTable.createdAt, graceThreshold),
     ))
@@ -398,6 +399,7 @@ async function dispatchPendingQueueLocked(forceDispatch = false): Promise<Dispat
       eq(storeOrdersTable.bundleNetwork, "mtn"),
       isNull(storeOrdersTable.topupghBatchId),
       isNull(storeOrdersTable.mcbisReference),
+      isNull(storeOrdersTable.mcbisAttemptReference),
       isNull(storeOrdersTable.ckgodswayReference),
       lt(storeOrdersTable.createdAt, graceThreshold),
     ))
@@ -451,6 +453,7 @@ async function dispatchPendingQueueLocked(forceDispatch = false): Promise<Dispat
         inArray(ordersTable.id, valid.map(o => o.id)),
         isNull(ordersTable.topupghBatchId),
         isNull(ordersTable.mcbisReference),
+        isNull(ordersTable.mcbisAttemptReference),
         eq(ordersTable.status, "paid"),
         isNull(ordersTable.delivered),
       ));
@@ -462,6 +465,7 @@ async function dispatchPendingQueueLocked(forceDispatch = false): Promise<Dispat
         inArray(storeOrdersTable.id, validStore.map(o => o.id)),
         isNull(storeOrdersTable.topupghBatchId),
         isNull(storeOrdersTable.mcbisReference),
+        isNull(storeOrdersTable.mcbisAttemptReference),
         isNull(storeOrdersTable.ckgodswayReference),
         eq(storeOrdersTable.status, "paid"),
         isNull(storeOrdersTable.delivered),
